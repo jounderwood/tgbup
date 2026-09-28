@@ -131,6 +131,7 @@ chats         (id PK, type [private|group|supergroup|forum|channel], title, user
                first_seen_at, last_synced_at)
 topics        (chat_id, topic_id, title, closed, created_at)           PK(chat_id, topic_id)
 users         (id PK, first_name, last_name, username, is_bot, updated_at)
+peers         (id PK, title, username, updated_at)  -- имена чатов/каналов-источников пересылок, не архивируемые чаты
 messages      (chat_id, id, topic_id NULL, date, from_id, text, entities_json,
                reply_to_id, fwd_from_json, grouped_id, reactions_json,
                service_action_json NULL, pinned BOOL, edit_date,
@@ -162,6 +163,10 @@ meta          (key PK, value)   -- schema_version, last_backup_at, last_prune_at
   текущее состояние — `messages.pinned`, обновляется каждым sync запросом с
   фильтром закреплённых.
 - **Миграция группы в супергруппу** связывается через `migrated_from_id`.
+- **Удалённые аккаунты** остаются в архиве как личные чаты «Deleted Account»:
+  история с ними по-прежнему читается.
+- **Имена источников пересылок** (каналы, группы из вектора `chats` ответов
+  Telegram) пишутся в `peers` той же транзакцией — потом их не восстановить.
 - **Правки и удаления не отслеживаются:** сообщение сохраняется в виде первой
   выгрузки; удалённое в Telegram остаётся в архиве.
 
@@ -192,6 +197,9 @@ meta          (key PK, value)   -- schema_version, last_backup_at, last_prune_at
 | Ошибка загрузки файла | `attempts++`, повтор в следующих запусках; после 5 неудач — `status=failed`, больше не пытаемся, файл попадает в еженедельную сводку |
 | Чат недоступен | `chats.status=inaccessible`, данные остаются, уведомление один раз |
 | Сессия отозвана | прервать sync, уведомить «нужен `tgbp login`», render и backup выполнить |
+| Выгрузка «вперёд» закончилась ниже `top_message` диалога | ошибка чата (защита от молчаливого пропуска новых сообщений) |
+| Чат из `include` не найден среди диалогов | запуск завершается с ошибкой, остальные чаты синхронизируются |
+| Локальная ошибка диска при загрузке медиа | фаза медиа останавливается, попытки не засчитываются |
 | `integrity_check` не прошёл | бэкап не делать, уведомить |
 | Сбой одного restic-репозитория | остальные продолжить, уведомить |
 
