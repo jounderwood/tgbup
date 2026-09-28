@@ -15,7 +15,7 @@ import (
 )
 
 var dialogs = []tgclient.Dialog{
-	{ID: 10, Type: store.ChatPrivate, Title: "Мама", Contact: true},
+	{ID: 10, Type: store.ChatPrivate, Title: "Мама", Contact: true, TopMessage: 77},
 	{ID: 11, Type: store.ChatPrivate, Title: "Незнакомец"},
 	{ID: 12, Type: store.ChatPrivate, Title: "Бот", Bot: true},
 	{ID: -20, Type: store.ChatGroup, Title: "Старая группа"},
@@ -53,6 +53,9 @@ func TestSelectByFolderRules(t *testing.T) {
 		}
 		if tg.Chat.ID == -1000000000030 && !tg.IsForum() {
 			t.Error("forum not detected")
+		}
+		if tg.Chat.ID == 10 && tg.TopMessage != 77 {
+			t.Errorf("top message not carried: %d", tg.TopMessage)
 		}
 	}
 }

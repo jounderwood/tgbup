@@ -137,6 +137,11 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 				break
 			}
 		}
+		// A server that ignores the forward-paging window would otherwise make
+		// every run silently archive nothing new.
+		if t.TopMessage > cur.NewestID {
+			return total, fmt.Errorf("forward sync stopped at message %d, but the chat's latest message is %d", cur.NewestID, t.TopMessage)
+		}
 	}
 
 	for !cur.BackfillDone && s.Now().Before(deadline) {

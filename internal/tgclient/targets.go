@@ -17,14 +17,15 @@ import (
 )
 
 type Dialog struct {
-	ID       int64
-	Peer     tg.InputPeerClass
-	Type     string
-	Title    string
-	Username string
-	Contact  bool
-	Bot      bool
-	Archived bool
+	ID         int64
+	Peer       tg.InputPeerClass
+	Type       string
+	Title      string
+	Username   string
+	Contact    bool
+	Bot        bool
+	Archived   bool
+	TopMessage int
 }
 
 // Folder mirrors a Telegram dialog filter. exclude_muted/exclude_read are ignored on
@@ -45,6 +46,9 @@ type Folder struct {
 type Target struct {
 	Chat store.Chat
 	Peer tg.InputPeerClass
+	// TopMessage is the dialog's latest message id when targets were resolved;
+	// 0 when unknown (e.g. a pre-migration group).
+	TopMessage int
 }
 
 func (t Target) IsForum() bool { return t.Chat.Type == store.ChatForum }
@@ -139,8 +143,9 @@ func SelectTargets(dialogs []Dialog, folders []Folder, sel config.Targets) ([]Ta
 			continue
 		}
 		out = append(out, Target{
-			Chat: store.Chat{ID: d.ID, Type: d.Type, Title: d.Title, Username: d.Username, Folders: in},
-			Peer: d.Peer,
+			Chat:       store.Chat{ID: d.ID, Type: d.Type, Title: d.Title, Username: d.Username, Folders: in},
+			Peer:       d.Peer,
+			TopMessage: d.TopMessage,
 		})
 	}
 	slices.SortFunc(out, func(a, b Target) int {
@@ -155,33 +160,69 @@ func SelectTargets(dialogs []Dialog, folders []Folder, sel config.Targets) ([]Ta
 	return out, warnings, nil
 }
 
+// Dialogs lists every dialog once. Without folder_id Telegram returns the archive
+// too, so the archive folder is fetched separately only to mark archived chats.
 func (a *API) Dialogs(ctx context.Context) ([]Dialog, error) {
-	var out []Dialog
-	for _, folderID := range []int{0, 1} {
-		err := query.NewQuery(a.raw).GetDialogs().FolderID(folderID).BatchSize(100).
-			ForEach(ctx, func(ctx context.Context, e dialogs.Elem) error {
-				if d, ok := dialogFromElem(e, folderID == 1); ok {
-					out = append(out, d)
-				}
-				return nil
-			})
-		if err != nil {
-			return nil, fmt.Errorf("list dialogs (folder %d): %w", folderID, err)
-		}
+	all, err := a.listDialogs(ctx, a.dialogsQuery(), false)
+	if err != nil {
+		return nil, fmt.Errorf("list dialogs: %w", err)
 	}
-	return out, nil
+	archived, err := a.listDialogs(ctx, a.dialogsQuery().FolderID(1), true)
+	if err != nil {
+		return nil, fmt.Errorf("list archived dialogs: %w", err)
+	}
+	return mergeDialogs(all, archived), nil
+}
+
+func (a *API) dialogsQuery() *dialogs.GetDialogsQueryBuilder {
+	return query.NewQuery(a.raw).GetDialogs().BatchSize(100)
+}
+
+func (a *API) listDialogs(ctx context.Context, q *dialogs.GetDialogsQueryBuilder, archived bool) ([]Dialog, error) {
+	var out []Dialog
+	err := q.ForEach(ctx, func(ctx context.Context, e dialogs.Elem) error {
+		if d, ok := dialogFromElem(e, archived); ok {
+			out = append(out, d)
+		}
+		return nil
+	})
+	return out, err
+}
+
+func mergeDialogs(all, archived []Dialog) []Dialog {
+	isArchived := map[int64]bool{}
+	for _, d := range archived {
+		isArchived[d.ID] = true
+	}
+	seen := map[int64]bool{}
+	var out []Dialog
+	for _, d := range append(slices.Clone(all), archived...) {
+		if seen[d.ID] {
+			continue
+		}
+		seen[d.ID] = true
+		d.Archived = isArchived[d.ID]
+		out = append(out, d)
+	}
+	return out
 }
 
 func dialogFromElem(e dialogs.Elem, archived bool) (Dialog, bool) {
 	d := Dialog{Peer: e.Peer, Archived: archived}
+	if dlg, ok := e.Dialog.(*tg.Dialog); ok {
+		d.TopMessage = dlg.TopMessage
+	}
 	switch p := e.Peer.(type) {
 	case *tg.InputPeerUser:
 		u, ok := e.Entities.User(p.UserID)
-		if !ok || u.Deleted {
+		if !ok {
 			return Dialog{}, false
 		}
 		d.ID, d.Type, d.Username, d.Contact, d.Bot = p.UserID, store.ChatPrivate, u.Username, u.Contact, u.Bot
 		d.Title = strings.TrimSpace(u.FirstName + " " + u.LastName)
+		if u.Deleted && d.Title == "" {
+			d.Title = "Deleted Account"
+		}
 	case *tg.InputPeerChat:
 		c, ok := e.Entities.Chat(p.ChatID)
 		if !ok || c.Deactivated {

@@ -31,6 +31,9 @@ type fakeTG struct {
 	pinned    map[int64][]int
 	topics    map[int64][]tgclient.Topic
 	replyTop  map[int]int // message id → topic id (forum)
+	// brokenAfter makes HistoryAfter return nothing, like a server that
+	// interprets the forward-paging parameters differently.
+	brokenAfter bool
 }
 
 func newFake() *fakeTG {
@@ -108,6 +111,9 @@ func (f *fakeTG) HistoryAfter(_ context.Context, peer tg.InputPeerClass, afterID
 		return tgclient.Page{}, err
 	}
 	var out []int
+	if f.brokenAfter {
+		return f.page(chat, out), nil
+	}
 	for _, id := range f.ids[chat] {
 		if id > afterID && len(out) < limit {
 			out = append(out, id)
@@ -211,6 +217,24 @@ func TestIncrementalFetchesOnlyNew(t *testing.T) {
 	}
 	if e.tg.before != 0 {
 		t.Fatalf("backfill called %d times after it was done", e.tg.before)
+	}
+}
+
+func TestForwardSyncShortOfDialogTopMessageFails(t *testing.T) {
+	e := newEnv(t)
+	a := target(1, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 120)
+	a.TopMessage = 120
+	if r := e.s.Run(context.Background(), []tgclient.Target{a}, dialogsOf(a)); !r.OK() {
+		t.Fatalf("first run = %+v", r)
+	}
+
+	e.tg.add(a.Chat.ID, 121, 130)
+	a.TopMessage = 130
+	e.tg.brokenAfter = true
+	r := e.s.Run(context.Background(), []tgclient.Target{a}, dialogsOf(a))
+	if r.Failed[a.Chat.ID] == nil {
+		t.Fatalf("silent gap: forward sync stopped at 120 while the dialog ends at 130; report = %+v", r)
 	}
 }
 
