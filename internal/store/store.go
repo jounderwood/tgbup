@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,9 +28,17 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	dsn := "file:" + path +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
-	db, err := sql.Open("sqlite", dsn)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	// A URI keeps '#', '?' and '%' in directory names from being read as URI syntax.
+	dsn := url.URL{
+		Scheme:   "file",
+		Path:     abs,
+		RawQuery: "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
+	}
+	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}

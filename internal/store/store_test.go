@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -65,6 +66,21 @@ func TestReopenIsIdempotent(t *testing.T) {
 	v, ok, err := s.Meta(context.Background(), "k")
 	if err != nil || !ok || v != "v" {
 		t.Fatalf("meta after reopen = %q %v %v", v, ok, err)
+	}
+}
+
+func TestOpenHandlesSpecialCharactersInPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Архив #1 %20", "archive.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetMeta(context.Background(), "k", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("database not at the requested path: %v", err)
 	}
 }
 
