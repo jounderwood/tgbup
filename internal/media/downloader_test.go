@@ -191,6 +191,40 @@ func TestSkipsByKindAndSize(t *testing.T) {
 	}
 }
 
+func TestSkippedMediaIsRequeuedWhenConfigAllowsIt(t *testing.T) {
+	e := newEnv(t, 100)
+	e.d.MaxFileSize = 50
+	if r, _ := e.d.Run(context.Background()); r.Skipped != 1 {
+		t.Fatalf("first run = %+v", r)
+	}
+	e.d.MaxFileSize = 0
+	r, err := e.d.Run(context.Background())
+	if err != nil || r.Done != 1 || e.info(t).Status != store.MediaDone {
+		t.Fatalf("after raising the limit: %+v %+v %v", r, e.info(t), err)
+	}
+}
+
+func TestLocalDiskErrorsDoNotBurnAttempts(t *testing.T) {
+	e := newEnv(t, 1000)
+	readOnly := filepath.Join(t.TempDir(), "ro")
+	if err := os.Mkdir(readOnly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o700) })
+	e.d.ArchiveDir = readOnly
+
+	r, err := e.d.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.LocalErr == nil || r.Failed != 0 {
+		t.Fatalf("report = %+v", r)
+	}
+	if i := e.info(t); i.Status != store.MediaPending || i.Attempts != 0 {
+		t.Fatalf("local error counted as a download attempt: %+v", i)
+	}
+}
+
 func TestExpiredFileReferenceIsRefreshed(t *testing.T) {
 	e := newEnv(t, 1000)
 	e.tg.expired = true

@@ -44,6 +44,9 @@ type Report struct {
 	Deferred int
 	Errors   []error
 	AuthErr  error
+	// LocalErr is a disk-side failure (full disk, permissions); it stops the
+	// media phase and is not held against the files.
+	LocalErr error
 }
 
 type outcome int
@@ -55,6 +58,9 @@ const (
 )
 
 func (d *Downloader) Run(ctx context.Context) (Report, error) {
+	if err := d.requeueSkipped(ctx); err != nil {
+		return Report{}, err
+	}
 	jobs, err := d.Store.PendingMedia(ctx)
 	if err != nil {
 		return Report{}, err
@@ -78,7 +84,8 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 				if err != nil {
 					kind = tgclient.Classify(err)
 				}
-				countsAsAttempt := err != nil &&
+				local := err != nil && isLocal(err)
+				countsAsAttempt := err != nil && !local &&
 					(kind == tgclient.KindOther || kind == tgclient.KindFileReference || kind == tgclient.KindInaccessible)
 				if countsAsAttempt {
 					if ferr := d.Store.MediaAttemptFailed(context.WithoutCancel(ctx), j.Key, err.Error(), MaxAttempts); ferr != nil {
@@ -91,6 +98,11 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 					r.Done++
 				case err == nil && out == outSkipped:
 					r.Skipped++
+				case local:
+					if r.LocalErr == nil {
+						r.LocalErr = fmt.Errorf("media %s: %w", j.Key, err)
+					}
+					cancel(err)
 				case err == nil, kind == tgclient.KindFlood, kind == tgclient.KindCanceled:
 					r.Deferred++
 				case kind == tgclient.KindAuth:
@@ -117,12 +129,42 @@ feed:
 	return r, nil
 }
 
-func (d *Downloader) handle(ctx context.Context, j store.MediaJob) (outcome, error) {
-	if slices.Contains(d.SkipKinds, j.Kind) {
-		return outSkipped, d.Store.MediaSkipped(ctx, j.Key, "kind "+j.Kind+" is skipped by config")
+func isLocal(err error) bool {
+	var pathErr *fs.PathError
+	var linkErr *os.LinkError
+	return errors.As(err, &pathErr) || errors.As(err, &linkErr)
+}
+
+func (d *Downloader) skipReason(kind string, size int64) string {
+	if slices.Contains(d.SkipKinds, kind) {
+		return "kind " + kind + " is skipped by config"
 	}
-	if d.MaxFileSize > 0 && j.Size > d.MaxFileSize {
-		return outSkipped, d.Store.MediaSkipped(ctx, j.Key, fmt.Sprintf("size %d exceeds max_file_size %d", j.Size, d.MaxFileSize))
+	if d.MaxFileSize > 0 && size > d.MaxFileSize {
+		return fmt.Sprintf("size %d exceeds max_file_size %d", size, d.MaxFileSize)
+	}
+	return ""
+}
+
+// requeueSkipped makes a config change (higher limit, fewer skipped kinds)
+// apply to files skipped by earlier runs.
+func (d *Downloader) requeueSkipped(ctx context.Context) error {
+	skipped, err := d.Store.SkippedMedia(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range skipped {
+		if d.skipReason(m.Kind, m.Size) == "" {
+			if err := d.Store.RequeueMedia(ctx, m.Key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Downloader) handle(ctx context.Context, j store.MediaJob) (outcome, error) {
+	if reason := d.skipReason(j.Kind, j.Size); reason != "" {
+		return outSkipped, d.Store.MediaSkipped(ctx, j.Key, reason)
 	}
 	peer, ok := d.Peers[j.ChatID]
 	if !ok {

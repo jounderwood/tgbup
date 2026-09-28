@@ -58,6 +58,28 @@ func (s *Store) MediaSkipped(ctx context.Context, key, reason string) error {
 	return err
 }
 
+func (s *Store) SkippedMedia(ctx context.Context) ([]Media, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, kind, size FROM media WHERE status = 'skipped'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Media
+	for rows.Next() {
+		var m Media
+		if err := rows.Scan(&m.Key, &m.Kind, &m.Size); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RequeueMedia(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media SET status = 'pending', error = NULL WHERE key = ?`, key)
+	return err
+}
+
 func (s *Store) MediaAttemptFailed(ctx context.Context, key, errMsg string, maxAttempts int) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE media SET attempts = attempts + 1, error = ?,

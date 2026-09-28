@@ -26,7 +26,7 @@ type syncSummary struct {
 }
 
 func (s syncSummary) ok() bool {
-	return s.sync.OK() && s.media.AuthErr == nil && s.media.Failed == 0
+	return s.sync.OK() && s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
 }
 
 func (s syncSummary) print(w io.Writer) {
@@ -39,6 +39,9 @@ func (s syncSummary) print(w io.Writer) {
 		s.media.Done, s.media.Skipped, s.media.Deferred, s.media.Failed)
 	for _, err := range s.media.Errors {
 		fmt.Fprintf(w, "  %v\n", err)
+	}
+	if s.media.LocalErr != nil {
+		fmt.Fprintf(w, "media stopped by a local disk error: %v\n", s.media.LocalErr)
 	}
 }
 
