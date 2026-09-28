@@ -23,13 +23,20 @@ import (
 type syncSummary struct {
 	sync  syncer.Report
 	media media.Report
+	// unresolved lists configured includes that matched no dialog: such a chat
+	// silently stops being archived, so it fails the run.
+	unresolved []string
 }
 
 func (s syncSummary) ok() bool {
-	return s.sync.OK() && s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
+	return s.sync.OK() && len(s.unresolved) == 0 &&
+		s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
 }
 
 func (s syncSummary) print(w io.Writer) {
+	for _, u := range s.unresolved {
+		fmt.Fprintf(w, "config: %s\n", u)
+	}
 	fmt.Fprintf(w, "chats_synced=%d new_messages=%d deferred=%d newly_inaccessible=%v chat_errors=%d\n",
 		s.sync.Chats, s.sync.NewMessages, len(s.sync.Deferred), s.sync.NewlyInaccessible, len(s.sync.Failed))
 	for id, err := range s.sync.Failed {
@@ -122,7 +129,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		return syncSummary{}, err
 	}
 	targets, migrationWarnings := api.AddMigrated(ctx, targets)
-	for _, w := range append(warnings, migrationWarnings...) {
+	for _, w := range migrationWarnings {
 		log.Warn(w)
 	}
 	log.Info("targets selected", "count", len(targets))
@@ -139,7 +146,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	s := syncer.Syncer{
 		TG: api, Store: db, SelfID: self, Budget: cfg.Sync.RunTimeBudget.D(), PageSize: 100, Now: time.Now, Log: log,
 	}
-	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs)}
+	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings}
 	if sum.sync.AuthErr != nil {
 		return sum, sum.sync.AuthErr
 	}
