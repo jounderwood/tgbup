@@ -28,6 +28,13 @@ ON CONFLICT(id) DO NOTHING`
 			return fmt.Errorf("save user %d: %w", u.ID, err)
 		}
 	}
+	for _, p := range b.Peers {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO peers (id, title, username, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET title = excluded.title, username = excluded.username, updated_at = excluded.updated_at`,
+			p.ID, p.Title, p.Username, now); err != nil {
+			return fmt.Errorf("save peer %d: %w", p.ID, err)
+		}
+	}
 	for _, m := range b.Media {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO media (key, kind, file_name, mime, size) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING`,
@@ -113,6 +120,18 @@ func (s *Store) PinnedMessageIDs(ctx context.Context, chatID int64) ([]int, erro
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) PeerName(ctx context.Context, id int64) (Peer, bool, error) {
+	p := Peer{ID: id}
+	err := s.db.QueryRowContext(ctx, `SELECT title, username FROM peers WHERE id = ?`, id).Scan(&p.Title, &p.Username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Peer{}, false, nil
+	}
+	if err != nil {
+		return Peer{}, false, err
+	}
+	return p, true, nil
 }
 
 func (s *Store) CountMessages(ctx context.Context, chatID int64) (int, error) {

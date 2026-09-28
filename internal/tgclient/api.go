@@ -12,6 +12,7 @@ import (
 type Page struct {
 	Messages []tg.MessageClass
 	Users    []tg.UserClass
+	Chats    []tg.ChatClass
 }
 
 type Topic struct {
@@ -166,5 +167,5 @@ func toPage(res tg.MessagesMessagesClass) (Page, error) {
 	if !ok {
 		return Page{}, errors.New("unexpected messages.messagesNotModified")
 	}
-	return Page{Messages: m.GetMessages(), Users: m.GetUsers()}, nil
+	return Page{Messages: m.GetMessages(), Users: m.GetUsers(), Chats: m.GetChats()}, nil
 }

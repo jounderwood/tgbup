@@ -52,6 +52,25 @@ func TestSaveBatchWritesEverything(t *testing.T) {
 	}
 }
 
+func TestSaveBatchStoresPeerNames(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedChat(t, s, chatA)
+	for _, title := range []string{"Новости", "Новости 2.0"} {
+		b := Batch{ChatID: chatA, Peers: []Peer{{ID: -1000000000008, Title: title, Username: "news"}}}
+		if err := s.SaveBatch(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, ok, err := s.PeerName(ctx, -1000000000008)
+	if err != nil || !ok || p.Title != "Новости 2.0" || p.Username != "news" {
+		t.Fatalf("peer = %+v %v %v", p, ok, err)
+	}
+	if ids, _ := s.ActiveChatIDs(ctx); len(ids) != 1 {
+		t.Fatalf("peer names must not become archived chats: %v", ids)
+	}
+}
+
 func TestSaveBatchKeepsFirstVersionOfMessage(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)

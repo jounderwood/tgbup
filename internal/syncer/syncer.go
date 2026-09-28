@@ -185,7 +185,7 @@ func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) error {
 }
 
 func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page, cur store.Cursor) (int, error) {
-	b := store.Batch{ChatID: t.Chat.ID, Users: convert.Users(page.Users), Cursor: cur}
+	b := store.Batch{ChatID: t.Chat.ID, Users: convert.Users(page.Users), Peers: convert.Peers(page.Chats), Cursor: cur}
 	seen := map[string]bool{}
 	opts := convert.Options{IsForum: t.IsForum(), SelfID: s.SelfID}
 	for _, mc := range page.Messages {

@@ -216,6 +216,23 @@ func reactionsJSON(r tg.MessageReactions) (string, error) {
 	return string(b), err
 }
 
+func Peers(cs []tg.ChatClass) []store.Peer {
+	out := make([]store.Peer, 0, len(cs))
+	for _, cc := range cs {
+		switch c := cc.(type) {
+		case *tg.Chat:
+			out = append(out, store.Peer{ID: ChatID(c.ID), Title: c.Title})
+		case *tg.ChatForbidden:
+			out = append(out, store.Peer{ID: ChatID(c.ID), Title: c.Title})
+		case *tg.Channel:
+			out = append(out, store.Peer{ID: ChannelID(c.ID), Title: c.Title, Username: c.Username})
+		case *tg.ChannelForbidden:
+			out = append(out, store.Peer{ID: ChannelID(c.ID), Title: c.Title})
+		}
+	}
+	return out
+}
+
 func Users(us []tg.UserClass) []store.User {
 	out := make([]store.User, 0, len(us))
 	for _, uc := range us {

@@ -178,6 +178,30 @@ func TestEmptyMessageSkipped(t *testing.T) {
 	}
 }
 
+func TestPeers(t *testing.T) {
+	ps := convert.Peers([]tg.ChatClass{
+		&tg.Channel{ID: 8, Title: "Новости", Username: "news"},
+		&tg.Chat{ID: 3, Title: "Группа"},
+		&tg.ChannelForbidden{ID: 9, Title: "Закрытый"},
+		&tg.ChatEmpty{ID: 4},
+	})
+	want := []struct {
+		id    int64
+		title string
+	}{{-1000000000008, "Новости"}, {-3, "Группа"}, {-1000000000009, "Закрытый"}}
+	if len(ps) != len(want) {
+		t.Fatalf("peers = %+v", ps)
+	}
+	for i, w := range want {
+		if ps[i].ID != w.id || ps[i].Title != w.title {
+			t.Errorf("peer %d = %+v, want %d %q", i, ps[i], w.id, w.title)
+		}
+	}
+	if ps[0].Username != "news" {
+		t.Errorf("username = %q", ps[0].Username)
+	}
+}
+
 func TestUsers(t *testing.T) {
 	us := convert.Users([]tg.UserClass{
 		&tg.User{ID: 1, FirstName: "A", Username: "a", Bot: true},

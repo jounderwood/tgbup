@@ -72,7 +72,10 @@ func (f *fakeTG) check(chat int64) error {
 }
 
 func (f *fakeTG) page(chat int64, ids []int) tgclient.Page {
-	p := tgclient.Page{Users: []tg.UserClass{&tg.User{ID: 5, FirstName: "Ann"}}}
+	p := tgclient.Page{
+		Users: []tg.UserClass{&tg.User{ID: 5, FirstName: "Ann"}},
+		Chats: []tg.ChatClass{&tg.Channel{ID: 8, Title: "Новости"}},
+	}
 	for _, id := range ids {
 		p.Messages = append(p.Messages, f.message(chat, id))
 	}
@@ -188,6 +191,9 @@ func TestInitialSyncBackfillsEverything(t *testing.T) {
 	cur, _, _ := e.st.GetCursor(context.Background(), a.Chat.ID)
 	if cur != (store.Cursor{NewestID: 250, OldestID: 1, BackfillDone: true}) {
 		t.Fatalf("cursor = %+v", cur)
+	}
+	if p, ok, _ := e.st.PeerName(context.Background(), -1000000000008); !ok || p.Title != "Новости" {
+		t.Fatalf("forward-source name not stored: %+v %v", p, ok)
 	}
 }
 

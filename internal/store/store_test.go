@@ -28,13 +28,13 @@ func count(t *testing.T, s *Store, query string, args ...any) int {
 
 func TestOpenCreatesSchema(t *testing.T) {
 	s := openTest(t)
-	for _, table := range []string{"chats", "topics", "users", "messages", "media", "message_media", "sync_cursors", "meta"} {
+	for _, table := range []string{"chats", "topics", "users", "peers", "messages", "media", "message_media", "sync_cursors", "meta"} {
 		if count(t, s, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table) != 1 {
 			t.Errorf("table %s missing", table)
 		}
 	}
 	v, ok, err := s.Meta(context.Background(), "schema_version")
-	if err != nil || !ok || v != "1" {
+	if err != nil || !ok || v != "2" {
 		t.Fatalf("schema_version = %q %v %v", v, ok, err)
 	}
 	var mode string

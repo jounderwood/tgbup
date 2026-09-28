@@ -77,9 +77,16 @@ type Cursor struct {
 	BackfillDone bool
 }
 
+type Peer struct {
+	ID       int64
+	Title    string
+	Username string
+}
+
 type Batch struct {
 	ChatID   int64
 	Users    []User
+	Peers    []Peer
 	Messages []Message
 	Media    []Media
 	Cursor   Cursor

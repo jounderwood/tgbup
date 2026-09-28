@@ -58,7 +58,10 @@ func TestHistoryBeforeFiltersAndSortsDesc(t *testing.T) {
 		if req.OffsetID != 50 || req.Limit != 100 || req.AddOffset != 0 {
 			t.Fatalf("request = %+v", req)
 		}
-	}).ThenResult(&tg.MessagesChannelMessages{Messages: msgs(48, 49, 50)})
+	}).ThenResult(&tg.MessagesChannelMessages{
+		Messages: msgs(48, 49, 50),
+		Chats:    []tg.ChatClass{&tg.Channel{ID: 8, Title: "Новости", Photo: &tg.ChatPhotoEmpty{}}},
+	})
 
 	page, err := tgclient.NewAPI(tg.NewClient(mock)).HistoryBefore(context.Background(), peer, 50, 100)
 	if err != nil {
@@ -66,6 +69,9 @@ func TestHistoryBeforeFiltersAndSortsDesc(t *testing.T) {
 	}
 	if got := ids(page); !slices.Equal(got, []int{49, 48}) {
 		t.Fatalf("ids = %v", got)
+	}
+	if len(page.Chats) != 1 {
+		t.Fatalf("chats vector dropped: %+v", page.Chats)
 	}
 }
 
