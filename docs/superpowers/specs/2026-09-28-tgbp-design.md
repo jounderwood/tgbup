@@ -12,7 +12,7 @@
 - **Главное назначение:** читаемый архив «на всякий случай».
 - **Nice to have (не v1):** восстановление истории обратно в Telegram. Формат
   данных v1 должен это позволять (сырые сообщения хранятся без потерь).
-- **Критерий успеха:** запуск по расписанию без участия человека; архив
+- **Критерий успеха:** запуск по расписанию 4 раза в сутки без участия человека; архив
   содержит все сообщения выбранных чатов, включая служебные (закрепы), ссылки,
   медиа и файлы; есть зашифрованные версионные бэкапы в двух облаках; о сбоях
   и о «тишине» узнаём из уведомлений.
@@ -87,7 +87,8 @@ backup:
   repositories:
     - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbp-restic"
     - "rclone:gdrive:tgbp-restic"
-  retention: {daily: 7, weekly: 4, monthly: 12}
+  retention: {last: 4, daily: 7, weekly: 4, monthly: 12}
+  prune_every: 24h                   # forget — каждый запуск, prune — не чаще
   check_every: 30d
   check_read_subset: 5%
 notify:
@@ -138,7 +139,7 @@ media         (key PK, kind, file_name, mime, size, local_path,
                status [pending|done|failed|skipped], error, attempts)
 message_media (chat_id, message_id, media_key)
 sync_cursors  (chat_id PK, newest_id, oldest_id, backfill_done BOOL, updated_at)
-meta          (key PK, value)   -- schema_version, last_backup_at, last_check_at, last_summary_at
+meta          (key PK, value)   -- schema_version, last_backup_at, last_prune_at, last_check_at, last_summary_at
 ```
 
 Решения:
@@ -202,8 +203,12 @@ meta          (key PK, value)   -- schema_version, last_backup_at, last_check_at
   файл — именно он попадает в снимок вместо живой БД.
 - Пути снимка: копия БД, `media/`, `config.yaml`. Не входят: `views/`,
   сессия, `secrets.env`.
-- Для каждого репозитория: `restic backup` → `restic forget --prune` по
-  retention. Раз в `check_every`: `restic check --read-data-subset=<N>`.
+- Для каждого репозитория: `restic backup` → `restic forget` по retention
+  (каждый запуск, дёшево). `restic prune` — не чаще `prune_every` (переписывает
+  pack-файлы, дорого на rclone/Google Drive). Раз в `check_every`:
+  `restic check --read-data-subset=<N>`. Отметки времени — в `meta`.
+- Retention по умолчанию: 4 последних снимка (≈ последние сутки при 4
+  запусках в день), 7 дневных, 4 недельных, 12 месячных.
 - Репозитории v1: папка iCloud Drive (пометить «Всегда хранить на этом Mac»)
   и Google Drive через rclone. Смена/добавление репозитория — правка конфига;
   перенос истории — `restic copy`.
@@ -257,8 +262,10 @@ frontmatter (чат, период, число сообщений), медиа ч
 2. `api_id`/`api_hash` с my.telegram.org; бот через @BotFather, узнать `chat_id`.
 3. `rclone config` → Google Drive; заполнить `config.yaml`, `secrets.env`.
 4. `tgbp backup --init`, `tgbp login`, `tgbp sync --takeout`.
-5. Установить `deploy/launchd/*.plist` (ежедневно 03:00; пропущенный из-за
-   сна запуск выполняется после пробуждения).
+5. Установить `deploy/launchd/*.plist`: `tgbp run` 4 раза в сутки
+   (`StartCalendarInterval` 03:00, 09:00, 15:00, 21:00). Пропущенные из-за сна
+   запуски launchd схлопывает в один после пробуждения; пересечение запусков
+   исключает `run.lock`. `run_time_budget` (2h) меньше интервала (6h).
 
 ## 14. Вне области v1
 
