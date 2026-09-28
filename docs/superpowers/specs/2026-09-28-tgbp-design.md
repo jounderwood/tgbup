@@ -1,0 +1,268 @@
+# tgbp — бэкап Telegram-чатов: дизайн v1
+
+Дата: 2026-09-28
+Статус: на ревью
+
+## 1. Цель и контекст
+
+Внутренняя тула для автономного архивирования Telegram: личные чаты, группы и
+форум-группы (с топиками) — сообщения, медиа, документы. В чатах хранится
+семейная «база знаний» и бизнес-переписка.
+
+- **Главное назначение:** читаемый архив «на всякий случай».
+- **Nice to have (не v1):** восстановление истории обратно в Telegram. Формат
+  данных v1 должен это позволять (сырые сообщения хранятся без потерь).
+- **Критерий успеха:** запуск по расписанию без участия человека; архив
+  содержит все сообщения выбранных чатов, включая служебные (закрепы), ссылки,
+  медиа и файлы; есть зашифрованные версионные бэкапы в двух облаках; о сбоях
+  и о «тишине» узнаём из уведомлений.
+
+## 2. Ограничения и допущения
+
+- Работа от пользовательского аккаунта через MTProto (Bot API не читает
+  историю). Бэкапятся только собственные аккаунты.
+- Секретные чаты через API недоступны — вне области.
+- Хост v1: Mac (может спать). Позже — NAS; тула должна переноситься без
+  переписывания (нет привязки к macOS API, пути XDG, конфиг/секреты через файлы и env).
+- Объём: старт < 10 ГБ медиа, рост до ~500 ГБ, 20–100 чатов.
+- Однопользовательская тула, один аккаунт на инсталляцию.
+
+## 3. Стек и зависимости
+
+| Компонент | Выбор | Лицензия |
+|---|---|---|
+| Язык | Go, один статический бинарник `tgbp` | — |
+| MTProto | `github.com/gotd/td` | MIT |
+| FloodWait / ratelimit | `github.com/gotd/contrib` | MIT |
+| SQLite | `modernc.org/sqlite` (pure Go, без cgo) | BSD-3-Clause |
+| Бэкап | `restic` (внешний бинарник) | BSD-2-Clause |
+| Облачные бэкенды | `rclone` (внешний бинарник) | MIT |
+| Тесты/линт | `gotestsum`, `golangci-lint`, `Makefile` | — |
+
+Отвергнуто: `tdl` (AGPL-3.0; экспорт пропускает служебные сообщения, по
+умолчанию только медиа, один чат/топик за вызов), форк `tg-archive` (одна
+группа, нет топиков/закрепов/пересылок), Telegram Desktop export (не
+автоматизируется), Python/Telethon (предпочтение Go: бинарник, конкурентная
+загрузка медиа).
+
+## 4. Раскладка на диске
+
+Тула, конфиг, секреты и данные разделены. Все пути переопределяются env.
+
+```
+~/.config/tgbp/config.yaml     # конфиг (TGBP_CONFIG)
+~/.config/tgbp/secrets.env     # chmod 600 (TGBP_SECRETS); поддержка *_FILE
+~/.local/state/tgbp/session    # chmod 600, сессия MTProto (TGBP_STATE_DIR)
+~/.local/state/tgbp/run.lock   # блокировка от параллельных запусков
+<archive_dir>/                 # только данные, путь из конфига
+├── archive.sqlite
+├── media/<kind>/<telegram_id>.<ext>
+└── views/                     # генерируется, в бэкап не входит
+    ├── html/
+    └── md/                    # Obsidian vault; _media -> ../../media (symlink)
+```
+
+Секреты (`secrets.env`): `TG_API_ID`, `TG_API_HASH`, `BOT_TOKEN`,
+`BOT_CHAT_ID`, `RESTIC_PASSWORD`, `RCLONE_CONFIG_PASS`.
+
+Живой архив **не** кладётся в синхронизируемую папку (iCloud/Dropbox) и не
+открывается по SMB/NFS — только локальный диск хоста, где крутится тула.
+
+### Пример config.yaml
+
+```yaml
+archive_dir: ~/TelegramArchive
+targets:
+  folders: ["Семья", "Бизнес"]      # папки Telegram (dialog filters)
+  include: ["@some_group", -1001234567890]
+  exclude: [-1009876543210]
+media:
+  max_file_size: 2GB                 # больше — status=skipped
+  skip_kinds: []                     # например [sticker]
+  workers: 4
+sync:
+  run_time_budget: 2h                # бюджет на дозагрузку истории за запуск
+  max_flood_wait: 5m
+backup:
+  repositories:
+    - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbp-restic"
+    - "rclone:gdrive:tgbp-restic"
+  retention: {daily: 7, weekly: 4, monthly: 12}
+  check_every: 30d
+  check_read_subset: 5%
+notify:
+  summary_every: 7d                  # шлёт первый запуск после истечения интервала
+```
+
+## 5. Архитектура
+
+Бинарник `tgbp`, подкоманды:
+
+| Команда | Что делает |
+|---|---|
+| `tgbp login` | Интерактивный вход (телефон, код, 2FA), сохраняет сессию |
+| `tgbp sync [--takeout]` | Выгрузка сообщений и медиа; `--takeout` — для первичной выкачки истории |
+| `tgbp render` | Генерация `views/html` и `views/md` из БД |
+| `tgbp backup [--init]` | Снимок restic во все репозитории + retention; `--init` создаёт репозитории |
+| `tgbp run` | `sync → render → backup → notify`; её вызывает планировщик |
+
+Расписание вне бинарника (launchd на Mac, cron/systemd на NAS).
+
+Пакеты:
+
+| Пакет | Ответственность | Зависит от |
+|---|---|---|
+| `config` | YAML + секреты из env/файлов, пути | — |
+| `tg` | Клиент gotd: auth, файловая сессия, floodwait/ratelimit middleware, резолв целей (папки + include − exclude). Экспортирует интерфейс для фейка в тестах | `config` |
+| `store` | SQLite: схема, миграции, запись пачек, курсоры | — |
+| `convert` | `tg.Message`/`tg.MessageService` → строки `store` (текст, entities, ответы, пересылки, реакции, топик, медиа) | — |
+| `syncer` | Инкрементальная выгрузка по чатам, закрепы, постановка медиа в очередь | `tg`, `store`, `convert` |
+| `media` | Пул загрузчиков с докачкой | `tg`, `store` |
+| `render` | HTML + Markdown из БД, в Telegram не ходит | `store` |
+| `backup` | integrity_check, консистентная копия БД, restic backup/forget/prune/check | `config` |
+| `notify` | Сообщения через Bot API (`sendMessage`) | `config` |
+
+## 6. Модель данных (SQLite)
+
+```
+chats         (id PK, type [private|group|supergroup|forum|channel], title, username,
+               folders_json, migrated_from_id, status [active|inaccessible],
+               first_seen_at, last_synced_at)
+topics        (chat_id, topic_id, title, closed, created_at)           PK(chat_id, topic_id)
+users         (id PK, first_name, last_name, username, is_bot, updated_at)
+messages      (chat_id, id, topic_id NULL, date, from_id, text, entities_json,
+               reply_to_id, fwd_from_json, grouped_id, reactions_json,
+               service_action_json NULL, pinned BOOL, edit_date,
+               raw BLOB, tl_layer)                                     PK(chat_id, id)
+media         (key PK, kind, file_name, mime, size, local_path,
+               status [pending|done|failed|skipped], error, attempts)
+message_media (chat_id, message_id, media_key)
+sync_cursors  (chat_id PK, newest_id, oldest_id, backfill_done BOOL, updated_at)
+meta          (key PK, value)   -- schema_version, last_backup_at, last_check_at, last_summary_at
+```
+
+Решения:
+- **Все сообщения сохраняются**, включая служебные (`service_action_json`) и
+  неизвестные типы; `raw` — TL-бинарная сериализация без потерь + `tl_layer`.
+- **Медиа:** `key` = `<kind>:<telegram photo/document id>`, файл на диске один,
+  даже если переслан в несколько чатов. Опросы (с итогами на момент выгрузки),
+  контакты, гео, dice — структурированные данные в `raw`/JSON, не файлы.
+  Виды файлов: photo, video, video_note (кружок), voice, audio, document,
+  sticker, animation.
+- **Ссылки** хранятся в `text` + `entities_json` (включая скрытые text_url),
+  превью — в `raw`. Отдельной таблицы нет.
+- **Топики:** история форума идёт одним потоком, `topic_id` берётся из
+  `reply_to.top_msg_id` / `reply_to_msg_id` при `forum_topic`; сообщение,
+  создающее топик, — сам `topic_id`; без признака топика — General (`topic_id = 1`).
+  Названия — из `channels.getForumTopics`.
+- **Папки:** чат может входить в несколько папок Telegram (`folders_json`);
+  в HTML показывается в каждой из них.
+- **Закрепы:** история — служебные сообщения `MessageActionPinMessage`;
+  текущее состояние — `messages.pinned`, обновляется каждым sync запросом с
+  фильтром закреплённых.
+- **Миграция группы в супергруппу** связывается через `migrated_from_id`.
+- **Правки и удаления не отслеживаются:** сообщение сохраняется в виде первой
+  выгрузки; удалённое в Telegram остаётся в архиве.
+
+## 7. Поток выгрузки
+
+1. Взять `run.lock`; занят — выйти с кодом 0 и логом.
+2. Резолв целей → upsert `chats`, `topics`.
+3. Для каждого чата:
+   - новые сообщения: всё с `id > newest_id`;
+   - дозагрузка: от `oldest_id` вниз, пока `backfill_done = false` и не
+     исчерпан `run_time_budget`;
+   - каждая пачка (≤100) + её users + сдвиг курсора — **одна транзакция**;
+   - обновить `pinned` по чату.
+4. Медиа: `workers` параллельных загрузок `pending`; запись в
+   `<path>.part` с докачкой по offset, по завершении — rename, `status=done`.
+5. `render` → `backup` → `notify`.
+
+Первичная выкачка: `tgbp sync --takeout` (takeout-сессия, подтверждение в
+клиенте, пониженные flood-лимиты). Плановые запуски — без takeout.
+
+## 8. Обработка ошибок
+
+| Ситуация | Поведение |
+|---|---|
+| FloodWait ≤ `max_flood_wait` | ждать и продолжить |
+| FloodWait больше | отложить чат до следующего запуска, продолжить остальные |
+| `FILE_REFERENCE_EXPIRED` | перечитать сообщение, повторить загрузку |
+| Ошибка загрузки файла | `attempts++`, повтор в следующих запусках; после 5 неудач — `status=failed`, больше не пытаемся, файл попадает в еженедельную сводку |
+| Чат недоступен | `chats.status=inaccessible`, данные остаются, уведомление один раз |
+| Сессия отозвана | прервать sync, уведомить «нужен `tgbp login`», render и backup выполнить |
+| `integrity_check` не прошёл | бэкап не делать, уведомить |
+| Сбой одного restic-репозитория | остальные продолжить, уведомить |
+
+Сбой одного чата не прерывает запуск. Код выхода ≠ 0 при любой ошибке.
+
+## 9. Бэкап
+
+- Перед бэкапом: `PRAGMA integrity_check`, затем `VACUUM INTO` во временный
+  файл — именно он попадает в снимок вместо живой БД.
+- Пути снимка: копия БД, `media/`, `config.yaml`. Не входят: `views/`,
+  сессия, `secrets.env`.
+- Для каждого репозитория: `restic backup` → `restic forget --prune` по
+  retention. Раз в `check_every`: `restic check --read-data-subset=<N>`.
+- Репозитории v1: папка iCloud Drive (пометить «Всегда хранить на этом Mac»)
+  и Google Drive через rclone. Смена/добавление репозитория — правка конфига;
+  перенос истории — `restic copy`.
+
+## 10. Просмотр (render)
+
+Полная перегенерация на каждом запуске; файл перезаписывается только при
+изменении содержимого; сироты (удалённые/переименованные чаты) удаляются.
+Имена папок: `<название> (<id>)`.
+
+**HTML** (`views/html`, статический, без JS, относительные пути):
+- главная — чаты по папкам Telegram; форум → список топиков; страницы по месяцам;
+- сообщение: автор, время, цитата ответа с якорем, «переслано от», реакции,
+  кликабельные ссылки (включая скрытые), inline фото/видео/аудио, кружки —
+  круглое видео, файлы ссылками, альбомы сеткой, опросы, служебные по центру;
+- на чат: разделы «Закреплённые» и «Ссылки» (собираются из entities при рендере);
+- неизвестный тип сообщения — плашка `[тип: …]`.
+
+**Markdown** (`views/md`, Obsidian vault): `<Папка>/<Чат>/<Топик>/YYYY-MM.md`,
+frontmatter (чат, период, число сообщений), медиа через `![[_media/...]]`.
+Пользовательских заметок внутри `views/` нет — всё перезаписывается.
+
+## 11. Уведомления
+
+Через Bot API `sendMessage` (токен и chat_id из секретов), без постоянного
+процесса:
+- при любой ошибке запуска — сразу, с перечнем ошибок;
+- сводка раз в `summary_every` (по умолчанию 7 дней, отправляет первый запуск
+  после истечения интервала): новых сообщений/медиа, размер архива, время
+  последнего успешного бэкапа по каждому репозиторию, окончательно
+  не скачанные файлы.
+  Отсутствие сводки — сигнал, что планировщик умер.
+
+## 12. Тестирование
+
+- `convert`: фикстуры сообщений gotd — текст со скрытыми ссылками, ответ,
+  пересылка, альбом, опрос, кружок, голосовое, «закрепил», сообщение в топике,
+  неизвестный тип; проверка, что ничего не теряется.
+- `store`: миграции, атомарность пачки + курсора, обновление закрепов.
+- `syncer` против фейкового `tg`-клиента: FloodWait (короткий/длинный),
+  expired file reference, недоступный чат, падение посреди выгрузки →
+  повторный запуск без дублей и дыр.
+- `render`: golden-файлы HTML/MD для фиксированной маленькой БД.
+- `backup`: интеграционный тест с реальным `restic` на временном локальном
+  репозитории (skip, если restic не установлен).
+- Ручной smoke перед боевым запуском: тестовая форум-группа со всеми типами сообщений.
+
+## 13. Развёртывание (Mac)
+
+1. `brew install restic rclone`; `make build`.
+2. `api_id`/`api_hash` с my.telegram.org; бот через @BotFather, узнать `chat_id`.
+3. `rclone config` → Google Drive; заполнить `config.yaml`, `secrets.env`.
+4. `tgbp backup --init`, `tgbp login`, `tgbp sync --takeout`.
+5. Установить `deploy/launchd/*.plist` (ежедневно 03:00; пропущенный из-за
+   сна запуск выполняется после пробуждения).
+
+## 14. Вне области v1
+
+MCP-сервер и команды боту; поиск (FTS5 — добавляется миграцией по
+существующим данным); транскрибация голосовых/кружков (будет полями у
+медиа); восстановление в Telegram; Dockerfile и NAS; отдельный формат
+экспорта; отслеживание правок и удалений; секретные чаты.
