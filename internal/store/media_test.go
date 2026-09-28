@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+func TestPendingMediaPairsChatAndMessageFromOneLink(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	const private = int64(12345)
+	seedChat(t, s, chatA)
+	if err := s.UpsertChat(ctx, Chat{ID: private, Type: ChatPrivate}); err != nil {
+		t.Fatal(err)
+	}
+	priv := Message{ChatID: private, ID: 10, Date: 1, Raw: []byte{1}, TLLayer: 1, MediaKeys: []string{"photo:1"}}
+	if err := s.SaveBatch(ctx, Batch{ChatID: private, Media: []Media{{Key: "photo:1", Kind: "photo"}}, Messages: []Message{priv}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveBatch(ctx, Batch{ChatID: chatA, Media: []Media{{Key: "photo:1", Kind: "photo"}}, Messages: []Message{msg(500, "photo:1")}}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.PendingMedia(ctx)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %+v %v", jobs, err)
+	}
+	if _, err := s.MessageRaw(ctx, jobs[0].ChatID, jobs[0].MessageID); err != nil {
+		t.Fatalf("job points at a non-existent message %d/%d: %v", jobs[0].ChatID, jobs[0].MessageID, err)
+	}
+}
+
 func TestMediaQueueLifecycle(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)

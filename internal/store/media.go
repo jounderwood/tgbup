@@ -25,11 +25,13 @@ type MediaInfo struct {
 }
 
 func (s *Store) PendingMedia(ctx context.Context) ([]MediaJob, error) {
+	// chat_id and message_id must come from the same link: a file forwarded between
+	// chats has several links, and mixing them points at a message that does not exist.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT m.key, m.kind, m.file_name, m.mime, m.size, m.attempts, min(mm.chat_id), min(mm.message_id)
-FROM media m JOIN message_media mm ON mm.media_key = m.key
+SELECT m.key, m.kind, m.file_name, m.mime, m.size, m.attempts, mm.chat_id, mm.message_id
+FROM media m
+JOIN message_media mm ON mm.rowid = (SELECT min(rowid) FROM message_media WHERE media_key = m.key)
 WHERE m.status = 'pending'
-GROUP BY m.key
 ORDER BY m.rowid`)
 	if err != nil {
 		return nil, err
