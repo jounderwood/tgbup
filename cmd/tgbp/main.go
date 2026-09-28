@@ -43,6 +43,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return 0
 	case "login":
 		return cmdLogin(ctx, env)
+	case "sync":
+		return cmdSync(ctx, args[1:], env)
 	default:
 		fmt.Fprintf(env.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
