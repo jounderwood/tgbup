@@ -41,6 +41,8 @@ func run(ctx context.Context, args []string, env Env) int {
 	case "version":
 		fmt.Fprintln(env.Stdout, version)
 		return 0
+	case "login":
+		return cmdLogin(ctx, env)
 	default:
 		fmt.Fprintf(env.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
