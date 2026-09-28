@@ -164,8 +164,15 @@ func TestChatStatusLifecycle(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if c.Status != ChatActive || c.Type != ChatForum || c.Title != "B" || c.MigratedFromID != -42 || !slices.Equal(c.Folders, []string{"Семья"}) {
+	// Upsert refreshes metadata but must not reactivate: only a successful sync does.
+	if c.Status != ChatInaccessible || c.Type != ChatForum || c.Title != "B" || c.MigratedFromID != -42 || !slices.Equal(c.Folders, []string{"Семья"}) {
 		t.Fatalf("chat = %+v", c)
+	}
+	if err := s.MarkActive(ctx, chatA); err != nil {
+		t.Fatal(err)
+	}
+	if c, _, _ := s.Chat(ctx, chatA); c.Status != ChatActive {
+		t.Fatalf("status after MarkActive = %s", c.Status)
 	}
 }
 

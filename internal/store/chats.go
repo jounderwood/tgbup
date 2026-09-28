@@ -24,8 +24,7 @@ ON CONFLICT(id) DO UPDATE SET
   title = excluded.title,
   username = excluded.username,
   folders_json = excluded.folders_json,
-  migrated_from_id = COALESCE(excluded.migrated_from_id, chats.migrated_from_id),
-  status = 'active'`,
+  migrated_from_id = COALESCE(excluded.migrated_from_id, chats.migrated_from_id)`,
 		c.ID, c.Type, c.Title, c.Username, string(folders), nullInt(c.MigratedFromID), time.Now().Unix())
 	return err
 }
@@ -76,6 +75,11 @@ func (s *Store) MarkInaccessible(ctx context.Context, id int64) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+func (s *Store) MarkActive(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET status = 'active' WHERE id = ?`, id)
+	return err
 }
 
 func (s *Store) UpsertTopics(ctx context.Context, topics []Topic) error {
