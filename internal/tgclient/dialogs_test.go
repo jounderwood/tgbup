@@ -7,7 +7,7 @@ import (
 	"github.com/gotd/td/telegram/query/dialogs"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 func TestMergeDialogsDeduplicatesArchived(t *testing.T) {

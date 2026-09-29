@@ -7,7 +7,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
 )
 
 func TestPeerIDs(t *testing.T) {

@@ -27,17 +27,17 @@ func ResolvePaths(getenv func(string) string) (Paths, error) {
 	}
 	p := Paths{
 		Home:     home,
-		Config:   filepath.Join(cfgDir, "tgbp", "config.yaml"),
-		Secrets:  filepath.Join(cfgDir, "tgbp", "secrets.env"),
-		StateDir: filepath.Join(stateDir, "tgbp"),
+		Config:   filepath.Join(cfgDir, "tgbup", "config.yaml"),
+		Secrets:  filepath.Join(cfgDir, "tgbup", "secrets.env"),
+		StateDir: filepath.Join(stateDir, "tgbup"),
 	}
-	if v := getenv("TGBP_CONFIG"); v != "" {
+	if v := getenv("TGBUP_CONFIG"); v != "" {
 		p.Config = v
 	}
-	if v := getenv("TGBP_SECRETS"); v != "" {
+	if v := getenv("TGBUP_SECRETS"); v != "" {
 		p.Secrets = v
 	}
-	if v := getenv("TGBP_STATE_DIR"); v != "" {
+	if v := getenv("TGBUP_STATE_DIR"); v != "" {
 		p.StateDir = v
 	}
 	return p, nil

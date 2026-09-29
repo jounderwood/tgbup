@@ -11,7 +11,7 @@ import (
 
 var version = "dev"
 
-const usage = `usage: tgbp <command> [flags]
+const usage = `usage: tgbup <command> [flags]
 
 commands:
   login     interactive Telegram login, stores the session

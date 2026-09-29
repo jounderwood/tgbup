@@ -1,4 +1,4 @@
-module gitlab.com/joeunderwood/tgbp
+module gitlab.com/joeunderwood/tgbup
 
 go 1.26.0
 

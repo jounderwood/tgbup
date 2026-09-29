@@ -27,7 +27,7 @@ type Options struct {
 	MaxFloodWait time.Duration
 }
 
-var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbp login`")
+var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbup login`")
 
 func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegram.Client) error) error {
 	if err := os.MkdirAll(filepath.Dir(o.SessionPath), 0o700); err != nil {
@@ -40,7 +40,7 @@ func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegra
 			floodwait.NewSimpleWaiter().WithMaxWait(o.MaxFloodWait),
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
 		},
-		Device: telegram.DeviceConfig{DeviceModel: "tgbp", SystemVersion: runtime.GOOS, AppVersion: o.Version},
+		Device: telegram.DeviceConfig{DeviceModel: "tgbup", SystemVersion: runtime.GOOS, AppVersion: o.Version},
 	})
 	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
 }

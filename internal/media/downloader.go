@@ -15,9 +15,9 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 // upload.getFile needs offset and limit to be multiples of 4 KiB with 1 MiB divisible

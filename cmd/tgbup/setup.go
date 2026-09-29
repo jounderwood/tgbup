@@ -4,8 +4,8 @@ import (
 	"errors"
 	"io/fs"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type setup struct {

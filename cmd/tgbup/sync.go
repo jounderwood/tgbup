@@ -13,11 +13,11 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/media"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/syncer"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/media"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/syncer"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type syncSummary struct {

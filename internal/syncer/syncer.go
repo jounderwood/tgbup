@@ -8,9 +8,9 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type Syncer struct {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/gotd/td/tgerr"
 
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func TestClassify(t *testing.T) {

@@ -1,21 +1,21 @@
-# tgbp — ядро выгрузки: план реализации (1 из 3)
+# tgbup — ядро выгрузки: план реализации (1 из 3)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** бинарник `tgbp` с командами `login` и `sync`, который инкрементально выкачивает выбранные чаты Telegram (включая форумы, служебные сообщения и медиа) в SQLite + `media/`.
+**Goal:** бинарник `tgbup` с командами `login` и `sync`, который инкрементально выкачивает выбранные чаты Telegram (включая форумы, служебные сообщения и медиа) в SQLite + `media/`.
 
 **Architecture:** Go-бинарник на `gotd/td`. Пакеты: `config` (YAML + секреты), `store` (SQLite, источник правды), `convert` (gotd-сообщения → строки БД, без сети), `tgclient` (тонкий слой над `*tg.Client` + выбор чатов + подключение), `syncer` (курсоры, дозагрузка, ошибки), `media` (очередь загрузки с докачкой). `syncer` и `media` зависят от интерфейса `tgclient.Telegram` и тестируются на фейке.
 
 **Tech Stack:** Go ≥ 1.25, `github.com/gotd/td`, `github.com/gotd/contrib`, `modernc.org/sqlite`, `go.yaml.in/yaml/v3`, `golang.org/x/term`, `golang.org/x/time`; `gotestsum`, `golangci-lint`.
 
-**Spec:** `docs/superpowers/specs/2026-09-28-tgbp-design.md` (разделы 3–8, 12, 13). Планы 2 (render) и 3 (backup, notify, `run`, launchd) — отдельно.
+**Spec:** `docs/superpowers/specs/2026-09-28-tgbup-design.md` (разделы 3–8, 12, 13). Планы 2 (render) и 3 (backup, notify, `run`, launchd) — отдельно.
 
 ## Global Constraints
 
-- Go ≥ 1.25 (требование `gotd/td`, `go 1.25.0` в его go.mod). Модуль: `gitlab.com/joeunderwood/tgbp`.
+- Go ≥ 1.25 (требование `gotd/td`, `go 1.25.0` в его go.mod). Модуль: `gitlab.com/joeunderwood/tgbup`.
 - Сборка без cgo (`CGO_ENABLED=0`); никаких macOS-специфичных API (переезд на NAS/Linux).
 - Зависимости только из списка в Tech Stack; любая новая — проверить лицензию (разрешены MIT, Apache-2.0, BSD-2/3, ISC, MPL-2.0, Unlicense, CC0).
-- Пути: `~/.config/tgbp/config.yaml` (`TGBP_CONFIG`), `~/.config/tgbp/secrets.env` (`TGBP_SECRETS`, chmod 600, поддержка `*_FILE`), `~/.local/state/tgbp/` (`TGBP_STATE_DIR`: `session`, `run.lock`); учитывать `XDG_CONFIG_HOME`/`XDG_STATE_HOME`.
+- Пути: `~/.config/tgbup/config.yaml` (`TGBUP_CONFIG`), `~/.config/tgbup/secrets.env` (`TGBUP_SECRETS`, chmod 600, поддержка `*_FILE`), `~/.local/state/tgbup/` (`TGBUP_STATE_DIR`: `session`, `run.lock`); учитывать `XDG_CONFIG_HOME`/`XDG_STATE_HOME`.
 - Данные: `<archive_dir>/archive.sqlite`, `<archive_dir>/media/<kind>/<telegram_id>.<ext>`.
 - ID чатов — формат Bot API: пользователь `id`, группа `-id`, канал/супергруппа `-1000000000000 - id`.
 - Сообщение сохраняется в виде первой выгрузки (`ON CONFLICT DO NOTHING`); правки/удаления не отслеживаются.
@@ -37,11 +37,11 @@
 
 ```
 go.mod, go.sum, Makefile, .gitignore, .golangci.yml, README.md
-cmd/tgbp/main.go          # диспетчер подкоманд, Env
-cmd/tgbp/setup.go         # загрузка путей/конфига/секретов
-cmd/tgbp/login.go         # tgbp login
-cmd/tgbp/sync.go          # tgbp sync
-cmd/tgbp/lock.go          # flock на run.lock
+cmd/tgbup/main.go          # диспетчер подкоманд, Env
+cmd/tgbup/setup.go         # загрузка путей/конфига/секретов
+cmd/tgbup/login.go         # tgbup login
+cmd/tgbup/sync.go          # tgbup sync
+cmd/tgbup/lock.go          # flock на run.lock
 internal/config/{config,paths,secrets}.go
 internal/store/store.go, migrations/001_init.sql, types.go, chats.go, batch.go, media.go
 internal/convert/{ids,message,media}.go
@@ -55,8 +55,8 @@ internal/media/{path,downloader}.go
 ### Task 1: Тулчейн и каркас
 
 **Files:**
-- Create: `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `cmd/tgbp/main.go`
-- Test: `cmd/tgbp/main_test.go`
+- Create: `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `cmd/tgbup/main.go`
+- Test: `cmd/tgbup/main_test.go`
 
 **Interfaces:**
 - Produces: `type Env struct{ Stdin io.Reader; Stdout, Stderr io.Writer; Getenv func(string) string }`, `func run(ctx context.Context, args []string, env Env) int` — в следующие задачи добавляются ветки `login`, `sync`.
@@ -74,13 +74,13 @@ brew install gotestsum golangci-lint
 - [ ] **Step 2: Инициализировать модуль**
 
 ```bash
-go mod init gitlab.com/joeunderwood/tgbp
+go mod init gitlab.com/joeunderwood/tgbup
 go mod edit -go=1.25
 ```
 
 - [ ] **Step 3: Написать падающий тест**
 
-`cmd/tgbp/main_test.go`:
+`cmd/tgbup/main_test.go`:
 
 ```go
 package main
@@ -107,7 +107,7 @@ func TestRunWithoutArgsPrintsUsage(t *testing.T) {
 	if code := run(context.Background(), nil, env); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(errOut.String(), "usage: tgbp") {
+	if !strings.Contains(errOut.String(), "usage: tgbup") {
 		t.Fatalf("usage not printed: %q", errOut.String())
 	}
 }
@@ -135,12 +135,12 @@ func TestRunVersion(t *testing.T) {
 
 - [ ] **Step 4: Убедиться, что тест падает**
 
-Run: `go test ./cmd/tgbp/`
+Run: `go test ./cmd/tgbup/`
 Expected: FAIL — `undefined: Env`, `undefined: run`.
 
 - [ ] **Step 5: Реализация**
 
-`cmd/tgbp/main.go`:
+`cmd/tgbup/main.go`:
 
 ```go
 package main
@@ -156,7 +156,7 @@ import (
 
 var version = "dev"
 
-const usage = `usage: tgbp <command> [flags]
+const usage = `usage: tgbup <command> [flags]
 
 commands:
   login     interactive Telegram login, stores the session
@@ -199,7 +199,7 @@ func run(ctx context.Context, args []string, env Env) int {
 .PHONY: build test lint
 
 build:
-	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbp ./cmd/tgbp
+	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbup ./cmd/tgbup
 
 test:
 	gotestsum -- -race ./...
@@ -228,13 +228,13 @@ linters:
 - [ ] **Step 6: Прогнать тесты и линтер**
 
 Run: `make test && make lint && make build`
-Expected: тесты PASS, линтер без замечаний, появился `bin/tgbp`.
+Expected: тесты PASS, линтер без замечаний, появился `bin/tgbup`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add go.mod Makefile .gitignore .golangci.yml cmd/tgbp/main.go cmd/tgbp/main_test.go
-git commit -m "chore: scaffold tgbp module and CLI entry point"
+git add go.mod Makefile .gitignore .golangci.yml cmd/tgbup/main.go cmd/tgbup/main_test.go
+git commit -m "chore: scaffold tgbup module and CLI entry point"
 ```
 
 ---
@@ -278,7 +278,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 )
 
 func writeFile(t *testing.T, dir, name, body string, perm os.FileMode) string {
@@ -389,17 +389,17 @@ func TestResolvePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Config != "/h/.config/tgbp/config.yaml" || p.Secrets != "/h/.config/tgbp/secrets.env" || p.StateDir != "/h/.local/state/tgbp" {
+	if p.Config != "/h/.config/tgbup/config.yaml" || p.Secrets != "/h/.config/tgbup/secrets.env" || p.StateDir != "/h/.local/state/tgbup" {
 		t.Errorf("defaults = %+v", p)
 	}
-	if p.Session() != "/h/.local/state/tgbp/session" || p.Lock() != "/h/.local/state/tgbp/run.lock" {
+	if p.Session() != "/h/.local/state/tgbup/session" || p.Lock() != "/h/.local/state/tgbup/run.lock" {
 		t.Errorf("session/lock = %s %s", p.Session(), p.Lock())
 	}
 
 	env["XDG_CONFIG_HOME"] = "/x"
-	env["TGBP_STATE_DIR"] = "/s"
+	env["TGBUP_STATE_DIR"] = "/s"
 	p, _ = config.ResolvePaths(getenv)
-	if p.Config != "/x/tgbp/config.yaml" || p.StateDir != "/s" {
+	if p.Config != "/x/tgbup/config.yaml" || p.StateDir != "/s" {
 		t.Errorf("overrides = %+v", p)
 	}
 
@@ -419,7 +419,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 )
 
 func TestLoadSecretsPrecedence(t *testing.T) {
@@ -726,17 +726,17 @@ func ResolvePaths(getenv func(string) string) (Paths, error) {
 	}
 	p := Paths{
 		Home:     home,
-		Config:   filepath.Join(cfgDir, "tgbp", "config.yaml"),
-		Secrets:  filepath.Join(cfgDir, "tgbp", "secrets.env"),
-		StateDir: filepath.Join(stateDir, "tgbp"),
+		Config:   filepath.Join(cfgDir, "tgbup", "config.yaml"),
+		Secrets:  filepath.Join(cfgDir, "tgbup", "secrets.env"),
+		StateDir: filepath.Join(stateDir, "tgbup"),
 	}
-	if v := getenv("TGBP_CONFIG"); v != "" {
+	if v := getenv("TGBUP_CONFIG"); v != "" {
 		p.Config = v
 	}
-	if v := getenv("TGBP_SECRETS"); v != "" {
+	if v := getenv("TGBUP_SECRETS"); v != "" {
 		p.Secrets = v
 	}
-	if v := getenv("TGBP_STATE_DIR"); v != "" {
+	if v := getenv("TGBUP_STATE_DIR"); v != "" {
 		p.StateDir = v
 	}
 	return p, nil
@@ -854,7 +854,7 @@ Expected: PASS всех тестов.
 
 ```bash
 git add go.mod go.sum internal/config
-git commit -m "feat: load config, XDG paths and secrets for tgbp"
+git commit -m "feat: load config, XDG paths and secrets for tgbup"
 ```
 
 ---
@@ -1804,7 +1804,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
 )
 
 func TestPeerIDs(t *testing.T) {
@@ -2043,7 +2043,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 type Options struct {
@@ -2299,7 +2299,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
 )
 
 func photoMessage() *tg.Message {
@@ -2424,7 +2424,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 func ExtractMedia(m *tg.Message) (store.Media, bool) {
@@ -2632,7 +2632,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgmock"
 
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 var peer = &tg.InputPeerChannel{ChannelID: 1, AccessHash: 2}
@@ -2776,7 +2776,7 @@ import (
 
 	"github.com/gotd/td/tgerr"
 
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func TestClassify(t *testing.T) {
@@ -3079,9 +3079,9 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgmock"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 var dialogs = []tgclient.Dialog{
@@ -3209,9 +3209,9 @@ import (
 	"github.com/gotd/td/telegram/query/dialogs"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 type Dialog struct {
@@ -3493,11 +3493,11 @@ git commit -m "feat: select archive targets from Telegram folders, include and e
 
 ---
 
-### Task 9: tgclient — подключение, сессия, takeout и `tgbp login`
+### Task 9: tgclient — подключение, сессия, takeout и `tgbup login`
 
 **Files:**
-- Create: `internal/tgclient/client.go`, `internal/tgclient/login.go`, `cmd/tgbp/setup.go`, `cmd/tgbp/login.go`
-- Modify: `cmd/tgbp/main.go` (ветка `login` в `run`)
+- Create: `internal/tgclient/client.go`, `internal/tgclient/login.go`, `cmd/tgbup/setup.go`, `cmd/tgbup/login.go`
+- Modify: `cmd/tgbup/main.go` (ветка `login` в `run`)
 - Test: `internal/tgclient/login_test.go`
 
 **Interfaces:**
@@ -3508,7 +3508,7 @@ git commit -m "feat: select archive targets from Telegram folders, include and e
   - `var ErrNotLoggedIn`, `func RequireAuth(ctx, *telegram.Client) error`, `func SelfID(ctx, *tg.Client) (int64, error)`
   - `func WithTakeout(ctx, c *telegram.Client, maxFileSize int64, fn func(ctx context.Context, raw *tg.Client) error) error`
   - `func Login(ctx, c *telegram.Client, in io.Reader, out io.Writer, readPassword func() (string, error)) error`
-  - в `cmd/tgbp`: `type setup struct{ paths config.Paths; cfg config.Config; secrets config.Secrets }`, `func loadSetup(env Env, requireConfig bool) (setup, error)`, `func (setup) clientOptions() tgclient.Options`
+  - в `cmd/tgbup`: `type setup struct{ paths config.Paths; cfg config.Config; secrets config.Secrets }`, `func loadSetup(env Env, requireConfig bool) (setup, error)`, `func (setup) clientOptions() tgclient.Options`
 
 - [ ] **Step 1: Добавить зависимости**
 
@@ -3610,7 +3610,7 @@ type Options struct {
 	MaxFloodWait time.Duration
 }
 
-var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbp login`")
+var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbup login`")
 
 func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegram.Client) error) error {
 	if err := os.MkdirAll(filepath.Dir(o.SessionPath), 0o700); err != nil {
@@ -3623,7 +3623,7 @@ func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegra
 			floodwait.NewSimpleWaiter().WithMaxWait(o.MaxFloodWait),
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
 		},
-		Device: telegram.DeviceConfig{DeviceModel: "tgbp", SystemVersion: runtime.GOOS, AppVersion: o.Version},
+		Device: telegram.DeviceConfig{DeviceModel: "tgbup", SystemVersion: runtime.GOOS, AppVersion: o.Version},
 	})
 	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
 }
@@ -3728,7 +3728,7 @@ func Login(ctx context.Context, c *telegram.Client, in io.Reader, out io.Writer,
 }
 ```
 
-`cmd/tgbp/setup.go`:
+`cmd/tgbup/setup.go`:
 
 ```go
 package main
@@ -3737,8 +3737,8 @@ import (
 	"errors"
 	"io/fs"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type setup struct {
@@ -3780,7 +3780,7 @@ func (s setup) clientOptions() tgclient.Options {
 }
 ```
 
-`cmd/tgbp/login.go`:
+`cmd/tgbup/login.go`:
 
 ```go
 package main
@@ -3793,13 +3793,13 @@ import (
 	"github.com/gotd/td/telegram"
 	"golang.org/x/term"
 
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func cmdLogin(ctx context.Context, env Env) int {
 	st, err := loadSetup(env, false)
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "tgbp login:", err)
+		fmt.Fprintln(env.Stderr, "tgbup login:", err)
 		return 1
 	}
 	readPassword := func() (string, error) {
@@ -3819,14 +3819,14 @@ func cmdLogin(ctx context.Context, env Env) int {
 		return nil
 	})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "tgbp login:", err)
+		fmt.Fprintln(env.Stderr, "tgbup login:", err)
 		return 1
 	}
 	return 0
 }
 ```
 
-В `cmd/tgbp/main.go` в `switch args[0]` добавить ветку перед `default`:
+В `cmd/tgbup/main.go` в `switch args[0]` добавить ветку перед `default`:
 
 ```go
 	case "login":
@@ -3841,15 +3841,15 @@ Expected: PASS, бинарник собирается.
 - [ ] **Step 6: Ручная проверка логина** (нужен реальный аккаунт; выполняет человек)
 
 1. На https://my.telegram.org → API development tools создать приложение, записать `api_id`/`api_hash`.
-2. `mkdir -p ~/.config/tgbp && printf 'TG_API_ID=...\nTG_API_HASH=...\n' > ~/.config/tgbp/secrets.env && chmod 600 ~/.config/tgbp/secrets.env`
-3. `./bin/tgbp login` → телефон, код, при наличии 2FA — пароль (не отображается).
-Expected: `logged in as user <id>`; файл `~/.local/state/tgbp/session` с правами `-rw-------`. Повторный `./bin/tgbp login` ничего не спрашивает и сразу печатает ту же строку.
+2. `mkdir -p ~/.config/tgbup && printf 'TG_API_ID=...\nTG_API_HASH=...\n' > ~/.config/tgbup/secrets.env && chmod 600 ~/.config/tgbup/secrets.env`
+3. `./bin/tgbup login` → телефон, код, при наличии 2FA — пароль (не отображается).
+Expected: `logged in as user <id>`; файл `~/.local/state/tgbup/session` с правами `-rw-------`. Повторный `./bin/tgbup login` ничего не спрашивает и сразу печатает ту же строку.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add go.mod go.sum internal/tgclient cmd/tgbp
-git commit -m "feat: connect to Telegram with file session, flood/rate limits and add tgbp login"
+git add go.mod go.sum internal/tgclient cmd/tgbup
+git commit -m "feat: connect to Telegram with file session, flood/rate limits and add tgbup login"
 ```
 
 ---
@@ -3889,10 +3889,10 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/syncer"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/syncer"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type fakeTG struct {
@@ -4253,9 +4253,9 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type Syncer struct {
@@ -4677,10 +4677,10 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/media"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/media"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 const chatN = int64(1)
@@ -4951,7 +4951,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 var safeExt = regexp.MustCompile(`^\.[a-z0-9]{1,10}$`)
@@ -5008,9 +5008,9 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 // upload.getFile needs offset and limit to be multiples of 4 KiB with 1 MiB divisible
@@ -5234,12 +5234,12 @@ git commit -m "feat: download media with resumable chunks, retries and reference
 
 ---
 
-### Task 12: `tgbp sync`, блокировка, README и боевой smoke
+### Task 12: `tgbup sync`, блокировка, README и боевой smoke
 
 **Files:**
-- Create: `cmd/tgbp/lock.go`, `cmd/tgbp/sync.go`, `README.md`
-- Modify: `cmd/tgbp/main.go` (ветка `sync`, строка usage уже есть)
-- Test: `cmd/tgbp/lock_test.go`
+- Create: `cmd/tgbup/lock.go`, `cmd/tgbup/sync.go`, `README.md`
+- Modify: `cmd/tgbup/main.go` (ветка `sync`, строка usage уже есть)
+- Test: `cmd/tgbup/lock_test.go`
 
 **Interfaces:**
 - Consumes: всё из Tasks 2–11.
@@ -5247,7 +5247,7 @@ git commit -m "feat: download media with resumable chunks, retries and reference
 
 - [ ] **Step 1: Написать падающий тест блокировки**
 
-`cmd/tgbp/lock_test.go`:
+`cmd/tgbup/lock_test.go`:
 
 ```go
 package main
@@ -5278,12 +5278,12 @@ func TestLockIsExclusiveAndReleasable(t *testing.T) {
 
 - [ ] **Step 2: Убедиться, что тест падает**
 
-Run: `go test ./cmd/tgbp/ -run TestLock`
+Run: `go test ./cmd/tgbup/ -run TestLock`
 Expected: FAIL — `undefined: acquireLock`.
 
 - [ ] **Step 3: Реализация**
 
-`cmd/tgbp/lock.go`:
+`cmd/tgbup/lock.go`:
 
 ```go
 package main
@@ -5295,7 +5295,7 @@ import (
 	"syscall"
 )
 
-var errLocked = errors.New("another tgbp run is in progress")
+var errLocked = errors.New("another tgbup run is in progress")
 
 func acquireLock(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -5319,7 +5319,7 @@ func acquireLock(path string) (func(), error) {
 }
 ```
 
-`cmd/tgbp/sync.go`:
+`cmd/tgbup/sync.go`:
 
 ```go
 package main
@@ -5337,11 +5337,11 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/media"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
-	"gitlab.com/joeunderwood/tgbp/internal/syncer"
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/media"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/syncer"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type syncSummary struct {
@@ -5477,7 +5477,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 }
 ```
 
-В `cmd/tgbp/main.go` в `switch args[0]` добавить:
+В `cmd/tgbup/main.go` в `switch args[0]` добавить:
 
 ```go
 	case "sync":
@@ -5487,15 +5487,15 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 `README.md`:
 
 ````markdown
-# tgbp
+# tgbup
 
-Автономный бэкап Telegram-чатов, групп и форумов в SQLite + файлы. Дизайн: `docs/superpowers/specs/2026-09-28-tgbp-design.md`.
+Автономный бэкап Telegram-чатов, групп и форумов в SQLite + файлы. Дизайн: `docs/superpowers/specs/2026-09-28-tgbup-design.md`.
 
 ## Установка
 
 ```bash
 brew install go   # нужен Go 1.25+
-make build        # → bin/tgbp
+make build        # → bin/tgbup
 ```
 
 ## Настройка
@@ -5503,11 +5503,11 @@ make build        # → bin/tgbp
 1. Создайте приложение на https://my.telegram.org → API development tools.
 2. Секреты:
    ```bash
-   mkdir -p ~/.config/tgbp
-   printf 'TG_API_ID=12345\nTG_API_HASH=abcdef\n' > ~/.config/tgbp/secrets.env
-   chmod 600 ~/.config/tgbp/secrets.env
+   mkdir -p ~/.config/tgbup
+   printf 'TG_API_ID=12345\nTG_API_HASH=abcdef\n' > ~/.config/tgbup/secrets.env
+   chmod 600 ~/.config/tgbup/secrets.env
    ```
-3. Конфиг `~/.config/tgbp/config.yaml`:
+3. Конфиг `~/.config/tgbup/config.yaml`:
    ```yaml
    archive_dir: ~/TelegramArchive
    targets:
@@ -5515,34 +5515,34 @@ make build        # → bin/tgbp
      include: ["@some_group"]        # плюс отдельные чаты
      exclude: []
    ```
-4. `bin/tgbp login`
-5. Первая полная выгрузка: `bin/tgbp sync --takeout` (Telegram попросит подтвердить экспорт в клиенте — подтвердите и запустите снова).
-6. Дальше: `bin/tgbp sync` (по расписанию — см. план 3).
+4. `bin/tgbup login`
+5. Первая полная выгрузка: `bin/tgbup sync --takeout` (Telegram попросит подтвердить экспорт в клиенте — подтвердите и запустите снова).
+6. Дальше: `bin/tgbup sync` (по расписанию — см. план 3).
 
-Пути переопределяются через `TGBP_CONFIG`, `TGBP_SECRETS`, `TGBP_STATE_DIR`.
+Пути переопределяются через `TGBUP_CONFIG`, `TGBUP_SECRETS`, `TGBUP_STATE_DIR`.
 ````
 
 - [ ] **Step 4: Прогнать всё**
 
 Run: `make test && make lint && make build`
-Expected: PASS, линтер чистый, `bin/tgbp` собран.
+Expected: PASS, линтер чистый, `bin/tgbup` собран.
 
 - [ ] **Step 5: Ручной smoke на живом аккаунте** (выполняет человек; исполнитель готовит команды и проверяет результаты)
 
-Подготовка: создать тестовую **форум-группу** «tgbp-smoke» (Settings → Topics), в ней топик «Тест»; туда отправить: текст со скрытой ссылкой, ответ на сообщение, пересылку из канала, альбом из 2 фото, PDF, голосовое, кружок, стикер, опрос, геопозицию; закрепить одно сообщение. Добавить группу в папку Telegram «tgbp-test» и в конфиге указать `folders: ["tgbp-test"]`.
+Подготовка: создать тестовую **форум-группу** «tgbup-smoke» (Settings → Topics), в ней топик «Тест»; туда отправить: текст со скрытой ссылкой, ответ на сообщение, пересылку из канала, альбом из 2 фото, PDF, голосовое, кружок, стикер, опрос, геопозицию; закрепить одно сообщение. Добавить группу в папку Telegram «tgbup-test» и в конфиге указать `folders: ["tgbup-test"]`.
 
-1. **Первая выгрузка:** `bin/tgbp sync --takeout` → подтвердить экспорт в Telegram → повторить.
+1. **Первая выгрузка:** `bin/tgbup sync --takeout` → подтвердить экспорт в Telegram → повторить.
    Expected: код 0, `chats_synced=1`, `media_failed=0`.
 2. **Проверка данных:**
    ```bash
    sqlite3 ~/TelegramArchive/archive.sqlite "select type,title from chats; select topic_id,title from topics; select count(*), sum(service_action_json is not null), sum(pinned) from messages; select kind,status from media;"
    ```
    Expected: тип `forum`; топики General и «Тест»; есть служебные (создание топика, закреп); `sum(pinned)=1`; медиа всех видов со статусом `done`; файлы лежат в `~/TelegramArchive/media/<kind>/`.
-3. **Инкремент (Review Focus №1):** отправить в группу 3 новых сообщения, выполнить `bin/tgbp sync`.
+3. **Инкремент (Review Focus №1):** отправить в группу 3 новых сообщения, выполнить `bin/tgbup sync`.
    Expected: `new_messages=3`, без takeout-запроса; `select max(id) from messages` вырос ровно на новые ID, пропусков нет (`select id from messages order by id` — последние три идут подряд с учётом ID служебных).
-4. **Прерывание:** отправить файл ≥ 50 МБ, запустить `bin/tgbp sync` и нажать Ctrl+C во время загрузки медиа; затем снова `bin/tgbp sync`.
+4. **Прерывание:** отправить файл ≥ 50 МБ, запустить `bin/tgbup sync` и нажать Ctrl+C во время загрузки медиа; затем снова `bin/tgbup sync`.
    Expected: после прерывания есть `.part`, статус `pending`, `attempts=0`; второй запуск докачивает, `.part` исчезает.
-5. **Блокировка:** в двух терминалах одновременно `bin/tgbp sync`.
+5. **Блокировка:** в двух терминалах одновременно `bin/tgbup sync`.
    Expected: второй пишет `skipping: another run is in progress` и выходит с кодом 0.
 
 Если любой пункт не сходится — не коммитить, описать расхождение.
@@ -5550,8 +5550,8 @@ Expected: PASS, линтер чистый, `bin/tgbp` собран.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cmd/tgbp README.md
-git commit -m "feat: add tgbp sync command with run lock and setup README"
+git add cmd/tgbup README.md
+git commit -m "feat: add tgbup sync command with run lock and setup README"
 ```
 
 ---

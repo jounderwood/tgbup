@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-var errLocked = errors.New("another tgbp run is in progress")
+var errLocked = errors.New("another tgbup run is in progress")
 
 func acquireLock(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

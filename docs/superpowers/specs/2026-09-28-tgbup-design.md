@@ -1,4 +1,4 @@
-# tgbp — бэкап Telegram-чатов: дизайн v1
+# tgbup — бэкап Telegram-чатов: дизайн v1
 
 Дата: 2026-09-28
 Статус: на ревью
@@ -31,7 +31,7 @@
 
 | Компонент | Выбор | Лицензия |
 |---|---|---|
-| Язык | Go, один статический бинарник `tgbp` | — |
+| Язык | Go, один статический бинарник `tgbup` | — |
 | MTProto | `github.com/gotd/td` | MIT |
 | FloodWait / ratelimit | `github.com/gotd/contrib` | MIT |
 | SQLite | `modernc.org/sqlite` (pure Go, без cgo) | BSD-3-Clause |
@@ -50,10 +50,10 @@
 Тула, конфиг, секреты и данные разделены. Все пути переопределяются env.
 
 ```
-~/.config/tgbp/config.yaml     # конфиг (TGBP_CONFIG)
-~/.config/tgbp/secrets.env     # chmod 600 (TGBP_SECRETS); поддержка *_FILE
-~/.local/state/tgbp/session    # chmod 600, сессия MTProto (TGBP_STATE_DIR)
-~/.local/state/tgbp/run.lock   # блокировка от параллельных запусков
+~/.config/tgbup/config.yaml     # конфиг (TGBUP_CONFIG)
+~/.config/tgbup/secrets.env     # chmod 600 (TGBUP_SECRETS); поддержка *_FILE
+~/.local/state/tgbup/session    # chmod 600, сессия MTProto (TGBUP_STATE_DIR)
+~/.local/state/tgbup/run.lock   # блокировка от параллельных запусков
 <archive_dir>/                 # только данные, путь из конфига
 ├── archive.sqlite
 ├── media/<kind>/<telegram_id>.<ext>
@@ -85,8 +85,8 @@ sync:
   max_flood_wait: 5m
 backup:
   repositories:
-    - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbp-restic"
-    - "rclone:gdrive:tgbp-restic"
+    - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbup-restic"
+    - "rclone:gdrive:tgbup-restic"
   retention: {last: 4, daily: 7, weekly: 4, monthly: 12}
   prune_every: 24h                   # forget — каждый запуск, prune — не чаще
   check_every: 30d
@@ -97,15 +97,15 @@ notify:
 
 ## 5. Архитектура
 
-Бинарник `tgbp`, подкоманды:
+Бинарник `tgbup`, подкоманды:
 
 | Команда | Что делает |
 |---|---|
-| `tgbp login` | Интерактивный вход (телефон, код, 2FA), сохраняет сессию |
-| `tgbp sync [--takeout]` | Выгрузка сообщений и медиа; `--takeout` — для первичной выкачки истории |
-| `tgbp render` | Генерация `views/html` и `views/md` из БД |
-| `tgbp backup [--init]` | Снимок restic во все репозитории + retention; `--init` создаёт репозитории |
-| `tgbp run` | `sync → render → backup → notify`; её вызывает планировщик |
+| `tgbup login` | Интерактивный вход (телефон, код, 2FA), сохраняет сессию |
+| `tgbup sync [--takeout]` | Выгрузка сообщений и медиа; `--takeout` — для первичной выкачки истории |
+| `tgbup render` | Генерация `views/html` и `views/md` из БД |
+| `tgbup backup [--init]` | Снимок restic во все репозитории + retention; `--init` создаёт репозитории |
+| `tgbup run` | `sync → render → backup → notify`; её вызывает планировщик |
 
 Расписание вне бинарника (launchd на Mac, cron/systemd на NAS).
 
@@ -184,7 +184,7 @@ meta          (key PK, value)   -- schema_version, last_backup_at, last_prune_at
    `<path>.part` с докачкой по offset, по завершении — rename, `status=done`.
 5. `render` → `backup` → `notify`.
 
-Первичная выкачка: `tgbp sync --takeout` (takeout-сессия, подтверждение в
+Первичная выкачка: `tgbup sync --takeout` (takeout-сессия, подтверждение в
 клиенте, пониженные flood-лимиты). Плановые запуски — без takeout.
 
 ## 8. Обработка ошибок
@@ -196,7 +196,7 @@ meta          (key PK, value)   -- schema_version, last_backup_at, last_prune_at
 | `FILE_REFERENCE_EXPIRED` | перечитать сообщение, повторить загрузку |
 | Ошибка загрузки файла | `attempts++`, повтор в следующих запусках; после 5 неудач — `status=failed`, больше не пытаемся, файл попадает в еженедельную сводку |
 | Чат недоступен | `chats.status=inaccessible`, данные остаются, уведомление один раз |
-| Сессия отозвана | прервать sync, уведомить «нужен `tgbp login`», render и backup выполнить |
+| Сессия отозвана | прервать sync, уведомить «нужен `tgbup login`», render и backup выполнить |
 | Выгрузка «вперёд» закончилась ниже `top_message` диалога | ошибка чата (защита от молчаливого пропуска новых сообщений) |
 | Чат из `include` не найден среди диалогов | запуск завершается с ошибкой, остальные чаты синхронизируются |
 | Локальная ошибка диска при загрузке медиа | фаза медиа останавливается, попытки не засчитываются |
@@ -269,8 +269,8 @@ frontmatter (чат, период, число сообщений), медиа ч
 1. `brew install restic rclone`; `make build`.
 2. `api_id`/`api_hash` с my.telegram.org; бот через @BotFather, узнать `chat_id`.
 3. `rclone config` → Google Drive; заполнить `config.yaml`, `secrets.env`.
-4. `tgbp backup --init`, `tgbp login`, `tgbp sync --takeout`.
-5. Установить `deploy/launchd/*.plist`: `tgbp run` 4 раза в сутки
+4. `tgbup backup --init`, `tgbup login`, `tgbup sync --takeout`.
+5. Установить `deploy/launchd/*.plist`: `tgbup run` 4 раза в сутки
    (`StartCalendarInterval` 03:00, 09:00, 15:00, 21:00). Пропущенные из-за сна
    запуски launchd схлопывает в один после пробуждения; пересечение запусков
    исключает `run.lock`. `run_time_budget` (2h) меньше интервала (6h).

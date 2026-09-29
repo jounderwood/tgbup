@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/joeunderwood/tgbp/internal/syncer"
+	"gitlab.com/joeunderwood/tgbup/internal/syncer"
 )
 
 func TestUnresolvedIncludeFailsTheRun(t *testing.T) {

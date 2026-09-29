@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 )
 
 func writeFile(t *testing.T, dir, name, body string, perm os.FileMode) string {
@@ -118,17 +118,17 @@ func TestResolvePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Config != "/h/.config/tgbp/config.yaml" || p.Secrets != "/h/.config/tgbp/secrets.env" || p.StateDir != "/h/.local/state/tgbp" {
+	if p.Config != "/h/.config/tgbup/config.yaml" || p.Secrets != "/h/.config/tgbup/secrets.env" || p.StateDir != "/h/.local/state/tgbup" {
 		t.Errorf("defaults = %+v", p)
 	}
-	if p.Session() != "/h/.local/state/tgbp/session" || p.Lock() != "/h/.local/state/tgbp/run.lock" {
+	if p.Session() != "/h/.local/state/tgbup/session" || p.Lock() != "/h/.local/state/tgbup/run.lock" {
 		t.Errorf("session/lock = %s %s", p.Session(), p.Lock())
 	}
 
 	env["XDG_CONFIG_HOME"] = "/x"
-	env["TGBP_STATE_DIR"] = "/s"
+	env["TGBUP_STATE_DIR"] = "/s"
 	p, _ = config.ResolvePaths(getenv)
-	if p.Config != "/x/tgbp/config.yaml" || p.StateDir != "/s" {
+	if p.Config != "/x/tgbup/config.yaml" || p.StateDir != "/s" {
 		t.Errorf("overrides = %+v", p)
 	}
 

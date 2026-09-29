@@ -8,13 +8,13 @@ import (
 	"github.com/gotd/td/telegram"
 	"golang.org/x/term"
 
-	"gitlab.com/joeunderwood/tgbp/internal/tgclient"
+	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func cmdLogin(ctx context.Context, env Env) int {
 	st, err := loadSetup(env, false)
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "tgbp login:", err)
+		fmt.Fprintln(env.Stderr, "tgbup login:", err)
 		return 1
 	}
 	readPassword := func() (string, error) {
@@ -34,7 +34,7 @@ func cmdLogin(ctx context.Context, env Env) int {
 		return nil
 	})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "tgbp login:", err)
+		fmt.Fprintln(env.Stderr, "tgbup login:", err)
 		return 1
 	}
 	return 0

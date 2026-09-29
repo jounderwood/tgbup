@@ -22,7 +22,7 @@ func TestRunWithoutArgsPrintsUsage(t *testing.T) {
 	if code := run(context.Background(), nil, env); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(errOut.String(), "usage: tgbp") {
+	if !strings.Contains(errOut.String(), "usage: tgbup") {
 		t.Fatalf("usage not printed: %q", errOut.String())
 	}
 }

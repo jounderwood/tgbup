@@ -11,9 +11,9 @@ import (
 	"github.com/gotd/td/telegram/query/dialogs"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/config"
-	"gitlab.com/joeunderwood/tgbp/internal/convert"
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 type Dialog struct {

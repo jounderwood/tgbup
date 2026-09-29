@@ -7,7 +7,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 type Options struct {

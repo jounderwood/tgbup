@@ -1,7 +1,7 @@
-# tgbp
+# tgbup
 
 Автономный бэкап Telegram-чатов, групп и форум-групп. Дизайн v1:
-[specs/2026-09-28-tgbp-design.md](superpowers/specs/2026-09-28-tgbp-design.md).
+[specs/2026-09-28-tgbup-design.md](superpowers/specs/2026-09-28-tgbup-design.md).
 
 ## Decisions log
 

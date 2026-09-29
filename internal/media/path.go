@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gitlab.com/joeunderwood/tgbp/internal/store"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 var safeExt = regexp.MustCompile(`^\.[a-z0-9]{1,10}$`)
