@@ -244,7 +244,7 @@ func TestSyncArchivesForum(t *testing.T) {
 func TestDryRunListsChatsWithoutArchiving(t *testing.T) {
 	cfgPath, archive := newArchive(t)
 	out := runSync(t, cfgPath, "--dry-run")
-	if !strings.Contains(out, "would archive 3 chats") {
+	if !strings.Contains(out, "would archive 3 chats") || !strings.Contains(out, "══ Total: 3 chats") {
 		t.Errorf("dry run output:\n%s", out)
 	}
 	for _, id := range []int64{fx.ChatID, fx.SelfID, fx.GroupChatID()} {
@@ -254,6 +254,44 @@ func TestDryRunListsChatsWithoutArchiving(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(archive, "archive.sqlite")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("dry run touched the archive: %v", err)
+	}
+}
+
+// An excluded topic stays out of the archive and comes back, with its earlier
+// messages, once the exclusion is dropped.
+func TestTopicExclusion(t *testing.T) {
+	cfgPath, archive := newArchive(t)
+	writeConfig := func(exclude bool) {
+		t.Helper()
+		cfg := fmt.Sprintf("archive_dir: %s\ntargets:\n  folders: [%q]\n", archive, fx.Folder)
+		if exclude {
+			cfg += fmt.Sprintf("  exclude_topics:\n    %d: [%d]\n", fx.ChatID, fx.TopicID)
+		}
+		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeConfig(true)
+	out := runSync(t, cfgPath, "--dry-run")
+	for _, want := range []string{"excluded:", fmt.Sprintf("Рецепты #%d", fx.TopicID), "General #1", "photos 1", "files"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry run lacks %q:\n%s", want, out)
+		}
+	}
+	runSync(t, cfgPath)
+	db := openArchive(t, archive)
+	has := func(id int) bool {
+		return scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id) == 1
+	}
+	if has(fx.TopicMsg) || !has(fx.LinkMsg) {
+		t.Fatalf("with the topic excluded: topic message kept %v, General message kept %v", has(fx.TopicMsg), has(fx.LinkMsg))
+	}
+
+	writeConfig(false)
+	runSync(t, cfgPath)
+	if !has(fx.TopicMsg) {
+		t.Fatal("re-included topic's earlier message was not archived")
 	}
 }
 
