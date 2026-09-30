@@ -34,7 +34,7 @@ func TestOpenCreatesSchema(t *testing.T) {
 		}
 	}
 	v, ok, err := s.Meta(context.Background(), "schema_version")
-	if err != nil || !ok || v != "2" {
+	if err != nil || !ok || v != "3" {
 		t.Fatalf("schema_version = %q %v %v", v, ok, err)
 	}
 	var mode string

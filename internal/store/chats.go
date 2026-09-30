@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 )
 
@@ -115,4 +117,55 @@ func (s *Store) Topics(ctx context.Context, chatID int64) ([]Topic, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// ApplyTopicExclusions records the forum's excluded topics. When a previously
+// excluded topic is no longer excluded, its messages were skipped so far, so
+// the backfill restarts from the newest message and reads the history again.
+func (s *Store) ApplyTopicExclusions(ctx context.Context, chatID int64, excluded []int) (reset bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	var prevJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT excluded_topics_json FROM chats WHERE id = ?`, chatID).Scan(&prevJSON); err != nil {
+		return false, fmt.Errorf("read topic exclusions of %d: %w", chatID, err)
+	}
+	var prev []int
+	if err := json.Unmarshal([]byte(prevJSON), &prev); err != nil {
+		return false, err
+	}
+	next := slices.Sorted(slices.Values(excluded))
+	for _, id := range prev {
+		if !slices.Contains(next, id) {
+			reset = true
+			break
+		}
+	}
+	if reset {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sync_cursors SET oldest_id = newest_id + 1, backfill_done = 0, updated_at = ? WHERE chat_id = ?`,
+			time.Now().Unix(), chatID)
+		if err != nil {
+			return false, err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return false, err
+		} else if n == 0 {
+			reset = false
+		}
+	}
+	if next == nil {
+		next = []int{}
+	}
+	nextJSON, err := json.Marshal(next)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chats SET excluded_topics_json = ? WHERE id = ?`, string(nextJSON), chatID); err != nil {
+		return false, err
+	}
+	return reset, tx.Commit()
 }
