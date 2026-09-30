@@ -15,6 +15,7 @@ const usage = `usage: tgbup <command> [flags]
 
 commands:
   login     interactive Telegram login, stores the session
+  setup     choose which chats to archive (writes the config)
   sync      download new messages and media
   version   print version
 `
@@ -43,6 +44,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return 0
 	case "login":
 		return cmdLogin(ctx, env)
+	case "setup":
+		return cmdSetup(ctx, env)
 	case "sync":
 		return cmdSync(ctx, args[1:], env)
 	default:
