@@ -13,6 +13,7 @@ import (
 	"github.com/gotd/contrib/middleware/ratelimit"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/telegram/takeout"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
@@ -25,6 +26,8 @@ type Options struct {
 	SessionPath  string
 	Version      string
 	MaxFloodWait time.Duration
+	// TestDC connects to Telegram's test servers, a separate environment with its own accounts.
+	TestDC bool
 }
 
 var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbup login`")
@@ -33,7 +36,12 @@ func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegra
 	if err := os.MkdirAll(filepath.Dir(o.SessionPath), 0o700); err != nil {
 		return err
 	}
-	client := telegram.NewClient(o.APIID, o.APIHash, telegram.Options{
+	client := telegram.NewClient(o.APIID, o.APIHash, telegramOptions(o))
+	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
+}
+
+func telegramOptions(o Options) telegram.Options {
+	opts := telegram.Options{
 		SessionStorage: &session.FileStorage{Path: o.SessionPath},
 		NoUpdates:      true,
 		Middlewares: []telegram.Middleware{
@@ -41,8 +49,12 @@ func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegra
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
 		},
 		Device: telegram.DeviceConfig{DeviceModel: "tgbup", SystemVersion: runtime.GOOS, AppVersion: o.Version},
-	})
-	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
+	}
+	if o.TestDC {
+		opts.DC = 2
+		opts.DCList = dcs.Test()
+	}
+	return opts
 }
 
 func RequireAuth(ctx context.Context, c *telegram.Client) error {

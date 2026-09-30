@@ -32,4 +32,7 @@ make build        # → bin/tgbup
 5. Первая полная выгрузка: `bin/tgbup sync --takeout` (Telegram попросит подтвердить экспорт в клиенте — подтвердите и запустите снова).
 6. Дальше: `bin/tgbup sync` (по расписанию — см. план 3).
 
+Тестовые серверы Telegram: `TGBUP_TEST_DC=1 bin/tgbup login` / `sync` — отдельная сессия `session-test`,
+боевая не затрагивается. Аккаунт для тестовой среды заводится в официальном клиенте в тестовом режиме.
+
 Пути переопределяются через `TGBUP_CONFIG`, `TGBUP_SECRETS`, `TGBUP_STATE_DIR`.

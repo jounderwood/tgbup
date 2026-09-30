@@ -12,6 +12,7 @@ type setup struct {
 	paths   config.Paths
 	cfg     config.Config
 	secrets config.Secrets
+	testDC  bool
 }
 
 func loadSetup(env Env, requireConfig bool) (setup, error) {
@@ -33,15 +34,21 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 	if err := sec.RequireTelegram(); err != nil {
 		return setup{}, err
 	}
-	return setup{paths: p, cfg: cfg, secrets: sec}, nil
+	return setup{paths: p, cfg: cfg, secrets: sec, testDC: env.Getenv("TGBUP_TEST_DC") == "1"}, nil
 }
 
 func (s setup) clientOptions() tgclient.Options {
+	// A separate session file keeps a test-server login from replacing the real one.
+	session := s.paths.Session()
+	if s.testDC {
+		session += "-test"
+	}
 	return tgclient.Options{
 		APIID:        s.secrets.APIID,
 		APIHash:      s.secrets.APIHash,
-		SessionPath:  s.paths.Session(),
+		SessionPath:  session,
 		Version:      version,
 		MaxFloodWait: s.cfg.Sync.MaxFloodWait.D(),
+		TestDC:       s.testDC,
 	}
 }
