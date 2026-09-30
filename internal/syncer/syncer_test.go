@@ -392,3 +392,67 @@ func TestEmptyMessagesSkippedButCursorAdvances(t *testing.T) {
 		t.Fatalf("cursor newest = %d, want 10 (past the empty message)", cur.NewestID)
 	}
 }
+
+func (e *env) has(t *testing.T, chat int64, id int) bool {
+	t.Helper()
+	_, err := e.st.MessageRaw(context.Background(), chat, id)
+	return err == nil
+}
+
+// forumWithTopic has messages 1..10; 5 and 6 are in topic 3, the rest in General.
+func forumWithTopic(e *env) tgclient.Target {
+	f := target(3, store.ChatForum)
+	e.tg.add(f.Chat.ID, 1, 10)
+	e.tg.replyTop[5], e.tg.replyTop[6] = 3, 3
+	e.tg.topics[f.Chat.ID] = []tgclient.Topic{{ID: 1, Title: "General"}, {ID: 3, Title: "Флуд"}}
+	return f
+}
+
+func TestExcludedTopicIsNotArchived(t *testing.T) {
+	e := newEnv(t)
+	f := forumWithTopic(e)
+	f.ExcludedTopics = []int{3}
+	if r := e.s.Run(context.Background(), []tgclient.Target{f}, dialogsOf(f)); !r.OK() {
+		t.Fatalf("report = %+v", r)
+	}
+	if n := e.count(t, f.Chat.ID); n != 8 || e.has(t, f.Chat.ID, 5) || e.has(t, f.Chat.ID, 6) {
+		t.Fatalf("messages = %d, topic 3 kept: %v %v", n, e.has(t, f.Chat.ID, 5), e.has(t, f.Chat.ID, 6))
+	}
+	cur, _, _ := e.st.GetCursor(context.Background(), f.Chat.ID)
+	if !cur.BackfillDone || cur.NewestID != 10 {
+		t.Fatalf("cursor = %+v", cur)
+	}
+}
+
+// Messages without a topic header in a forum belong to General (topic 1).
+func TestExcludedGeneralTopic(t *testing.T) {
+	e := newEnv(t)
+	f := forumWithTopic(e)
+	f.ExcludedTopics = []int{1}
+	e.s.Run(context.Background(), []tgclient.Target{f}, dialogsOf(f))
+	if n := e.count(t, f.Chat.ID); n != 2 || !e.has(t, f.Chat.ID, 5) {
+		t.Fatalf("messages = %d, want only topic 3", n)
+	}
+}
+
+func TestReincludedTopicIsBackfilled(t *testing.T) {
+	e := newEnv(t)
+	f := forumWithTopic(e)
+	ctx := context.Background()
+	f.ExcludedTopics = []int{3}
+	e.s.Run(ctx, []tgclient.Target{f}, dialogsOf(f))
+
+	f.ExcludedTopics = nil
+	if r := e.s.Run(ctx, []tgclient.Target{f}, dialogsOf(f)); !r.OK() {
+		t.Fatalf("report = %+v", r)
+	}
+	if n := e.count(t, f.Chat.ID); n != 10 {
+		t.Fatalf("messages after re-include = %d, want 10", n)
+	}
+
+	before := e.tg.before
+	e.s.Run(ctx, []tgclient.Target{f}, dialogsOf(f))
+	if e.tg.before != before {
+		t.Fatalf("an unchanged run read history backwards again (%d calls)", e.tg.before-before)
+	}
+}

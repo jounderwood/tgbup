@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/gotd/td/tg"
@@ -111,6 +112,13 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		if err := s.syncTopics(ctx, t); err != nil {
 			return 0, err
 		}
+		reset, err := s.Store.ApplyTopicExclusions(ctx, t.Chat.ID, t.ExcludedTopics)
+		if err != nil {
+			return 0, err
+		}
+		if reset {
+			s.Log.Info("topic re-included, reading the forum history again", "chat", t.Chat.ID)
+		}
 	}
 	cur, found, err := s.Store.GetCursor(ctx, t.Chat.ID)
 	if err != nil {
@@ -183,8 +191,15 @@ func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) error {
 		return err
 	}
 	rows := make([]store.Topic, 0, len(topics))
+	known := map[int]bool{}
 	for _, tp := range topics {
 		rows = append(rows, store.Topic{ChatID: t.Chat.ID, TopicID: tp.ID, Title: tp.Title, Closed: tp.Closed, CreatedAt: int64(tp.Date)})
+		known[tp.ID] = true
+	}
+	for _, id := range t.ExcludedTopics {
+		if !known[id] {
+			s.Log.Warn("exclude_topics: no such topic in the forum", "chat", t.Chat.ID, "topic", id)
+		}
 	}
 	return s.Store.UpsertTopics(ctx, rows)
 }
@@ -198,7 +213,7 @@ func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page
 		if err != nil {
 			return 0, err
 		}
-		if !ok {
+		if !ok || slices.Contains(t.ExcludedTopics, res.Message.TopicID) {
 			continue
 		}
 		b.Messages = append(b.Messages, res.Message)
