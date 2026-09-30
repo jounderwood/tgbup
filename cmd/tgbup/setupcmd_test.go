@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gitlab.com/joeunderwood/tgbup/internal/selector"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
@@ -25,7 +26,7 @@ func newDialog(input string, initial selector.Selection) (*setupDialog, *bytes.B
 	var out bytes.Buffer
 	groups := selector.Groups(dialogs, folders)
 	return &setupDialog{
-		in: bufio.NewScanner(strings.NewReader(input)), out: &out,
+		ctx: context.Background(), in: readLines(strings.NewReader(input)), out: &out,
 		groups: groups, dialogs: dialogs, sel: initial, cfgPath: "/c.yaml",
 		plan: func(chosen []tgclient.Dialog) ([]planRow, error) {
 			var rows []planRow
@@ -95,5 +96,34 @@ func TestSetupEOFExitsWithoutSaving(t *testing.T) {
 		if d.run() {
 			t.Errorf("input %q: EOF saved the config", input)
 		}
+	}
+}
+
+func TestSetupAcceptsRussianYes(t *testing.T) {
+	d, _ := newDialog("1\n1\n\nd\nда\n", selector.Selection{})
+	if !d.run() {
+		t.Fatal("«да» did not save")
+	}
+	d, out := newDialog("1\n1\n\nd\nнет\nq\n", selector.Selection{})
+	if d.run() || !strings.Contains(out.String(), "не записано") {
+		t.Fatalf("declined confirmation:\n%s", out)
+	}
+}
+
+// Ctrl+C cancels the context while the dialog waits for a line that never comes.
+func TestSetupInterruptExitsWithoutSaving(t *testing.T) {
+	d, _ := newDialog("", selector.Selection{})
+	ctx, cancel := context.WithCancel(context.Background())
+	d.ctx, d.in = ctx, make(chan string)
+	done := make(chan bool)
+	go func() { done <- d.run() }()
+	cancel()
+	select {
+	case saved := <-done:
+		if saved {
+			t.Fatal("interrupted dialog saved")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("dialog ignores interrupt")
 	}
 }

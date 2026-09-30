@@ -104,3 +104,15 @@ func TestInitialFromConfig(t *testing.T) {
 		t.Fatalf("missing folder: %v %v", sel.IDs(), warns)
 	}
 }
+
+func TestInitialKeepsTheRestWhenAFolderIsGone(t *testing.T) {
+	sel, warns := selector.Initial(dialogs, folders, config.Targets{
+		Folders: []string{"Семья", "Удалённая"}, Include: []config.PeerRef{"-20"},
+	})
+	if !slices.Equal(sel.IDs(), []int64{forum.ID, dacha.ID, mama.ID}) {
+		t.Fatalf("initial = %v", sel.IDs())
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "Удалённая") {
+		t.Fatalf("warnings = %v", warns)
+	}
+}

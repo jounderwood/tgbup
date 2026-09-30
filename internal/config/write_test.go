@@ -61,6 +61,25 @@ media:
 	}
 }
 
+// Titles come from other people; whatever they contain must not make the
+// config unwritable or crash the encoder.
+func TestWriteTargetsCleansTitles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	titles := map[int64]string{1: "звонок\x07\x1b[31m", 2: "bad\xff\xfe", 3: "\u202eперевёрнуто", 4: "семья 👨\u200d👩\u200d👧"}
+	if err := config.WriteTargets(path, []int64{1, 2, 3, 4}, titles); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(path, "/home/u"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, want := range []string{"# звонок[31m", "# bad", "# перевёрнуто", "# семья 👨\u200d👩\u200d👧"} {
+		if !strings.Contains(string(raw), want+"\n") {
+			t.Errorf("config lacks comment %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestWriteTargetsCreatesConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tgbup", "config.yaml")
 	if err := config.WriteTargets(path, []int64{5}, map[int64]string{5: "Я"}); err != nil {

@@ -136,14 +136,25 @@ func Search(dialogs []tgclient.Dialog, q string) []tgclient.Dialog {
 	return out
 }
 
-// Initial marks what the current config selects, so setup starts from it. A
-// config that no longer resolves (e.g. a deleted folder) yields an empty
-// selection plus a warning instead of an error.
+// Initial marks what the current config selects, so setup starts from it.
+// A folder that no longer exists in Telegram only costs its own chats (with a
+// warning), not the rest of the selection.
 func Initial(dialogs []tgclient.Dialog, folders []tgclient.Folder, sel config.Targets) (Selection, []string) {
-	targets, warnings, err := tgclient.SelectTargets(dialogs, folders, sel)
-	if err != nil {
-		return Selection{}, []string{err.Error()}
+	var warnings []string
+	resolvable := sel
+	resolvable.Folders = nil
+	for _, name := range sel.Folders {
+		if slices.ContainsFunc(folders, func(f tgclient.Folder) bool { return f.Title == name }) {
+			resolvable.Folders = append(resolvable.Folders, name)
+		} else {
+			warnings = append(warnings, fmt.Sprintf("папка %q не найдена в Telegram, её чаты не отмечены", name))
+		}
 	}
+	targets, more, err := tgclient.SelectTargets(dialogs, folders, resolvable)
+	if err != nil {
+		return Selection{}, append(warnings, err.Error())
+	}
+	warnings = append(warnings, more...)
 	s := Selection{}
 	for _, t := range targets {
 		s[t.Chat.ID] = true

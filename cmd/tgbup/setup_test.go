@@ -35,3 +35,27 @@ func TestTestDCUsesSeparateSession(t *testing.T) {
 		t.Fatalf("test-DC options = %+v", o)
 	}
 }
+
+// setup exists to fill in targets, so a config without them must not stop it.
+func TestSetupLoadsConfigWithoutTargets(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "tgbup")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("TG_API_ID=1\nTG_API_HASH=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("archive_dir: /mnt/nas/tg\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := Env{Getenv: func(k string) string { return map[string]string{"HOME": home}[k] }}
+
+	st, err := loadSetup(e, false)
+	if err != nil || st.cfg.ArchiveDir != "/mnt/nas/tg" {
+		t.Fatalf("setup = %+v, %v", st.cfg, err)
+	}
+	if _, err := loadSetup(e, true); err == nil {
+		t.Fatal("sync accepted a config without targets")
+	}
+}

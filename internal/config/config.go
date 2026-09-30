@@ -75,7 +75,13 @@ func Default() Config {
 	}
 }
 
-func Load(path, home string) (Config, error) {
+func Load(path, home string) (Config, error) { return load(path, home, true) }
+
+// LoadWithoutTargets accepts a config whose targets are not chosen yet, for
+// the commands that come before choosing them (login, setup).
+func LoadWithoutTargets(path, home string) (Config, error) { return load(path, home, false) }
+
+func load(path, home string, requireTargets bool) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
@@ -88,18 +94,18 @@ func Load(path, home string) (Config, error) {
 	for i, r := range cfg.Backup.Repositories {
 		cfg.Backup.Repositories[i] = expandHome(r, home)
 	}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(requireTargets); err != nil {
 		return Config{}, fmt.Errorf("config %s: %w", path, err)
 	}
 	return cfg, nil
 }
 
-func (c Config) validate() error {
+func (c Config) validate(requireTargets bool) error {
 	var errs []error
 	if c.ArchiveDir == "" {
 		errs = append(errs, errors.New("archive_dir is empty"))
 	}
-	if len(c.Targets.Folders) == 0 && len(c.Targets.Include) == 0 {
+	if requireTargets && len(c.Targets.Folders) == 0 && len(c.Targets.Include) == 0 {
 		errs = append(errs, errors.New("targets: set at least one of folders or include"))
 	}
 	for _, r := range append(slices.Clone(c.Targets.Include), c.Targets.Exclude...) {

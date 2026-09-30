@@ -16,7 +16,8 @@ import (
 )
 
 type setupDialog struct {
-	in      *bufio.Scanner
+	ctx     context.Context
+	in      <-chan string
 	out     io.Writer
 	groups  []selector.Group
 	dialogs []tgclient.Dialog
@@ -25,14 +26,34 @@ type setupDialog struct {
 	plan    func([]tgclient.Dialog) ([]planRow, error)
 }
 
-// ask returns false on EOF (Ctrl+D), which always means "leave without saving".
+// readLines feeds input lines through a channel, closed at EOF or a read error.
+func readLines(r io.Reader) <-chan string {
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	return lines
+}
+
+// ask returns false on EOF (Ctrl+D) or interrupt (Ctrl+C cancels ctx), which
+// always means "leave without saving".
 func (s *setupDialog) ask(prompt string) (string, bool) {
 	fmt.Fprint(s.out, prompt)
-	if !s.in.Scan() {
+	select {
+	case line, ok := <-s.in:
+		if !ok {
+			fmt.Fprintln(s.out)
+			return "", false
+		}
+		return strings.TrimSpace(line), true
+	case <-s.ctx.Done():
 		fmt.Fprintln(s.out)
 		return "", false
 	}
-	return strings.TrimSpace(s.in.Text()), true
 }
 
 func (s *setupDialog) run() bool {
@@ -132,7 +153,12 @@ func (s *setupDialog) confirm() (save, ok bool) {
 	if !ok {
 		return false, false
 	}
-	return strings.EqualFold(ans, "y"), true
+	switch strings.ToLower(ans) {
+	case "y", "yes", "д", "да":
+		return true, true
+	}
+	fmt.Fprintln(s.out, "не записано")
+	return false, true
 }
 
 func dialogItems(chosen []tgclient.Dialog, groups []selector.Group) []planItem {
@@ -182,7 +208,7 @@ func cmdSetup(ctx context.Context, env Env) int {
 		}
 		groups := selector.Groups(dialogs, folders)
 		d := &setupDialog{
-			in: bufio.NewScanner(env.Stdin), out: env.Stdout,
+			ctx: ctx, in: readLines(env.Stdin), out: env.Stdout,
 			groups: groups, dialogs: dialogs, sel: sel, cfgPath: st.paths.Config,
 			plan: func(chosen []tgclient.Dialog) ([]planRow, error) {
 				return planRows(ctx, api, dialogItems(chosen, groups))

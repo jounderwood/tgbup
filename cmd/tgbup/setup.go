@@ -20,7 +20,11 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 	if err != nil {
 		return setup{}, err
 	}
-	cfg, err := config.Load(p.Config, p.Home)
+	load := config.Load
+	if !requireConfig {
+		load = config.LoadWithoutTargets
+	}
+	cfg, err := load(p.Config, p.Home)
 	if err != nil {
 		if requireConfig || !errors.Is(err, fs.ErrNotExist) {
 			return setup{}, err

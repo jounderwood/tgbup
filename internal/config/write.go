@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -66,8 +67,7 @@ func targetsNode(ids []int64, titles map[int64]string) *yaml.Node {
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	for _, id := range ids {
 		n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.FormatInt(id, 10)}
-		// Fields collapses newlines so a title can never break out of its comment.
-		if title := strings.Join(strings.Fields(titles[id]), " "); title != "" {
+		if title := commentText(titles[id]); title != "" {
 			n.LineComment = "# " + title
 		}
 		seq.Content = append(seq.Content, n)
@@ -75,6 +75,22 @@ func targetsNode(ids []int64, titles map[int64]string) *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
 		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "include"}, seq,
 	}}
+}
+
+// commentText makes a chat title safe for a YAML line comment: newlines would
+// break out of it, and control characters or invalid UTF-8 make the YAML
+// invalid or crash the encoder. The zero-width joiner is kept for emoji.
+func commentText(title string) string {
+	title = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsSpace(r):
+			return ' '
+		case unicode.IsGraphic(r) || r == '\u200d':
+			return r
+		}
+		return -1
+	}, strings.ToValidUTF8(title, ""))
+	return strings.Join(strings.Fields(title), " ")
 }
 
 // replaceFile validates the new config from a temp file next to path and only
