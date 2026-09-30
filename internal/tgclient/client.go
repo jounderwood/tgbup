@@ -11,6 +11,7 @@ import (
 
 	"github.com/gotd/contrib/middleware/floodwait"
 	"github.com/gotd/contrib/middleware/ratelimit"
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/dcs"
@@ -40,11 +41,36 @@ func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegra
 	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
 }
 
+// retryNotInited repeats a call on CONNECTION_NOT_INITED, which Telegram (test
+// servers especially) sometimes returns transiently; gotd's own e2e tests do the same.
+type retryNotInited struct {
+	attempts int
+	delay    time.Duration
+}
+
+func (r retryNotInited) Handle(next tg.Invoker) telegram.InvokeFunc {
+	return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+		var err error
+		for i := 0; i < r.attempts; i++ {
+			if err = next.Invoke(ctx, input, output); !tgerr.Is(err, "CONNECTION_NOT_INITED") {
+				return err
+			}
+			select {
+			case <-time.After(r.delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return err
+	}
+}
+
 func telegramOptions(o Options) telegram.Options {
 	opts := telegram.Options{
 		SessionStorage: &session.FileStorage{Path: o.SessionPath},
 		NoUpdates:      true,
 		Middlewares: []telegram.Middleware{
+			retryNotInited{attempts: 3, delay: 500 * time.Millisecond},
 			floodwait.NewSimpleWaiter().WithMaxWait(o.MaxFloodWait),
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
 		},
