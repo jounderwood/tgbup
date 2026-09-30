@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	OutsideFolders = "Вне папок"
-	ArchiveGroup   = "Архив"
+	AllChats       = "All chats"
+	OutsideFolders = "No folder"
+	ArchiveGroup   = "Archived"
 )
 
 type Group struct {
@@ -23,10 +24,10 @@ type Group struct {
 	Chats []tgclient.Dialog
 }
 
-// Groups lists every Telegram folder, then non-archived chats in no folder,
-// then archived chats. A chat in several folders appears in each of them.
+// Groups lists all chats, every Telegram folder, then non-archived chats in no
+// folder, then archived chats. A chat in several folders appears in each of them.
 func Groups(dialogs []tgclient.Dialog, folders []tgclient.Folder) []Group {
-	var out []Group
+	out := []Group{{Title: AllChats, Chats: dialogs}}
 	inFolder := map[int64]bool{}
 	for _, f := range folders {
 		g := Group{Title: f.Title}
@@ -108,14 +109,14 @@ func ParseIndices(input string, n int) ([]int, error) {
 		from, err1 := strconv.Atoi(lo)
 		to, err2 := strconv.Atoi(hi)
 		if err1 != nil || err2 != nil || from < 1 || to > n || from > to {
-			return nil, fmt.Errorf("неверный номер или диапазон %q (доступно 1–%d)", part, n)
+			return nil, fmt.Errorf("invalid number or range %q (valid: 1-%d)", part, n)
 		}
 		for i := from; i <= to; i++ {
 			seen[i-1] = true
 		}
 	}
 	if len(seen) == 0 {
-		return nil, errors.New("не указано ни одного номера")
+		return nil, errors.New("no numbers given")
 	}
 	out := make([]int, 0, len(seen))
 	for i := range seen {
@@ -126,7 +127,7 @@ func ParseIndices(input string, n int) ([]int, error) {
 }
 
 func Search(dialogs []tgclient.Dialog, q string) []tgclient.Dialog {
-	q = strings.ToLower(strings.TrimSpace(q))
+	q = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(q), "@"))
 	var out []tgclient.Dialog
 	for _, d := range dialogs {
 		if strings.Contains(strings.ToLower(d.Title), q) || (d.Username != "" && strings.Contains(strings.ToLower(d.Username), q)) {
@@ -136,10 +137,81 @@ func Search(dialogs []tgclient.Dialog, q string) []tgclient.Dialog {
 	return out
 }
 
+// State is the whole setup choice: selected chats plus excluded forum topics.
+type State struct {
+	Chats    Selection
+	Excluded map[int64]map[int]bool
+}
+
+func NewState() *State { return &State{Chats: Selection{}, Excluded: map[int64]map[int]bool{}} }
+
+func (s *State) TopicArchived(chat int64, topic int) bool {
+	return s.Chats[chat] && !s.Excluded[chat][topic]
+}
+
+// ExcludedFor returns the sorted excluded topics of a selected chat.
+func (s *State) ExcludedFor(chat int64) []int {
+	if !s.Chats[chat] || len(s.Excluded[chat]) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(s.Excluded[chat]))
+	for id := range s.Excluded[chat] {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// ToggleTopics flips the archive mark of topics all[idx...] of a forum.
+func (s *State) ToggleTopics(chat int64, all []int, idx []int) {
+	archived := s.archivedTopics(chat, all)
+	for _, i := range idx {
+		archived[all[i]] = !archived[all[i]]
+	}
+	s.setTopics(chat, all, archived)
+}
+
+func (s *State) SetAllTopics(chat int64, all []int, on bool) {
+	archived := map[int]bool{}
+	for _, id := range all {
+		archived[id] = on
+	}
+	s.setTopics(chat, all, archived)
+}
+
+func (s *State) archivedTopics(chat int64, all []int) map[int]bool {
+	out := map[int]bool{}
+	for _, id := range all {
+		out[id] = s.TopicArchived(chat, id)
+	}
+	return out
+}
+
+// setTopics keeps the forum selected exactly while at least one topic is archived.
+func (s *State) setTopics(chat int64, all []int, archived map[int]bool) {
+	excluded := map[int]bool{}
+	for _, id := range all {
+		if !archived[id] {
+			excluded[id] = true
+		}
+	}
+	if len(excluded) == len(all) {
+		delete(s.Chats, chat)
+		delete(s.Excluded, chat)
+		return
+	}
+	s.Chats[chat] = true
+	if len(excluded) == 0 {
+		delete(s.Excluded, chat)
+	} else {
+		s.Excluded[chat] = excluded
+	}
+}
+
 // Initial marks what the current config selects, so setup starts from it.
 // A folder that no longer exists in Telegram only costs its own chats (with a
 // warning), not the rest of the selection.
-func Initial(dialogs []tgclient.Dialog, folders []tgclient.Folder, sel config.Targets) (Selection, []string) {
+func Initial(dialogs []tgclient.Dialog, folders []tgclient.Folder, sel config.Targets) (*State, []string) {
 	var warnings []string
 	resolvable := sel
 	resolvable.Folders = nil
@@ -147,17 +219,23 @@ func Initial(dialogs []tgclient.Dialog, folders []tgclient.Folder, sel config.Ta
 		if slices.ContainsFunc(folders, func(f tgclient.Folder) bool { return f.Title == name }) {
 			resolvable.Folders = append(resolvable.Folders, name)
 		} else {
-			warnings = append(warnings, fmt.Sprintf("папка %q не найдена в Telegram, её чаты не отмечены", name))
+			warnings = append(warnings, fmt.Sprintf("folder %q not found in Telegram, its chats are not preselected", name))
 		}
 	}
 	targets, more, err := tgclient.SelectTargets(dialogs, folders, resolvable)
+	st := NewState()
 	if err != nil {
-		return Selection{}, append(warnings, err.Error())
+		return st, append(warnings, err.Error())
 	}
 	warnings = append(warnings, more...)
-	s := Selection{}
 	for _, t := range targets {
-		s[t.Chat.ID] = true
+		st.Chats[t.Chat.ID] = true
+		if len(t.ExcludedTopics) > 0 {
+			st.Excluded[t.Chat.ID] = map[int]bool{}
+			for _, id := range t.ExcludedTopics {
+				st.Excluded[t.Chat.ID][id] = true
+			}
+		}
 	}
-	return s, warnings
+	return st, warnings
 }

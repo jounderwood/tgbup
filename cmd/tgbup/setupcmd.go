@@ -12,28 +12,47 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/selector"
+	"gitlab.com/joeunderwood/tgbup/internal/stats"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
+const pageSize = 20
+
+// rowInfo is what a chat list row shows next to the title.
+type rowInfo struct {
+	Msgs   int
+	Topics int
+	Err    error
+}
+
 type setupDialog struct {
-	ctx     context.Context
-	in      <-chan string
-	out     io.Writer
-	groups  []selector.Group
-	dialogs []tgclient.Dialog
-	sel     selector.Selection
-	cfgPath string
-	plan    func([]tgclient.Dialog) ([]planRow, error)
+	ctx      context.Context
+	in       <-chan string
+	out      io.Writer
+	groups   []selector.Group
+	dialogs  []tgclient.Dialog
+	st       *selector.State
+	cfgPath  string
+	rowStats func([]tgclient.Dialog) map[int64]rowInfo
+	details  func([]stats.Item) []stats.ChatStats
+
+	rows map[int64]rowInfo
+	// last holds the stats shown at confirmation; their topic titles go into config comments.
+	last []stats.ChatStats
 }
 
 // readLines feeds input lines through a channel, closed at EOF or a read error.
-func readLines(r io.Reader) <-chan string {
+func readLines(r io.Reader, onErr func(error)) <-chan string {
 	lines := make(chan string)
 	go func() {
 		defer close(lines)
 		sc := bufio.NewScanner(r)
 		for sc.Scan() {
 			lines <- sc.Text()
+		}
+		if err := sc.Err(); err != nil && onErr != nil {
+			onErr(err)
 		}
 	}()
 	return lines
@@ -57,20 +76,24 @@ func (s *setupDialog) ask(prompt string) (string, bool) {
 }
 
 func (s *setupDialog) run() bool {
+	width := 0
+	for _, g := range s.groups {
+		width = max(width, len([]rune(g.Title)))
+	}
 	for {
-		fmt.Fprintf(s.out, "\nВыбрано: %d чатов\n", len(s.sel))
+		fmt.Fprintf(s.out, "\nSelected: %d chats\n", len(s.st.Chats))
 		for i, g := range s.groups {
-			fmt.Fprintf(s.out, "  %d) %s (%d, выбрано %d)\n", i+1, g.Title, len(g.Chats), s.sel.Count(g.Chats))
+			fmt.Fprintf(s.out, "  %d) %-*s  (%d, selected %d)\n", i+1, width, g.Title, len(g.Chats), s.st.Chats.Count(g.Chats))
 		}
-		fmt.Fprintln(s.out, "  s) поиск по названию    d) готово    q) выйти без сохранения")
+		fmt.Fprintln(s.out, "  s) search   d) done   q) quit without saving")
 		line, ok := s.ask("> ")
 		if !ok || line == "q" {
 			return false
 		}
 		switch line {
 		case "s":
-			q, ok := s.ask("поиск: ")
-			if !ok || !s.editGroup("Поиск: "+q, selector.Search(s.dialogs, q)) {
+			q, ok := s.ask("search: ")
+			if !ok || !s.editList("Search: "+q, selector.Search(s.dialogs, q)) {
 				return false
 			}
 		case "d":
@@ -84,31 +107,154 @@ func (s *setupDialog) run() bool {
 		default:
 			n, err := strconv.Atoi(line)
 			if err != nil || n < 1 || n > len(s.groups) {
-				fmt.Fprintf(s.out, "неизвестная команда %q\n", line)
+				fmt.Fprintf(s.out, "unknown command %q\n", line)
 				continue
 			}
-			if !s.editGroup(s.groups[n-1].Title, s.groups[n-1].Chats) {
+			if !s.editList(s.groups[n-1].Title, s.groups[n-1].Chats) {
 				return false
 			}
 		}
 	}
 }
 
-// editGroup returns false on EOF.
-func (s *setupDialog) editGroup(title string, chats []tgclient.Dialog) bool {
+// editList shows chats a page at a time; numbers are global across pages so a
+// range may span pages. It returns false on EOF or interrupt.
+func (s *setupDialog) editList(title string, chats []tgclient.Dialog) bool {
+	pages := max((len(chats)+pageSize-1)/pageSize, 1)
+	page := 0
 	for {
-		fmt.Fprintf(s.out, "\n%s:\n", title)
-		if len(chats) == 0 {
-			fmt.Fprintln(s.out, "  (пусто)")
+		from, to := page*pageSize, min((page+1)*pageSize, len(chats))
+		s.printPage(title, chats, page, pages, chats[from:to])
+		line, ok := s.ask("> ")
+		if !ok {
+			return false
 		}
-		for i, c := range chats {
-			mark := " "
-			if s.sel[c.ID] {
-				mark = "x"
+		cmd, arg, _ := strings.Cut(line, " ")
+		switch {
+		case line == "":
+			return true
+		case line == ">":
+			if page == pages-1 {
+				fmt.Fprintln(s.out, "already on the last page")
+			} else {
+				page++
 			}
-			fmt.Fprintf(s.out, "  %d) [%s] %s  %s\n", i+1, mark, c.Title, c.Type)
+		case line == "<":
+			if page == 0 {
+				fmt.Fprintln(s.out, "already on the first page")
+			} else {
+				page--
+			}
+		case cmd == "p":
+			n, err := strconv.Atoi(strings.TrimSpace(arg))
+			if err != nil || n < 1 || n > pages {
+				fmt.Fprintf(s.out, "error: no page %s (1-%d)\n", strings.TrimSpace(arg), pages)
+				continue
+			}
+			page = n - 1
+		case line == "a" || line == "n":
+			s.st.Chats.SetAll(chats[from:to], line == "a")
+		case line == "A" || line == "N":
+			s.st.Chats.SetAll(chats, line == "A")
+		case cmd == "t":
+			n, err := strconv.Atoi(strings.TrimSpace(arg))
+			if err != nil || n < 1 || n > len(chats) {
+				fmt.Fprintf(s.out, "error: no chat %s (1-%d)\n", strings.TrimSpace(arg), len(chats))
+				continue
+			}
+			if chats[n-1].Type != store.ChatForum {
+				fmt.Fprintf(s.out, "%s is not a forum\n", cleanTitle(chats[n-1].Title, titleWidth))
+				continue
+			}
+			if !s.editTopics(chats[n-1]) {
+				return false
+			}
+		default:
+			idx, err := selector.ParseIndices(line, len(chats))
+			if err != nil {
+				fmt.Fprintf(s.out, "error: %v\n", err)
+				continue
+			}
+			s.st.Chats.Toggle(chats, idx)
 		}
-		fmt.Fprintln(s.out, "номера (1,3,5-7) — переключить, a — все, n — ни одного, Enter — назад")
+	}
+}
+
+func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pages int, visible []tgclient.Dialog) {
+	s.loadRows(visible)
+	fmt.Fprintf(s.out, "\n%s · page %d/%d · %d chats · %d selected\n", title, page+1, pages, len(chats), s.st.Chats.Count(chats))
+	if len(chats) == 0 {
+		fmt.Fprintln(s.out, "  (empty)")
+		return
+	}
+	fmt.Fprintf(s.out, "  %4s  %-3s  %-*s  %-7s  %-8s  %s\n", "#", "sel", titleWidth, "chat", "type", "msgs", "topics")
+	fmt.Fprintf(s.out, "  %s  %s  %s  %s  %s  %s\n", strings.Repeat("─", 4), strings.Repeat("─", 3),
+		strings.Repeat("─", titleWidth), strings.Repeat("─", 7), strings.Repeat("─", 8), strings.Repeat("─", 10))
+	for i, c := range visible {
+		mark := "[ ]"
+		if s.st.Chats[c.ID] {
+			mark = "[x]"
+		}
+		r := s.rows[c.ID]
+		msgs, topics := "~"+groupDigits(r.Msgs), ""
+		if r.Err != nil {
+			msgs = "?"
+		} else if c.Type == store.ChatForum {
+			topics = strconv.Itoa(r.Topics)
+			if n := len(s.st.ExcludedFor(c.ID)); n > 0 {
+				topics += fmt.Sprintf(" (%d excl)", n)
+			}
+		}
+		line := fmt.Sprintf("  %4d  %s  %-*s  %-7s  %-8s  %s", page*pageSize+i+1, mark, titleWidth, cleanTitle(c.Title, titleWidth), c.Type, msgs, topics)
+		fmt.Fprintln(s.out, strings.TrimRight(line, " "))
+	}
+	fmt.Fprintln(s.out, " 1,3,5-7 toggle · a/n page all/none · A/N whole list · t 3 topics")
+	fmt.Fprintln(s.out, " > next · < prev · p 5 go to page · Enter back")
+}
+
+// loadRows fetches counts only for chats not seen yet, so paging back is instant.
+func (s *setupDialog) loadRows(visible []tgclient.Dialog) {
+	if s.rows == nil {
+		s.rows = map[int64]rowInfo{}
+	}
+	var missing []tgclient.Dialog
+	for _, c := range visible {
+		if _, ok := s.rows[c.ID]; !ok {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	for id, r := range s.rowStats(missing) {
+		s.rows[id] = r
+	}
+}
+
+// editTopics returns false on EOF or interrupt.
+func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
+	cs := s.details([]stats.Item{s.item(forum)})[0]
+	if cs.Err != nil {
+		fmt.Fprintf(s.out, "could not load topics: %v\n", cs.Err)
+		return true
+	}
+	ids := make([]int, len(cs.Topics))
+	for i, t := range cs.Topics {
+		ids[i] = t.ID
+	}
+	for {
+		fmt.Fprintf(s.out, "\n%s · topics · new topics are archived automatically\n", cleanTitle(forum.Title, titleWidth))
+		fmt.Fprintf(s.out, "  %4s  %-4s  %-*s  %s\n", "#", "arch", titleWidth, "topic", "msgs")
+		fmt.Fprintf(s.out, "  %s  %s  %s  %s\n", strings.Repeat("─", 4), strings.Repeat("─", 4), strings.Repeat("─", titleWidth), strings.Repeat("─", 8))
+		for i, t := range cs.Topics {
+			mark := "[ ]"
+			if s.st.TopicArchived(forum.ID, t.ID) {
+				mark = "[x]"
+			}
+			name := cleanTitle(t.Title, titleWidth-8) + " #" + strconv.Itoa(t.ID)
+			fmt.Fprintf(s.out, "  %4d  %-4s  %-*s  ~%s\n", i+1, mark, titleWidth, name, groupDigits(t.Count))
+		}
+		fmt.Fprintln(s.out, " 1,3 toggle · a/n all/none · Enter back")
 		line, ok := s.ask("> ")
 		if !ok {
 			return false
@@ -116,40 +262,39 @@ func (s *setupDialog) editGroup(title string, chats []tgclient.Dialog) bool {
 		switch line {
 		case "":
 			return true
-		case "a":
-			s.sel.SetAll(chats, true)
-		case "n":
-			s.sel.SetAll(chats, false)
+		case "a", "n":
+			s.st.SetAllTopics(forum.ID, ids, line == "a")
 		default:
-			idx, err := selector.ParseIndices(line, len(chats))
+			idx, err := selector.ParseIndices(line, len(ids))
 			if err != nil {
-				fmt.Fprintf(s.out, "ошибка: %v\n", err)
+				fmt.Fprintf(s.out, "error: %v\n", err)
 				continue
 			}
-			s.sel.Toggle(chats, idx)
+			s.st.ToggleTopics(forum.ID, ids, idx)
 		}
 	}
 }
 
-// confirm shows the dry-run table for the selection; ok is false on EOF.
+func (s *setupDialog) item(d tgclient.Dialog) stats.Item {
+	return stats.Item{ID: d.ID, Type: d.Type, Title: d.Title, Peer: d.Peer, ExcludedTopics: s.st.ExcludedFor(d.ID)}
+}
+
+// confirm shows the dry-run report for the selection; ok is false on EOF or interrupt.
 func (s *setupDialog) confirm() (save, ok bool) {
-	var chosen []tgclient.Dialog
+	var items []stats.Item
 	for _, d := range s.dialogs {
-		if s.sel[d.ID] {
-			chosen = append(chosen, d)
+		if s.st.Chats[d.ID] {
+			items = append(items, s.item(d))
 		}
 	}
-	if len(chosen) == 0 {
-		fmt.Fprintln(s.out, "ничего не выбрано")
+	if len(items) == 0 {
+		fmt.Fprintln(s.out, "nothing selected")
 		return false, true
 	}
-	rows, err := s.plan(chosen)
-	if err != nil {
-		fmt.Fprintf(s.out, "не удалось посчитать сообщения: %v\n", err)
-	} else {
-		printPlan(s.out, rows)
-	}
-	ans, ok := s.ask(fmt.Sprintf("Записать в %s (%d чатов)? [y/N]: ", s.cfgPath, len(chosen)))
+	s.last = s.details(items)
+	fmt.Fprintln(s.out)
+	printReport(s.out, s.last)
+	ans, ok := s.ask(fmt.Sprintf("Write to %s (%d chats)? [y/N]: ", s.cfgPath, len(items)))
 	if !ok {
 		return false, false
 	}
@@ -157,25 +302,35 @@ func (s *setupDialog) confirm() (save, ok bool) {
 	case "y", "yes", "д", "да":
 		return true, true
 	}
-	fmt.Fprintln(s.out, "не записано")
+	fmt.Fprintln(s.out, "not written")
 	return false, true
 }
 
-func dialogItems(chosen []tgclient.Dialog, groups []selector.Group) []planItem {
-	items := make([]planItem, 0, len(chosen))
-	for _, d := range chosen {
-		var in []string
-		for _, g := range groups {
-			for _, c := range g.Chats {
-				if c.ID == d.ID {
-					in = append(in, g.Title)
-					break
-				}
-			}
-		}
-		items = append(items, planItem{ID: d.ID, Type: d.Type, Title: d.Title, Source: strings.Join(in, ", "), Peer: d.Peer})
+// selected turns the dialog state into what the config gets.
+func (s *setupDialog) selected() config.Selected {
+	out := config.Selected{
+		Chats:         s.st.Chats.IDs(),
+		ChatTitles:    map[int64]string{},
+		ExcludeTopics: map[int64][]int{},
+		TopicTitles:   map[int64]map[int]string{},
 	}
-	return items
+	for _, d := range s.dialogs {
+		out.ChatTitles[d.ID] = d.Title
+	}
+	for _, id := range out.Chats {
+		if ex := s.st.ExcludedFor(id); ex != nil {
+			out.ExcludeTopics[id] = ex
+		}
+	}
+	for _, cs := range s.last {
+		for _, t := range cs.Topics {
+			if out.TopicTitles[cs.Item.ID] == nil {
+				out.TopicTitles[cs.Item.ID] = map[int]string{}
+			}
+			out.TopicTitles[cs.Item.ID][t.ID] = t.Title
+		}
+	}
+	return out
 }
 
 func cmdSetup(ctx context.Context, env Env) int {
@@ -203,30 +358,27 @@ func cmdSetup(ctx context.Context, env Env) int {
 		if err != nil {
 			return err
 		}
-		sel, warnings := selector.Initial(dialogs, folders, st.cfg.Targets)
+		state, warnings := selector.Initial(dialogs, folders, st.cfg.Targets)
 		for _, w := range warnings {
-			fmt.Fprintf(env.Stdout, "текущий конфиг: %s\n", w)
+			fmt.Fprintf(env.Stdout, "current config: %s\n", w)
 		}
-		groups := selector.Groups(dialogs, folders)
+		progress := progressPrinter(env.Stderr, isTerminal(env.Stderr))
 		d := &setupDialog{
-			ctx: ctx, in: readLines(env.Stdin), out: env.Stdout,
-			groups: groups, dialogs: dialogs, sel: sel, cfgPath: st.paths.Config,
-			plan: func(chosen []tgclient.Dialog) ([]planRow, error) {
-				return planRows(ctx, api, dialogItems(chosen, groups))
-			},
+			ctx: ctx, out: env.Stdout,
+			in:     readLines(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) }),
+			groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: state, cfgPath: st.paths.Config,
+			rowStats: func(ds []tgclient.Dialog) map[int64]rowInfo { return listRowStats(ctx, api, ds, progress) },
+			details:  func(items []stats.Item) []stats.ChatStats { return stats.Collect(ctx, api, items, progress) },
 		}
 		if !d.run() {
-			fmt.Fprintln(env.Stdout, "конфиг не изменён")
+			fmt.Fprintln(env.Stdout, "config not changed")
 			return nil
 		}
-		titles := map[int64]string{}
-		for _, dg := range dialogs {
-			titles[dg.ID] = dg.Title
-		}
-		if err := config.WriteTargets(st.paths.Config, config.Selected{Chats: d.sel.IDs(), ChatTitles: titles}); err != nil {
+		sel := d.selected()
+		if err := config.WriteTargets(st.paths.Config, sel); err != nil {
 			return err
 		}
-		fmt.Fprintf(env.Stdout, "записано %d чатов в %s\n", len(d.sel), st.paths.Config)
+		fmt.Fprintf(env.Stdout, "wrote %d chats to %s\n", len(sel.Chats), st.paths.Config)
 		return nil
 	})
 	if err != nil {
@@ -234,4 +386,18 @@ func cmdSetup(ctx context.Context, env Env) int {
 		return 1
 	}
 	return 0
+}
+
+func listRowStats(ctx context.Context, api *tgclient.API, ds []tgclient.Dialog, progress func(done, total int)) map[int64]rowInfo {
+	out := make(map[int64]rowInfo, len(ds))
+	for i, d := range ds {
+		var r rowInfo
+		r.Msgs, r.Err = api.HistoryCount(ctx, d.Peer)
+		if r.Err == nil && d.Type == store.ChatForum {
+			r.Topics, r.Err = api.TopicCount(ctx, d.Peer)
+		}
+		out[d.ID] = r
+		progress(i+1, len(ds))
+	}
+	return out
 }

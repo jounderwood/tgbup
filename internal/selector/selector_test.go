@@ -38,19 +38,22 @@ func TestGroups(t *testing.T) {
 	for _, g := range gs {
 		titles = append(titles, g.Title)
 	}
-	if !slices.Equal(titles, []string{"Семья", "Форумы", selector.OutsideFolders, selector.ArchiveGroup}) {
+	if !slices.Equal(titles, []string{selector.AllChats, "Семья", "Форумы", selector.OutsideFolders, selector.ArchiveGroup}) {
 		t.Fatalf("groups = %v", titles)
 	}
-	if !slices.Equal(ids(gs[0].Chats), []int64{forum.ID, mama.ID}) || !slices.Equal(ids(gs[1].Chats), []int64{forum.ID}) {
-		t.Errorf("folder chats = %v / %v", ids(gs[0].Chats), ids(gs[1].Chats))
+	if !slices.Equal(ids(gs[0].Chats), ids(dialogs)) {
+		t.Errorf("all chats = %v", ids(gs[0].Chats))
 	}
-	if !slices.Equal(ids(gs[2].Chats), []int64{dacha.ID}) || !slices.Equal(ids(gs[3].Chats), []int64{old.ID}) {
-		t.Errorf("outside/archive = %v / %v", ids(gs[2].Chats), ids(gs[3].Chats))
+	if !slices.Equal(ids(gs[1].Chats), []int64{forum.ID, mama.ID}) || !slices.Equal(ids(gs[2].Chats), []int64{forum.ID}) {
+		t.Errorf("folder chats = %v / %v", ids(gs[1].Chats), ids(gs[2].Chats))
+	}
+	if !slices.Equal(ids(gs[3].Chats), []int64{dacha.ID}) || !slices.Equal(ids(gs[4].Chats), []int64{old.ID}) {
+		t.Errorf("outside/archive = %v / %v", ids(gs[3].Chats), ids(gs[4].Chats))
 	}
 }
 
 func TestSelectionIsSharedAcrossFolders(t *testing.T) {
-	gs := selector.Groups(dialogs, folders)
+	gs := selector.Groups(dialogs, folders)[1:]
 	sel := selector.Selection{}
 	sel.Toggle(gs[1].Chats, []int{0}) // forum via "Форумы"
 	if sel.Count(gs[0].Chats) != 1 {
@@ -86,8 +89,10 @@ func TestSearch(t *testing.T) {
 	if got := ids(selector.Search(dialogs, "МАМ")); !slices.Equal(got, []int64{mama.ID}) {
 		t.Errorf("title search = %v", got)
 	}
-	if got := ids(selector.Search(dialogs, "famforum")); !slices.Equal(got, []int64{forum.ID}) {
-		t.Errorf("username search = %v", got)
+	for _, q := range []string{"famforum", "@FamForum"} {
+		if got := ids(selector.Search(dialogs, q)); !slices.Equal(got, []int64{forum.ID}) {
+			t.Errorf("username search %q = %v", q, got)
+		}
 	}
 }
 
@@ -95,13 +100,13 @@ func TestInitialFromConfig(t *testing.T) {
 	sel, warns := selector.Initial(dialogs, folders, config.Targets{
 		Folders: []string{"Семья"}, Include: []config.PeerRef{"-20"}, Exclude: []config.PeerRef{"10"},
 	})
-	if !slices.Equal(sel.IDs(), []int64{forum.ID, dacha.ID}) || len(warns) != 0 {
-		t.Fatalf("initial = %v %v", sel.IDs(), warns)
+	if !slices.Equal(sel.Chats.IDs(), []int64{forum.ID, dacha.ID}) || len(warns) != 0 {
+		t.Fatalf("initial = %v %v", sel.Chats.IDs(), warns)
 	}
 
 	sel, warns = selector.Initial(dialogs, folders, config.Targets{Folders: []string{"Удалённая"}})
-	if len(sel) != 0 || len(warns) != 1 || !strings.Contains(warns[0], "Удалённая") {
-		t.Fatalf("missing folder: %v %v", sel.IDs(), warns)
+	if len(sel.Chats) != 0 || len(warns) != 1 || !strings.Contains(warns[0], "Удалённая") {
+		t.Fatalf("missing folder: %v %v", sel.Chats.IDs(), warns)
 	}
 }
 
@@ -109,10 +114,48 @@ func TestInitialKeepsTheRestWhenAFolderIsGone(t *testing.T) {
 	sel, warns := selector.Initial(dialogs, folders, config.Targets{
 		Folders: []string{"Семья", "Удалённая"}, Include: []config.PeerRef{"-20"},
 	})
-	if !slices.Equal(sel.IDs(), []int64{forum.ID, dacha.ID, mama.ID}) {
-		t.Fatalf("initial = %v", sel.IDs())
+	if !slices.Equal(sel.Chats.IDs(), []int64{forum.ID, dacha.ID, mama.ID}) {
+		t.Fatalf("initial = %v", sel.Chats.IDs())
 	}
 	if len(warns) != 1 || !strings.Contains(warns[0], "Удалённая") {
 		t.Fatalf("warnings = %v", warns)
+	}
+}
+
+func TestInitialTopicExclusions(t *testing.T) {
+	st, _ := selector.Initial(dialogs, folders, config.Targets{
+		Include:       []config.PeerRef{"-1000000000001"},
+		ExcludeTopics: map[int64][]int{forum.ID: {5, 12}, dacha.ID: {3}},
+	})
+	if !slices.Equal(st.ExcludedFor(forum.ID), []int{5, 12}) || st.ExcludedFor(dacha.ID) != nil {
+		t.Fatalf("excluded = %v / %v", st.ExcludedFor(forum.ID), st.ExcludedFor(dacha.ID))
+	}
+	if st.TopicArchived(forum.ID, 5) || !st.TopicArchived(forum.ID, 1) {
+		t.Fatal("topic marks do not follow the config")
+	}
+}
+
+func TestTopicToggles(t *testing.T) {
+	all := []int{1, 3, 5}
+	st := selector.NewState()
+
+	// Marking a topic of an unselected forum selects the forum with only that topic.
+	st.ToggleTopics(forum.ID, all, []int{1})
+	if !st.Chats[forum.ID] || !slices.Equal(st.ExcludedFor(forum.ID), []int{1, 5}) {
+		t.Fatalf("after marking topic 3: selected %v, excluded %v", st.Chats[forum.ID], st.ExcludedFor(forum.ID))
+	}
+	st.SetAllTopics(forum.ID, all, true)
+	if !st.Chats[forum.ID] || st.ExcludedFor(forum.ID) != nil {
+		t.Fatalf("all topics on: excluded %v", st.ExcludedFor(forum.ID))
+	}
+	// Unmarking every topic leaves nothing to archive, so the forum is unselected.
+	st.ToggleTopics(forum.ID, all, []int{0, 1, 2})
+	if st.Chats[forum.ID] || st.ExcludedFor(forum.ID) != nil {
+		t.Fatalf("no topics left: selected %v, excluded %v", st.Chats[forum.ID], st.ExcludedFor(forum.ID))
+	}
+	st.ToggleTopics(forum.ID, all, []int{2})
+	st.SetAllTopics(forum.ID, all, false)
+	if st.Chats[forum.ID] {
+		t.Fatal("n on the topic screen kept the forum selected")
 	}
 }
