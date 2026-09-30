@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gotd/td/telegram"
@@ -56,7 +57,12 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	useTakeout := fs.Bool("takeout", false, "use a Telegram takeout session (initial full export)")
+	dry := fs.Bool("dry-run", false, "show which chats would be archived and how many messages they hold; download nothing")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *dry && *useTakeout {
+		fmt.Fprintln(env.Stderr, "--dry-run and --takeout cannot be combined")
 		return 2
 	}
 	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
@@ -65,6 +71,9 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		log.Error("setup failed", "err", err)
 		return 1
+	}
+	if *dry {
+		return dryRun(ctx, st, env, log)
 	}
 	release, err := acquireLock(st.paths.Lock())
 	if errors.Is(err, errLocked) {
@@ -110,29 +119,90 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
-func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger) (syncSummary, error) {
-	api := tgclient.NewAPI(raw)
+type chatSelection struct {
+	self     int64
+	dialogs  []tgclient.Dialog
+	targets  []tgclient.Target
+	warnings []string
+}
+
+func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg config.Config, log *slog.Logger) (chatSelection, error) {
 	self, err := tgclient.SelfID(ctx, raw)
 	if err != nil {
-		return syncSummary{}, err
+		return chatSelection{}, err
 	}
 	dialogs, err := api.Dialogs(ctx)
 	if err != nil {
-		return syncSummary{}, err
+		return chatSelection{}, err
 	}
 	folders, err := api.Folders(ctx, self)
 	if err != nil {
-		return syncSummary{}, err
+		return chatSelection{}, err
 	}
 	targets, warnings, err := tgclient.SelectTargets(dialogs, folders, cfg.Targets)
 	if err != nil {
-		return syncSummary{}, err
+		return chatSelection{}, err
 	}
 	targets, migrationWarnings := api.AddMigrated(ctx, targets)
 	for _, w := range migrationWarnings {
 		log.Warn(w)
 	}
 	log.Info("targets selected", "count", len(targets))
+	return chatSelection{self: self, dialogs: dialogs, targets: targets, warnings: warnings}, nil
+}
+
+func targetItems(targets []tgclient.Target) []planItem {
+	items := make([]planItem, 0, len(targets))
+	for _, t := range targets {
+		source := "include"
+		if len(t.Chat.Folders) > 0 {
+			source = "folder " + strings.Join(t.Chat.Folders, ", ")
+		}
+		items = append(items, planItem{ID: t.Chat.ID, Type: t.Chat.Type, Title: t.Chat.Title, Source: source, Peer: t.Peer})
+	}
+	return items
+}
+
+// dryRun resolves targets like sync but touches neither run.lock nor the archive.
+func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
+	var warnings []string
+	err := tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
+		if err := tgclient.RequireAuth(ctx, c); err != nil {
+			return err
+		}
+		api := tgclient.NewAPI(c.API())
+		sel, err := selectChats(ctx, api, c.API(), st.cfg, log)
+		if err != nil {
+			return err
+		}
+		rows, err := planRows(ctx, api, targetItems(sel.targets))
+		if err != nil {
+			return err
+		}
+		printPlan(env.Stdout, rows)
+		warnings = sel.warnings
+		return nil
+	})
+	for _, w := range warnings {
+		fmt.Fprintf(env.Stdout, "warning: %s\n", w)
+	}
+	if err != nil {
+		log.Error("dry run failed", "err", err)
+		return 1
+	}
+	if len(warnings) > 0 {
+		return 1
+	}
+	return 0
+}
+
+func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger) (syncSummary, error) {
+	api := tgclient.NewAPI(raw)
+	sel, err := selectChats(ctx, api, raw, cfg, log)
+	if err != nil {
+		return syncSummary{}, err
+	}
+	self, dialogs, targets, warnings := sel.self, sel.dialogs, sel.targets, sel.warnings
 
 	dialogIDs := map[int64]bool{}
 	for _, d := range dialogs {
