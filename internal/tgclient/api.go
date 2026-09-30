@@ -77,6 +77,10 @@ func (a *API) HistoryCount(ctx context.Context, peer tg.InputPeerClass) (int, er
 	if err != nil {
 		return 0, err
 	}
+	return messageCount(res)
+}
+
+func messageCount(res tg.MessagesMessagesClass) (int, error) {
 	switch r := res.(type) {
 	case *tg.MessagesMessagesSlice:
 		return r.Count, nil
@@ -86,6 +90,66 @@ func (a *API) HistoryCount(ctx context.Context, peer tg.InputPeerClass) (int, er
 		return len(r.Messages), nil
 	}
 	return 0, fmt.Errorf("unexpected history result %T", res)
+}
+
+// TypeCounts is the number of messages of each media kind in a chat.
+type TypeCounts struct {
+	Photos, Videos, Files, Voice, Round, Music, GIFs, Links int
+}
+
+// SearchCounters counts a chat's messages per media kind in one request.
+func (a *API) SearchCounters(ctx context.Context, peer tg.InputPeerClass) (TypeCounts, error) {
+	res, err := a.raw.MessagesGetSearchCounters(ctx, &tg.MessagesGetSearchCountersRequest{
+		Peer: peer,
+		Filters: []tg.MessagesFilterClass{
+			&tg.InputMessagesFilterPhotos{}, &tg.InputMessagesFilterVideo{}, &tg.InputMessagesFilterDocument{},
+			&tg.InputMessagesFilterVoice{}, &tg.InputMessagesFilterRoundVideo{}, &tg.InputMessagesFilterMusic{},
+			&tg.InputMessagesFilterGif{}, &tg.InputMessagesFilterURL{},
+		},
+	})
+	if err != nil {
+		return TypeCounts{}, err
+	}
+	var c TypeCounts
+	for _, r := range res {
+		switch r.Filter.(type) {
+		case *tg.InputMessagesFilterPhotos:
+			c.Photos = r.Count
+		case *tg.InputMessagesFilterVideo:
+			c.Videos = r.Count
+		case *tg.InputMessagesFilterDocument:
+			c.Files = r.Count
+		case *tg.InputMessagesFilterVoice:
+			c.Voice = r.Count
+		case *tg.InputMessagesFilterRoundVideo:
+			c.Round = r.Count
+		case *tg.InputMessagesFilterMusic:
+			c.Music = r.Count
+		case *tg.InputMessagesFilterGif:
+			c.GIFs = r.Count
+		case *tg.InputMessagesFilterURL:
+			c.Links = r.Count
+		}
+	}
+	return c, nil
+}
+
+// TopicCount returns how many topics a forum has.
+func (a *API) TopicCount(ctx context.Context, peer tg.InputPeerClass) (int, error) {
+	res, err := a.raw.MessagesGetForumTopics(ctx, &tg.MessagesGetForumTopicsRequest{Peer: peer, Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	return res.Count, nil
+}
+
+// TopicMessageCount returns the message count of one forum topic.
+func (a *API) TopicMessageCount(ctx context.Context, peer tg.InputPeerClass, topicID int) (int, error) {
+	res, err := a.raw.MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{Peer: peer, MsgID: topicID, Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	return messageCount(res)
 }
 
 func (a *API) PinnedIDs(ctx context.Context, peer tg.InputPeerClass) ([]int, error) {

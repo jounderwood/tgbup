@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -46,6 +47,8 @@ type Folder struct {
 type Target struct {
 	Chat store.Chat
 	Peer tg.InputPeerClass
+	// ExcludedTopics lists forum topics whose messages are not archived.
+	ExcludedTopics []int
 	// TopMessage is the dialog's latest message id when targets were resolved;
 	// 0 when unknown (e.g. a pre-migration group).
 	TopMessage int
@@ -143,10 +146,20 @@ func SelectTargets(dialogs []Dialog, folders []Folder, sel config.Targets) ([]Ta
 			continue
 		}
 		out = append(out, Target{
-			Chat:       store.Chat{ID: d.ID, Type: d.Type, Title: d.Title, Username: d.Username, Folders: in},
-			Peer:       d.Peer,
-			TopMessage: d.TopMessage,
+			Chat:           store.Chat{ID: d.ID, Type: d.Type, Title: d.Title, Username: d.Username, Folders: in},
+			Peer:           d.Peer,
+			TopMessage:     d.TopMessage,
+			ExcludedTopics: sel.ExcludeTopics[d.ID],
 		})
+	}
+	selected := map[int64]bool{}
+	for _, t := range out {
+		selected[t.Chat.ID] = true
+	}
+	for _, id := range slices.Sorted(maps.Keys(sel.ExcludeTopics)) {
+		if !selected[id] {
+			warnings = append(warnings, fmt.Sprintf("exclude_topics %d: chat is not selected", id))
+		}
 	}
 	slices.SortFunc(out, func(a, b Target) int {
 		switch {
@@ -325,4 +338,14 @@ func (a *API) AddMigrated(ctx context.Context, targets []Target) ([]Target, []st
 		})
 	}
 	return out, warnings
+}
+
+// NameSelf titles the user's own dialog "Saved Messages", as Telegram apps do,
+// instead of the user's name.
+func NameSelf(ds []Dialog, selfID int64) {
+	for i := range ds {
+		if ds[i].ID == selfID {
+			ds[i].Title = "Saved Messages"
+		}
+	}
 }

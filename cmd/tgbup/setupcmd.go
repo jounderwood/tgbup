@@ -198,6 +198,7 @@ func cmdSetup(ctx context.Context, env Env) int {
 		if err != nil {
 			return err
 		}
+		tgclient.NameSelf(dialogs, self)
 		folders, err := api.Folders(ctx, self)
 		if err != nil {
 			return err

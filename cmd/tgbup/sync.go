@@ -135,6 +135,7 @@ func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg con
 	if err != nil {
 		return chatSelection{}, err
 	}
+	tgclient.NameSelf(dialogs, self)
 	folders, err := api.Folders(ctx, self)
 	if err != nil {
 		return chatSelection{}, err

@@ -117,3 +117,34 @@ func TestFoldersFromTelegram(t *testing.T) {
 		t.Fatalf("chatlist = %+v", got[1])
 	}
 }
+
+func TestSelectCarriesTopicExclusions(t *testing.T) {
+	sel := config.Targets{
+		Include:       []config.PeerRef{"-1000000000030", "10"},
+		ExcludeTopics: map[int64][]int{-1000000000030: {5, 12}, -1000000000040: {3}},
+	}
+	got, warns, err := tgclient.SelectTargets(dialogs, nil, sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range got {
+		want := []int(nil)
+		if tt.Chat.ID == -1000000000030 {
+			want = []int{5, 12}
+		}
+		if !slices.Equal(tt.ExcludedTopics, want) {
+			t.Errorf("chat %d excluded topics = %v, want %v", tt.Chat.ID, tt.ExcludedTopics, want)
+		}
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "exclude_topics -1000000000040: chat is not selected") {
+		t.Fatalf("warnings = %v", warns)
+	}
+}
+
+func TestNameSelf(t *testing.T) {
+	ds := []tgclient.Dialog{{ID: 7, Title: "Jo U"}, {ID: 8, Title: "Mom"}}
+	tgclient.NameSelf(ds, 7)
+	if ds[0].Title != "Saved Messages" || ds[1].Title != "Mom" {
+		t.Fatalf("titles = %q, %q", ds[0].Title, ds[1].Title)
+	}
+}

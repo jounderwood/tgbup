@@ -170,3 +170,50 @@ func TestHistoryCount(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchCounters(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	mock.ExpectFunc(func(b bin.Encoder) {
+		if req := b.(*tg.MessagesGetSearchCountersRequest); len(req.Filters) != 8 {
+			t.Fatalf("filters = %d, want 8", len(req.Filters))
+		}
+	}).ThenResult(&tg.MessagesSearchCounterVector{Elems: []tg.MessagesSearchCounter{
+		{Filter: &tg.InputMessagesFilterURL{}, Count: 55},
+		{Filter: &tg.InputMessagesFilterPhotos{}, Count: 310},
+		{Filter: &tg.InputMessagesFilterVideo{}, Count: 42},
+		{Filter: &tg.InputMessagesFilterDocument{}, Count: 18},
+		{Filter: &tg.InputMessagesFilterVoice{}, Count: 97},
+		{Filter: &tg.InputMessagesFilterRoundVideo{}, Count: 12},
+		{Filter: &tg.InputMessagesFilterMusic{}, Count: 3},
+		{Filter: &tg.InputMessagesFilterGif{}, Count: 4},
+	}})
+	got, err := tgclient.NewAPI(tg.NewClient(mock)).SearchCounters(context.Background(), peer)
+	want := tgclient.TypeCounts{Photos: 310, Videos: 42, Files: 18, Voice: 97, Round: 12, Music: 3, GIFs: 4, Links: 55}
+	if err != nil || got != want {
+		t.Fatalf("counts = %+v %v, want %+v", got, err, want)
+	}
+}
+
+func TestTopicCount(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	mock.ExpectFunc(func(b bin.Encoder) {
+		if req := b.(*tg.MessagesGetForumTopicsRequest); req.Limit != 1 {
+			t.Fatalf("limit = %d", req.Limit)
+		}
+	}).ThenResult(&tg.MessagesForumTopics{Count: 7, Topics: []tg.ForumTopicClass{topic(1, "General", false, 1)}})
+	if n, err := tgclient.NewAPI(tg.NewClient(mock)).TopicCount(context.Background(), peer); err != nil || n != 7 {
+		t.Fatalf("topics = %d %v", n, err)
+	}
+}
+
+func TestTopicMessageCount(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	mock.ExpectFunc(func(b bin.Encoder) {
+		if req := b.(*tg.MessagesGetRepliesRequest); req.MsgID != 5 || req.Limit != 1 {
+			t.Fatalf("request = %+v", req)
+		}
+	}).ThenResult(&tg.MessagesChannelMessages{Count: 2900, Messages: msgs(9)})
+	if n, err := tgclient.NewAPI(tg.NewClient(mock)).TopicMessageCount(context.Background(), peer, 5); err != nil || n != 2900 {
+		t.Fatalf("count = %d %v", n, err)
+	}
+}
