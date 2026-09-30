@@ -2,3 +2,4 @@
 .DS_Store
 *.part
 secrets.env
+e2e/.fixture.json

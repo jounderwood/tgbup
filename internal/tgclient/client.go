@@ -15,7 +15,6 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/dcs"
-	"github.com/gotd/td/telegram/takeout"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/time/rate"
@@ -107,14 +106,56 @@ func SelfID(ctx context.Context, raw *tg.Client) (int64, error) {
 	return 0, errors.New("get self: empty response")
 }
 
-func WithTakeout(ctx context.Context, c *telegram.Client, maxFileSize int64, fn func(ctx context.Context, raw *tg.Client) error) error {
-	cfg := takeout.Config{
-		MessageUsers: true, MessageChats: true, MessageMegagroups: true, MessageChannels: true,
-		Files: true, FileMaxSize: maxFileSize,
+// Telegram's largest file (Premium upload limit); without an explicit file_max_size
+// takeout rejects files with TAKEOUT_FILE_TOO_BIG.
+const maxTakeoutFileSize = 4000 << 20
+
+func takeoutRequest(maxFileSize int64) *tg.AccountInitTakeoutSessionRequest {
+	if maxFileSize <= 0 {
+		maxFileSize = maxTakeoutFileSize
 	}
-	err := takeout.Run(ctx, c, cfg, func(ctx context.Context, tc *takeout.Client) error {
-		return fn(ctx, tg.NewClient(tc))
-	})
+	r := &tg.AccountInitTakeoutSessionRequest{}
+	r.SetMessageUsers(true)
+	r.SetMessageChats(true)
+	r.SetMessageMegagroups(true)
+	r.SetMessageChannels(true)
+	r.SetFiles(true)
+	r.SetFileMaxSize(maxFileSize)
+	return r
+}
+
+type takeoutInvoker struct {
+	id   int64
+	next tg.Invoker
+}
+
+func (t takeoutInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	obj, ok := input.(bin.Object)
+	if !ok {
+		return fmt.Errorf("takeout: %T is not a TL object", input)
+	}
+	return t.next.Invoke(ctx, &tg.InvokeWithTakeoutRequest{TakeoutID: t.id, Query: obj}, output)
+}
+
+// runTakeout differs from gotd's takeout.Run in sending finishTakeoutSession
+// inside invokeWithTakeout too; Telegram rejects it otherwise with TAKEOUT_REQUIRED.
+func runTakeout(ctx context.Context, invoker tg.Invoker, maxFileSize int64, fn func(ctx context.Context, raw *tg.Client) error) error {
+	session, err := tg.NewClient(invoker).AccountInitTakeoutSession(ctx, takeoutRequest(maxFileSize))
+	if err != nil {
+		return fmt.Errorf("init takeout session: %w", err)
+	}
+	raw := tg.NewClient(takeoutInvoker{id: session.ID, next: invoker})
+	fnErr := fn(ctx, raw)
+	finish := &tg.AccountFinishTakeoutSessionRequest{}
+	finish.SetSuccess(fnErr == nil)
+	if _, err := raw.AccountFinishTakeoutSession(ctx, finish); err != nil {
+		return errors.Join(fnErr, fmt.Errorf("finish takeout session: %w", err))
+	}
+	return fnErr
+}
+
+func WithTakeout(ctx context.Context, c *telegram.Client, maxFileSize int64, fn func(ctx context.Context, raw *tg.Client) error) error {
+	err := runTakeout(ctx, c, maxFileSize, fn)
 	if rpc, ok := tgerr.As(err); ok && rpc.Type == "TAKEOUT_INIT_DELAY" {
 		return fmt.Errorf("telegram wants you to confirm the data export: open Telegram, allow the request "+
 			"in the service notifications (or wait %s), then rerun: %w", time.Duration(rpc.Argument)*time.Second, err)
