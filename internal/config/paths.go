@@ -43,5 +43,12 @@ func ResolvePaths(getenv func(string) string) (Paths, error) {
 	return p, nil
 }
 
-func (p Paths) Session() string { return filepath.Join(p.StateDir, "session") }
+// Session is the MTProto session file; the test-server one is separate so a
+// test login never replaces the real session.
+func (p Paths) Session(testDC bool) string {
+	if testDC {
+		return filepath.Join(p.StateDir, "session-test")
+	}
+	return filepath.Join(p.StateDir, "session")
+}
 func (p Paths) Lock() string    { return filepath.Join(p.StateDir, "run.lock") }

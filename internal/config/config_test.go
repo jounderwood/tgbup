@@ -121,8 +121,11 @@ func TestResolvePaths(t *testing.T) {
 	if p.Config != "/h/.config/tgbup/config.yaml" || p.Secrets != "/h/.config/tgbup/secrets.env" || p.StateDir != "/h/.local/state/tgbup" {
 		t.Errorf("defaults = %+v", p)
 	}
-	if p.Session() != "/h/.local/state/tgbup/session" || p.Lock() != "/h/.local/state/tgbup/run.lock" {
-		t.Errorf("session/lock = %s %s", p.Session(), p.Lock())
+	if p.Session(false) != "/h/.local/state/tgbup/session" || p.Lock() != "/h/.local/state/tgbup/run.lock" {
+		t.Errorf("session/lock = %s %s", p.Session(false), p.Lock())
+	}
+	if p.Session(true) != "/h/.local/state/tgbup/session-test" {
+		t.Errorf("test-DC session = %s", p.Session(true))
 	}
 
 	env["XDG_CONFIG_HOME"] = "/x"

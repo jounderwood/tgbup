@@ -22,7 +22,8 @@ func cmdLogin(ctx context.Context, env Env) int {
 		fmt.Fprintln(env.Stdout)
 		return string(b), err
 	}
-	err = tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
+	opts := st.clientOptions()
+	err = tgclient.Run(ctx, opts, func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.Login(ctx, c, env.Stdin, env.Stdout, readPassword); err != nil {
 			return err
 		}
@@ -30,7 +31,7 @@ func cmdLogin(ctx context.Context, env Env) int {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(env.Stdout, "logged in as user %d; session saved to %s\n", id, st.paths.Session())
+		fmt.Fprintf(env.Stdout, "logged in as user %d; session saved to %s\n", id, opts.SessionPath)
 		return nil
 	})
 	if err != nil {

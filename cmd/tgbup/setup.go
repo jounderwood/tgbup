@@ -38,15 +38,10 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 }
 
 func (s setup) clientOptions() tgclient.Options {
-	// A separate session file keeps a test-server login from replacing the real one.
-	session := s.paths.Session()
-	if s.testDC {
-		session += "-test"
-	}
 	return tgclient.Options{
 		APIID:        s.secrets.APIID,
 		APIHash:      s.secrets.APIHash,
-		SessionPath:  session,
+		SessionPath:  s.paths.Session(s.testDC),
 		Version:      version,
 		MaxFloodWait: s.cfg.Sync.MaxFloodWait.D(),
 		TestDC:       s.testDC,
