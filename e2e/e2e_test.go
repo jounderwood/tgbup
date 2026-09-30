@@ -11,7 +11,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,7 +101,7 @@ func newArchive(t *testing.T) (cfgPath, archive string) {
 	return cfgPath, archive
 }
 
-func runSync(t *testing.T, cfgPath string, args ...string) {
+func runSync(t *testing.T, cfgPath string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(binPath, append([]string{"sync"}, args...)...)
 	cmd.Env = testServerEnv(cfgPath)
@@ -108,6 +110,7 @@ func runSync(t *testing.T, cfgPath string, args ...string) {
 	if err != nil {
 		t.Fatalf("tgbup sync failed: %v", err)
 	}
+	return string(out)
 }
 
 func openArchive(t *testing.T, archive string) *sql.DB {
@@ -235,6 +238,22 @@ func TestSyncArchivesForum(t *testing.T) {
 	runSync(t, cfgPath)
 	if after := scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ?`, fx.ChatID); after != before+3 {
 		t.Errorf("incremental sync: %d → %d messages, want +3", before, after)
+	}
+}
+
+func TestDryRunListsChatsWithoutArchiving(t *testing.T) {
+	cfgPath, archive := newArchive(t)
+	out := runSync(t, cfgPath, "--dry-run")
+	if !strings.Contains(out, "would archive 3 chats") {
+		t.Errorf("dry run output:\n%s", out)
+	}
+	for _, id := range []int64{fx.ChatID, fx.SelfID, fx.GroupChatID()} {
+		if !strings.Contains(out, fmt.Sprint(id)) {
+			t.Errorf("chat %d missing from dry run", id)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(archive, "archive.sqlite")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("dry run touched the archive: %v", err)
 	}
 }
 
