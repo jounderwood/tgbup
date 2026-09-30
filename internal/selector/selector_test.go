@@ -159,3 +159,14 @@ func TestTopicToggles(t *testing.T) {
 		t.Fatal("n on the topic screen kept the forum selected")
 	}
 }
+
+// A forum whose topic list came back empty must not be dropped by "all on".
+func TestTopicTogglesWithoutTopicsKeepForum(t *testing.T) {
+	st := selector.NewState()
+	st.Chats[forum.ID] = true
+	st.SetAllTopics(forum.ID, nil, true)
+	st.ToggleTopics(forum.ID, nil, nil)
+	if !st.Chats[forum.ID] {
+		t.Fatal("empty topic list deselected the forum")
+	}
+}

@@ -136,8 +136,18 @@ func TestSelectCarriesTopicExclusions(t *testing.T) {
 			t.Errorf("chat %d excluded topics = %v, want %v", tt.Chat.ID, tt.ExcludedTopics, want)
 		}
 	}
-	if len(warns) != 1 || !strings.Contains(warns[0], "exclude_topics -1000000000040: chat is not selected") {
+	// A stale exclude_topics key loses nothing, so it must not fail the run like an unresolved include.
+	if len(warns) != 0 {
 		t.Fatalf("warnings = %v", warns)
+	}
+	notes := tgclient.TopicExclusionNotes(got, config.Targets{ExcludeTopics: map[int64][]int{
+		-1000000000030: {5}, -1000000000040: {3}, 10: {1},
+	}})
+	if !slices.Equal(notes, []string{
+		"exclude_topics -1000000000040: chat is not selected",
+		"exclude_topics 10: chat is not a forum",
+	}) {
+		t.Fatalf("notes = %q", notes)
 	}
 }
 

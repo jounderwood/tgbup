@@ -58,7 +58,7 @@ func TestCollect(t *testing.T) {
 	}
 	var progress []int
 	got := stats.Collect(context.Background(), f,
-		[]stats.Item{item(1, store.ChatForum, 5), item(3, store.ChatGroup), item(2, store.ChatPrivate)},
+		[]stats.Item{item(1, store.ChatForum, 5, 99), item(3, store.ChatGroup), item(2, store.ChatPrivate)},
 		func(done, total int) { progress = append(progress, done*10+total) })
 
 	forum := got[0]
@@ -68,6 +68,9 @@ func TestCollect(t *testing.T) {
 	wantTopics := []stats.TopicStats{{ID: 1, Title: "General", Count: 4812 - 300 - 2900}, {ID: 3, Title: "Recipes", Count: 300}, {ID: 5, Title: "Flood", Count: 2900, Excluded: true}}
 	if !slices.Equal(forum.Topics, wantTopics) {
 		t.Fatalf("topics = %+v", forum.Topics)
+	}
+	if !slices.Equal(forum.MissingTopics, []int{99}) {
+		t.Errorf("missing topics = %v, want [99]", forum.MissingTopics)
 	}
 	if slices.Contains(f.asked, 1) {
 		t.Error("General's count must be derived, not requested")

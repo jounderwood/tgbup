@@ -152,15 +152,6 @@ func SelectTargets(dialogs []Dialog, folders []Folder, sel config.Targets) ([]Ta
 			ExcludedTopics: sel.ExcludeTopics[d.ID],
 		})
 	}
-	selected := map[int64]bool{}
-	for _, t := range out {
-		selected[t.Chat.ID] = true
-	}
-	for _, id := range slices.Sorted(maps.Keys(sel.ExcludeTopics)) {
-		if !selected[id] {
-			warnings = append(warnings, fmt.Sprintf("exclude_topics %d: chat is not selected", id))
-		}
-	}
 	slices.SortFunc(out, func(a, b Target) int {
 		switch {
 		case a.Chat.ID < b.Chat.ID:
@@ -338,6 +329,26 @@ func (a *API) AddMigrated(ctx context.Context, targets []Target) ([]Target, []st
 		})
 	}
 	return out, warnings
+}
+
+// TopicExclusionNotes reports exclude_topics keys that have no effect. They
+// lose nothing, so unlike an unresolved include they are only worth a warning.
+func TopicExclusionNotes(targets []Target, sel config.Targets) []string {
+	byID := map[int64]Target{}
+	for _, t := range targets {
+		byID[t.Chat.ID] = t
+	}
+	var notes []string
+	for _, id := range slices.Sorted(maps.Keys(sel.ExcludeTopics)) {
+		t, ok := byID[id]
+		switch {
+		case !ok:
+			notes = append(notes, fmt.Sprintf("exclude_topics %d: chat is not selected", id))
+		case !t.IsForum():
+			notes = append(notes, fmt.Sprintf("exclude_topics %d: chat is not a forum", id))
+		}
+	}
+	return notes
 }
 
 // NameSelf titles the user's own dialog "Saved Messages", as Telegram apps do,

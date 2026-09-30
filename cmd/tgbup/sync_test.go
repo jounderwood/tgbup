@@ -33,3 +33,15 @@ func TestDryRunWithTakeoutIsAFlagError(t *testing.T) {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
+
+func TestTopicNotesDoNotFailTheRun(t *testing.T) {
+	sum := syncSummary{sync: syncer.Report{Chats: 1}, notes: []string{"exclude_topics -1001: chat is not selected"}}
+	if !sum.ok() {
+		t.Fatal("a stale exclude_topics key failed the run")
+	}
+	var out bytes.Buffer
+	sum.print(&out)
+	if !strings.Contains(out.String(), "warning: exclude_topics -1001") {
+		t.Fatalf("summary = %q", out.String())
+	}
+}

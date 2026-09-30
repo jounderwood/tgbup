@@ -188,7 +188,11 @@ func (s *State) archivedTopics(chat int64, all []int) map[int]bool {
 }
 
 // setTopics keeps the forum selected exactly while at least one topic is archived.
+// With no known topics there is nothing to decide, so the selection stays as is.
 func (s *State) setTopics(chat int64, all []int, archived map[int]bool) {
+	if len(all) == 0 {
+		return
+	}
 	excluded := map[int]bool{}
 	for _, id := range all {
 		if !archived[id] {

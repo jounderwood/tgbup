@@ -24,7 +24,8 @@ var (
 )
 
 type fakeSetup struct {
-	asked []int64 // chat ids whose row stats were requested
+	asked    []int64 // chat ids whose row stats were requested
+	noTopics bool
 }
 
 func (f *fakeSetup) rowStats(ds []tgclient.Dialog) map[int64]rowInfo {
@@ -47,7 +48,7 @@ func (f *fakeSetup) details(items []stats.Item) []stats.ChatStats {
 	var out []stats.ChatStats
 	for _, it := range items {
 		cs := stats.ChatStats{Item: it, Total: 5}
-		if it.Type == store.ChatForum {
+		if it.Type == store.ChatForum && !f.noTopics {
 			cs.Total = 30
 			for _, tp := range []stats.TopicStats{{ID: 1, Title: "General", Count: 10}, {ID: 5, Title: "Flood", Count: 20}} {
 				tp.Excluded = slices.Contains(it.ExcludedTopics, tp.ID)
@@ -223,4 +224,14 @@ func TestReadLinesReportsReadErrors(t *testing.T) {
 	if got == nil {
 		t.Fatal("a line over the scanner limit ended input silently")
 	}
+}
+
+func TestSetupTopicsScreenWithoutTopics(t *testing.T) {
+	d, out, f := newDialogOver("1\nt 1\na\n\nq\n", state(sForum.ID), []tgclient.Dialog{sForum}, nil)
+	f.noTopics = true
+	d.run()
+	if !d.st.Chats[sForum.ID] {
+		t.Fatal("forum with no loaded topics got deselected")
+	}
+	wantOutput(t, out.String(), "no topics to choose from")
 }

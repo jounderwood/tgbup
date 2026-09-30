@@ -44,6 +44,9 @@ func printReport(w io.Writer, chats []stats.ChatStats) {
 		}
 		fmt.Fprintln(w, "   "+line)
 		printTopics(w, c)
+		for _, id := range c.MissingTopics {
+			fmt.Fprintf(w, "   warning: excluded topic #%d is not in the forum\n", id)
+		}
 	}
 	total := fmt.Sprintf("══ Total: %d chats, ~%s msgs saved", len(chats), groupDigits(saved))
 	if t := typeList(types); t != "" {

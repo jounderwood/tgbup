@@ -238,6 +238,10 @@ func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
 		fmt.Fprintf(s.out, "could not load topics: %v\n", cs.Err)
 		return true
 	}
+	if len(cs.Topics) == 0 {
+		fmt.Fprintln(s.out, "no topics to choose from")
+		return true
+	}
 	ids := make([]int, len(cs.Topics))
 	for i, t := range cs.Topics {
 		ids[i] = t.ID

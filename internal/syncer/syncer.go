@@ -109,10 +109,11 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		return 0, err
 	}
 	if t.IsForum() {
-		if err := s.syncTopics(ctx, t); err != nil {
+		topics, err := s.syncTopics(ctx, t)
+		if err != nil {
 			return 0, err
 		}
-		reset, err := s.Store.ApplyTopicExclusions(ctx, t.Chat.ID, t.ExcludedTopics)
+		reset, err := s.Store.ApplyTopicExclusions(ctx, t.Chat.ID, t.ExcludedTopics, topics)
 		if err != nil {
 			return 0, err
 		}
@@ -185,23 +186,24 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 	return total, s.Store.MarkActive(ctx, t.Chat.ID)
 }
 
-func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) error {
+// syncTopics stores the forum's topics and returns their ids.
+func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) ([]int, error) {
 	topics, err := s.TG.ForumTopics(ctx, t.Peer)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rows := make([]store.Topic, 0, len(topics))
-	known := map[int]bool{}
+	ids := make([]int, 0, len(topics))
 	for _, tp := range topics {
 		rows = append(rows, store.Topic{ChatID: t.Chat.ID, TopicID: tp.ID, Title: tp.Title, Closed: tp.Closed, CreatedAt: int64(tp.Date)})
-		known[tp.ID] = true
+		ids = append(ids, tp.ID)
 	}
 	for _, id := range t.ExcludedTopics {
-		if !known[id] {
+		if !slices.Contains(ids, id) {
 			s.Log.Warn("exclude_topics: no such topic in the forum", "chat", t.Chat.ID, "topic", id)
 		}
 	}
-	return s.Store.UpsertTopics(ctx, rows)
+	return ids, s.Store.UpsertTopics(ctx, rows)
 }
 
 func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page, cur store.Cursor) (int, error) {

@@ -39,7 +39,9 @@ type ChatStats struct {
 	Total  int
 	Types  tgclient.TypeCounts
 	Topics []TopicStats
-	Err    error
+	// MissingTopics are excluded topic ids the forum no longer has.
+	MissingTopics []int
+	Err           error
 }
 
 // Saved is the message count that will actually be archived.
@@ -101,6 +103,11 @@ func collectChat(ctx context.Context, c Counter, cs *ChatStats) error {
 	}
 	if general >= 0 {
 		cs.Topics[general].Count = max(cs.Total-rest, 0)
+	}
+	for _, id := range cs.Item.ExcludedTopics {
+		if !slices.ContainsFunc(topics, func(t tgclient.Topic) bool { return t.ID == id }) {
+			cs.MissingTopics = append(cs.MissingTopics, id)
+		}
 	}
 	return nil
 }

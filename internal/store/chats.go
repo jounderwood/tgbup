@@ -120,9 +120,10 @@ func (s *Store) Topics(ctx context.Context, chatID int64) ([]Topic, error) {
 }
 
 // ApplyTopicExclusions records the forum's excluded topics. When a previously
-// excluded topic is no longer excluded, its messages were skipped so far, so
-// the backfill restarts from the newest message and reads the history again.
-func (s *Store) ApplyTopicExclusions(ctx context.Context, chatID int64, excluded []int) (reset bool, err error) {
+// excluded topic that still exists is no longer excluded, its messages were
+// skipped so far, so the backfill restarts from the newest message and reads
+// the history again.
+func (s *Store) ApplyTopicExclusions(ctx context.Context, chatID int64, excluded, existing []int) (reset bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -139,7 +140,7 @@ func (s *Store) ApplyTopicExclusions(ctx context.Context, chatID int64, excluded
 	}
 	next := slices.Sorted(slices.Values(excluded))
 	for _, id := range prev {
-		if !slices.Contains(next, id) {
+		if !slices.Contains(next, id) && slices.Contains(existing, id) {
 			reset = true
 			break
 		}

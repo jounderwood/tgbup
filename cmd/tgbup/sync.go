@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/gotd/td/telegram"
@@ -27,6 +28,8 @@ type syncSummary struct {
 	// unresolved lists configured includes that matched no dialog: such a chat
 	// silently stops being archived, so it fails the run.
 	unresolved []string
+	// notes are config problems that lose nothing (e.g. a stale exclude_topics key).
+	notes []string
 }
 
 func (s syncSummary) ok() bool {
@@ -37,6 +40,9 @@ func (s syncSummary) ok() bool {
 func (s syncSummary) print(w io.Writer) {
 	for _, u := range s.unresolved {
 		fmt.Fprintf(w, "config: %s\n", u)
+	}
+	for _, n := range s.notes {
+		fmt.Fprintf(w, "warning: %s\n", n)
 	}
 	fmt.Fprintf(w, "chats_synced=%d new_messages=%d deferred=%d newly_inaccessible=%v chat_errors=%d\n",
 		s.sync.Chats, s.sync.NewMessages, len(s.sync.Deferred), s.sync.NewlyInaccessible, len(s.sync.Failed))
@@ -124,6 +130,7 @@ type chatSelection struct {
 	dialogs  []tgclient.Dialog
 	targets  []tgclient.Target
 	warnings []string
+	notes    []string
 }
 
 func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg config.Config, log *slog.Logger) (chatSelection, error) {
@@ -149,14 +156,15 @@ func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg con
 		log.Warn(w)
 	}
 	log.Info("targets selected", "count", len(targets))
-	return chatSelection{self: self, dialogs: dialogs, targets: targets, warnings: warnings}, nil
+	notes := tgclient.TopicExclusionNotes(targets, cfg.Targets)
+	return chatSelection{self: self, dialogs: dialogs, targets: targets, warnings: warnings, notes: notes}, nil
 }
 
 // dryRun resolves targets like sync but touches neither run.lock nor the archive.
 func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 	var (
-		chats    []stats.ChatStats
-		warnings []string
+		chats           []stats.ChatStats
+		warnings, notes []string
 	)
 	err := tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
@@ -169,10 +177,10 @@ func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 		}
 		chats = stats.Collect(ctx, api, statItems(sel.targets), progressPrinter(env.Stderr, isTerminal(env.Stderr)))
 		printReport(env.Stdout, chats)
-		warnings = sel.warnings
+		warnings, notes = sel.warnings, sel.notes
 		return nil
 	})
-	for _, w := range warnings {
+	for _, w := range append(slices.Clone(warnings), notes...) {
 		fmt.Fprintf(env.Stdout, "warning: %s\n", w)
 	}
 	if err != nil {
@@ -214,7 +222,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	s := syncer.Syncer{
 		TG: api, Store: db, SelfID: self, Budget: cfg.Sync.RunTimeBudget.D(), PageSize: 100, Now: time.Now, Log: log,
 	}
-	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings}
+	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings, notes: sel.notes}
 	if sum.sync.AuthErr != nil {
 		return sum, sum.sync.AuthErr
 	}
