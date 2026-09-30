@@ -120,7 +120,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	if err != nil {
 		return syncSummary{}, err
 	}
-	folders, err := api.Folders(ctx)
+	folders, err := api.Folders(ctx, self)
 	if err != nil {
 		return syncSummary{}, err
 	}

@@ -1,4 +1,4 @@
-.PHONY: build test lint e2e e2e-seed e2e-run e2e-clean e2e-show
+.PHONY: build test lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
 
 build:
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbup ./cmd/tgbup
@@ -19,6 +19,10 @@ e2e-show:
 
 e2e-run:
 	TGBUP_TEST_DC=1 go test -tags e2e -count=1 -v -timeout 15m ./e2e/
+
+# Takeout makes Telegram ask the test account to confirm a data export each time.
+e2e-takeout:
+	TGBUP_TEST_DC=1 TGBUP_E2E_TAKEOUT=1 go test -tags e2e -count=1 -v -timeout 15m -run TestTakeoutSync ./e2e/
 
 e2e-clean:
 	TGBUP_TEST_DC=1 go run -tags e2e ./e2e/cmd/fixture clean

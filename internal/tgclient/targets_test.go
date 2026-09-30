@@ -102,7 +102,7 @@ func TestFoldersFromTelegram(t *testing.T) {
 		},
 		&tg.DialogFilterChatlist{ID: 3, Title: tg.TextWithEntities{Text: "Общая"}, IncludePeers: []tg.InputPeerClass{&tg.InputPeerUser{UserID: 11}}},
 	}})
-	got, err := tgclient.NewAPI(tg.NewClient(mock)).Folders(context.Background())
+	got, err := tgclient.NewAPI(tg.NewClient(mock)).Folders(context.Background(), 99)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestFoldersFromTelegram(t *testing.T) {
 		t.Fatalf("folders = %+v", got)
 	}
 	f := got[0]
-	if f.Title != "Семья" || !f.Groups || !slices.Equal(f.Include, []int64{10}) || !slices.Equal(f.Exclude, []int64{-20}) || !slices.Equal(f.Pinned, []int64{-1000000000030}) {
+	if f.Title != "Семья" || !f.Groups || !slices.Equal(f.Include, []int64{10, 99}) || !slices.Equal(f.Exclude, []int64{-20}) || !slices.Equal(f.Pinned, []int64{-1000000000030}) {
 		t.Fatalf("folder = %+v", f)
 	}
 	if got[1].Title != "Общая" || !slices.Equal(got[1].Include, []int64{11}) {

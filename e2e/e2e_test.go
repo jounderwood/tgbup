@@ -129,20 +129,57 @@ func scalar[T any](t *testing.T, db *sql.DB, query string, args ...any) T {
 	return v
 }
 
+// mediaFile returns the downloaded file of a message's media, failing unless it is done.
+func mediaFile(t *testing.T, db *sql.DB, archive string, chatID int64, msgID int) []byte {
+	t.Helper()
+	var status, path sql.NullString
+	err := db.QueryRow(`SELECT m.status, m.local_path FROM media m
+JOIN message_media mm ON mm.media_key = m.key WHERE mm.chat_id = ? AND mm.message_id = ?`, chatID, msgID).Scan(&status, &path)
+	if err != nil || status.String != "done" {
+		t.Errorf("media of %d/%d: status %q, err %v", chatID, msgID, status.String, err)
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(archive, path.String))
+	if err != nil {
+		t.Errorf("media of %d/%d: %v", chatID, msgID, err)
+	}
+	return b
+}
+
+func sameSHA256(b []byte, want string) bool {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]) == want
+}
+
 func checkMedia(t *testing.T, db *sql.DB, archive string) {
 	t.Helper()
-	if n := scalar[int](t, db, `SELECT count(*) FROM media WHERE status = 'done'`); n != 2 {
-		t.Errorf("media done = %d, want 2 (photo + document)", n)
+	if photo := mediaFile(t, db, archive, fx.ChatID, fx.PhotoMsg); len(photo) == 0 {
+		t.Errorf("forum photo is empty")
 	}
-	docPath := scalar[string](t, db, `SELECT local_path FROM media WHERE kind = 'document'`)
-	got, err := os.ReadFile(filepath.Join(archive, docPath))
-	sum := sha256.Sum256(got)
-	if err != nil || hex.EncodeToString(sum[:]) != fx.DocSHA256 {
-		t.Errorf("document differs from the uploaded file (err=%v, %d vs %d bytes)", err, len(got), fx.DocSize)
+	if doc := mediaFile(t, db, archive, fx.ChatID, fx.DocMsg); !sameSHA256(doc, fx.DocSHA256) {
+		t.Errorf("forum document differs from the uploaded file (%d vs %d bytes)", len(doc), fx.DocSize)
 	}
-	photoPath := scalar[string](t, db, `SELECT local_path FROM media WHERE kind = 'photo'`)
-	if st, err := os.Stat(filepath.Join(archive, photoPath)); err != nil || st.Size() == 0 {
-		t.Errorf("photo file missing: %v", err)
+	if doc := mediaFile(t, db, archive, fx.SelfID, fx.SavedDocMsg); !sameSHA256(doc, fx.SavedDocSHA256) {
+		t.Errorf("Saved Messages document differs from the uploaded file")
+	}
+}
+
+func checkPrivateAndGroup(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if typ := scalar[string](t, db, `SELECT type FROM chats WHERE id = ?`, fx.SelfID); typ != "private" {
+		t.Errorf("Saved Messages type = %s, want private", typ)
+	}
+	for _, id := range fx.SavedMsgs {
+		if n := scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ? AND id = ?`, fx.SelfID, id); n != 1 {
+			t.Errorf("Saved Messages message %d not archived", id)
+		}
+	}
+	if typ := scalar[string](t, db, `SELECT type FROM chats WHERE id = ?`, fx.GroupChatID()); typ != "group" {
+		t.Errorf("basic group type = %s, want group", typ)
+	}
+	text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.GroupChatID(), fx.GroupMsg)
+	if text != "семейный чат: в субботу у бабушки" {
+		t.Errorf("group message = %q", text)
 	}
 }
 
@@ -181,6 +218,7 @@ func TestSyncArchivesForum(t *testing.T) {
 			t.Errorf("service message %s not archived", action)
 		}
 	}
+	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
 
 	before := scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ?`, fx.ChatID)
@@ -200,7 +238,12 @@ func TestSyncArchivesForum(t *testing.T) {
 	}
 }
 
+// Each takeout session makes Telegram ask the account to confirm a data export,
+// so this runs only on request: make e2e-takeout.
 func TestTakeoutSync(t *testing.T) {
+	if os.Getenv("TGBUP_E2E_TAKEOUT") != "1" {
+		t.Skip("takeout check is opt-in: make e2e-takeout")
+	}
 	cfgPath, archive := newArchive(t)
 	runSync(t, cfgPath, "--takeout")
 
@@ -209,5 +252,6 @@ func TestTakeoutSync(t *testing.T) {
 		fx.ChatID, fx.LinkMsg, fx.ReplyMsg, fx.TopicMsg, fx.FwdMsg); n != 4 {
 		t.Errorf("takeout archived %d of 4 seeded text messages", n)
 	}
+	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
 }

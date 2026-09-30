@@ -46,9 +46,22 @@ type Fixture struct {
 	TopicMsg int `json:"topic_msg"`
 	FwdMsg   int `json:"fwd_msg"`
 
+	PhotoMsg  int    `json:"photo_msg"`
+	DocMsg    int    `json:"doc_msg"`
 	DocSHA256 string `json:"doc_sha256"`
 	DocSize   int    `json:"doc_size"`
+
+	// Saved Messages is the private chat available on a single test account.
+	SelfID         int64  `json:"self_id"`
+	SavedMsgs      []int  `json:"saved_msgs"`
+	SavedDocMsg    int    `json:"saved_doc_msg"`
+	SavedDocSHA256 string `json:"saved_doc_sha256"`
+
+	GroupID  int64 `json:"group_id"` // basic group, raw id
+	GroupMsg int   `json:"group_msg"`
 }
+
+func (f Fixture) GroupChatID() int64 { return convert.ChatID(f.GroupID) }
 
 func (f Fixture) Peer() *tg.InputPeerChannel {
 	return &tg.InputPeerChannel{ChannelID: f.ChannelID, AccessHash: f.AccessHash}
@@ -153,9 +166,31 @@ func SendText(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, text 
 	return sentID(upd)
 }
 
-func sendMedia(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, media tg.InputMediaClass) error {
-	_, err := raw.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{Peer: peer, Media: media, RandomID: randomID()})
-	return err
+func sendMedia(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, media tg.InputMediaClass) (int, error) {
+	upd, err := raw.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{Peer: peer, Media: media, RandomID: randomID()})
+	if err != nil {
+		return 0, err
+	}
+	return sentID(upd)
+}
+
+// sendDocument uploads random bytes as a PDF and returns the message id and the bytes' SHA-256.
+func sendDocument(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, size int) (int, string, error) {
+	data := make([]byte, size)
+	_, _ = rand.Read(data)
+	sum := sha256.Sum256(data)
+	file, err := uploader.NewUploader(raw).FromBytes(ctx, "отчёт 2026.pdf", data)
+	if err != nil {
+		return 0, "", fmt.Errorf("upload document: %w", err)
+	}
+	id, err := sendMedia(ctx, raw, peer, &tg.InputMediaUploadedDocument{
+		File: file, MimeType: "application/pdf",
+		Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName: "отчёт 2026.pdf"}},
+	})
+	if err != nil {
+		return 0, "", fmt.Errorf("send document: %w", err)
+	}
+	return id, hex.EncodeToString(sum[:]), nil
 }
 
 func testPNG() []byte {
@@ -225,31 +260,27 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 		return f, err
 	}
 
-	up := uploader.NewUploader(raw)
-	photo, err := up.FromBytes(ctx, "photo.png", testPNG())
+	photo, err := uploader.NewUploader(raw).FromBytes(ctx, "photo.png", testPNG())
 	if err != nil {
 		return f, fmt.Errorf("upload photo: %w", err)
 	}
-	if err := sendMedia(ctx, raw, peer, &tg.InputMediaUploadedPhoto{File: photo}); err != nil {
+	if f.PhotoMsg, err = sendMedia(ctx, raw, peer, &tg.InputMediaUploadedPhoto{File: photo}); err != nil {
 		return f, fmt.Errorf("send photo: %w", err)
 	}
-	docBytes := make([]byte, 700*1024) // spans two download chunks
-	_, _ = rand.Read(docBytes)
-	sum := sha256.Sum256(docBytes)
-	f.DocSHA256, f.DocSize = hex.EncodeToString(sum[:]), len(docBytes)
-	doc, err := up.FromBytes(ctx, "отчёт 2026.pdf", docBytes)
-	if err != nil {
-		return f, fmt.Errorf("upload document: %w", err)
-	}
-	if err := sendMedia(ctx, raw, peer, &tg.InputMediaUploadedDocument{
-		File: doc, MimeType: "application/pdf",
-		Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName: "отчёт 2026.pdf"}},
-	}); err != nil {
-		return f, fmt.Errorf("send document: %w", err)
+	f.DocSize = 700 * 1024 // spans two download chunks
+	if f.DocMsg, f.DocSHA256, err = sendDocument(ctx, raw, peer, f.DocSize); err != nil {
+		return f, err
 	}
 
 	if _, err := raw.MessagesUpdatePinnedMessage(ctx, &tg.MessagesUpdatePinnedMessageRequest{Peer: peer, ID: f.ReplyMsg, Silent: true}); err != nil {
 		return f, fmt.Errorf("pin: %w", err)
+	}
+
+	if err := seedSaved(ctx, raw, &f); err != nil {
+		return f, err
+	}
+	if err := seedGroup(ctx, raw, &f); err != nil {
+		return f, err
 	}
 
 	filters, err := raw.MessagesGetDialogFilters(ctx)
@@ -270,7 +301,9 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 		}
 	}
 	req := &tg.MessagesUpdateDialogFilterRequest{ID: folderID}
-	req.SetFilter(&tg.DialogFilter{ID: folderID, Title: tg.TextWithEntities{Text: f.Folder}, IncludePeers: []tg.InputPeerClass{peer}})
+	req.SetFilter(&tg.DialogFilter{ID: folderID, Title: tg.TextWithEntities{Text: f.Folder}, IncludePeers: []tg.InputPeerClass{
+		peer, &tg.InputPeerSelf{}, &tg.InputPeerChat{ChatID: f.GroupID},
+	}})
 	if _, err := raw.MessagesUpdateDialogFilter(ctx, req); err != nil {
 		return f, fmt.Errorf("create folder: %w", err)
 	}
@@ -278,8 +311,60 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 	return f, nil
 }
 
+// seedSaved writes run-tagged messages into Saved Messages; they are the only
+// ones Cleanup removes there, the rest of the chat is left alone.
+func seedSaved(ctx context.Context, raw *tg.Client, f *Fixture) error {
+	self, err := tgclient.SelfID(ctx, raw)
+	if err != nil {
+		return err
+	}
+	f.SelfID = self
+	saved := &tg.InputPeerSelf{}
+	note, err := SendText(ctx, raw, saved, f.Title+": заметка — пароль от wifi на даче в тумбочке", nil, 0)
+	if err != nil {
+		return fmt.Errorf("saved note: %w", err)
+	}
+	f.SavedMsgs = append(f.SavedMsgs, note)
+	if f.SavedDocMsg, f.SavedDocSHA256, err = sendDocument(ctx, raw, saved, 20*1024); err != nil {
+		return fmt.Errorf("saved document: %w", err)
+	}
+	f.SavedMsgs = append(f.SavedMsgs, f.SavedDocMsg)
+	return nil
+}
+
+func seedGroup(ctx context.Context, raw *tg.Client, f *Fixture) error {
+	res, err := raw.MessagesCreateChat(ctx, &tg.MessagesCreateChatRequest{Users: []tg.InputUserClass{}, Title: f.Title + "-group"})
+	if err != nil {
+		return fmt.Errorf("create group: %w", err)
+	}
+	if u, ok := res.Updates.(*tg.Updates); ok {
+		for _, c := range u.Chats {
+			if ch, ok := c.(*tg.Chat); ok {
+				f.GroupID = ch.ID
+			}
+		}
+	}
+	if f.GroupID == 0 {
+		return fmt.Errorf("create group: no chat in %T", res.Updates)
+	}
+	if f.GroupMsg, err = SendText(ctx, raw, &tg.InputPeerChat{ChatID: f.GroupID}, "семейный чат: в субботу у бабушки", nil, 0); err != nil {
+		return fmt.Errorf("group message: %w", err)
+	}
+	return nil
+}
+
 func Cleanup(ctx context.Context, raw *tg.Client, f Fixture) error {
 	var errs []error
+	if len(f.SavedMsgs) > 0 {
+		if _, err := raw.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{Revoke: true, ID: f.SavedMsgs}); err != nil {
+			errs = append(errs, fmt.Errorf("delete saved messages: %w", err))
+		}
+	}
+	if f.GroupID != 0 {
+		if _, err := raw.MessagesDeleteChat(ctx, f.GroupID); err != nil {
+			errs = append(errs, fmt.Errorf("delete group: %w", err))
+		}
+	}
 	if f.FolderID != 0 {
 		if _, err := raw.MessagesUpdateDialogFilter(ctx, &tg.MessagesUpdateDialogFilterRequest{ID: f.FolderID}); err != nil {
 			errs = append(errs, fmt.Errorf("delete folder: %w", err))

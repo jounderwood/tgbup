@@ -249,7 +249,9 @@ func dialogFromElem(e dialogs.Elem, archived bool) (Dialog, bool) {
 	return d, true
 }
 
-func (a *API) Folders(ctx context.Context) ([]Folder, error) {
+// Folders maps folder peers to chat ids; Saved Messages comes back as InputPeerSelf,
+// which only selfID can resolve.
+func (a *API) Folders(ctx context.Context, selfID int64) ([]Folder, error) {
 	res, err := a.raw.MessagesGetDialogFilters(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get dialog filters: %w", err)
@@ -259,20 +261,24 @@ func (a *API) Folders(ctx context.Context) ([]Folder, error) {
 		switch f := fc.(type) {
 		case *tg.DialogFilter:
 			out = append(out, Folder{
-				Title: f.Title.Text, Pinned: peerIDs(f.PinnedPeers), Include: peerIDs(f.IncludePeers), Exclude: peerIDs(f.ExcludePeers),
+				Title: f.Title.Text, Pinned: peerIDs(f.PinnedPeers, selfID), Include: peerIDs(f.IncludePeers, selfID), Exclude: peerIDs(f.ExcludePeers, selfID),
 				Contacts: f.Contacts, NonContacts: f.NonContacts, Groups: f.Groups, Broadcasts: f.Broadcasts, Bots: f.Bots,
 				ExcludeArchived: f.ExcludeArchived,
 			})
 		case *tg.DialogFilterChatlist:
-			out = append(out, Folder{Title: f.Title.Text, Pinned: peerIDs(f.PinnedPeers), Include: peerIDs(f.IncludePeers)})
+			out = append(out, Folder{Title: f.Title.Text, Pinned: peerIDs(f.PinnedPeers, selfID), Include: peerIDs(f.IncludePeers, selfID)})
 		}
 	}
 	return out, nil
 }
 
-func peerIDs(ps []tg.InputPeerClass) []int64 {
+func peerIDs(ps []tg.InputPeerClass, selfID int64) []int64 {
 	var out []int64
 	for _, p := range ps {
+		if _, self := p.(*tg.InputPeerSelf); self {
+			out = append(out, selfID)
+			continue
+		}
 		if id, ok := convert.InputPeerID(p); ok {
 			out = append(out, id)
 		}
