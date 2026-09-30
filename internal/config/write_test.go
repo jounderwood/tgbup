@@ -34,7 +34,7 @@ media:
 `, 0o644)
 	titles := map[int64]string{-1000000000001: "Семейный\nфорум #1 \"кавычки\" 🏡", 10: "Мама"}
 
-	if err := config.WriteTargets(path, []int64{-1000000000001, 10}, titles); err != nil {
+	if err := config.WriteTargets(path, config.Selected{Chats: []int64{-1000000000001, 10}, ChatTitles: titles}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(path, "/home/u")
@@ -66,7 +66,7 @@ media:
 func TestWriteTargetsCleansTitles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	titles := map[int64]string{1: "звонок\x07\x1b[31m", 2: "bad\xff\xfe", 3: "\u202eперевёрнуто", 4: "семья 👨\u200d👩\u200d👧"}
-	if err := config.WriteTargets(path, []int64{1, 2, 3, 4}, titles); err != nil {
+	if err := config.WriteTargets(path, config.Selected{Chats: []int64{1, 2, 3, 4}, ChatTitles: titles}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := config.Load(path, "/home/u"); err != nil {
@@ -82,7 +82,7 @@ func TestWriteTargetsCleansTitles(t *testing.T) {
 
 func TestWriteTargetsCreatesConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tgbup", "config.yaml")
-	if err := config.WriteTargets(path, []int64{5}, map[int64]string{5: "Я"}); err != nil {
+	if err := config.WriteTargets(path, config.Selected{Chats: []int64{5}, ChatTitles: map[int64]string{5: "Я"}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(path, "/home/u")
@@ -96,14 +96,64 @@ func TestWriteTargetsCreatesConfig(t *testing.T) {
 
 func TestWriteTargetsRefusesBadInput(t *testing.T) {
 	dir := t.TempDir()
-	if err := config.WriteTargets(filepath.Join(dir, "a.yaml"), nil, nil); err == nil {
+	if err := config.WriteTargets(filepath.Join(dir, "a.yaml"), config.Selected{}); err == nil {
 		t.Error("empty selection written")
 	}
 	list := writeFile(t, dir, "list.yaml", "- not a mapping\n", 0o600)
-	if err := config.WriteTargets(list, []int64{1}, nil); err == nil {
+	if err := config.WriteTargets(list, config.Selected{Chats: []int64{1}}); err == nil {
 		t.Error("non-mapping config overwritten")
 	}
 	if raw, _ := os.ReadFile(list); string(raw) != "- not a mapping\n" {
 		t.Errorf("file changed on error: %q", raw)
+	}
+}
+
+func TestWriteTargetsExcludeTopics(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yaml", "archive_dir: /a\ntargets:\n  include: [1]\n  exclude_topics: {-1001: [7]}\n", 0o600)
+	sel := config.Selected{
+		Chats:         []int64{-1001, 10},
+		ChatTitles:    map[int64]string{-1001: "Family", 10: "Mom"},
+		ExcludeTopics: map[int64][]int{-1001: {12, 5}, -2002: {3}, 10: nil},
+		TopicTitles:   map[int64]map[int]string{-1001: {5: "Flood", 12: "Memes"}},
+	}
+	if err := config.WriteTargets(path, sel); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), "-1001: [5, 12] # Family: Flood, Memes\n") {
+		t.Errorf("exclude_topics not written as expected:\n%s", raw)
+	}
+	cfg, err := config.Load(path, "/h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Targets.ExcludeTopics) != 1 || !slices.Equal(cfg.Targets.ExcludeTopics[-1001], []int{5, 12}) {
+		t.Fatalf("exclude_topics = %v (unselected chats must be dropped)", cfg.Targets.ExcludeTopics)
+	}
+
+	if err := config.WriteTargets(path, config.Selected{Chats: []int64{-1001}}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "exclude_topics") {
+		t.Errorf("empty exclusions left the key behind:\n%s", raw)
+	}
+}
+
+// A config kept in a dotfiles repo and symlinked into place must stay a symlink.
+func TestWriteTargetsKeepsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := writeFile(t, dir, "real.yaml", "archive_dir: /a\n", 0o600)
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.WriteTargets(link, config.Selected{Chats: []int64{5}}); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Lstat(link); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("config is no longer a symlink: %v %v", st.Mode(), err)
+	}
+	if raw, _ := os.ReadFile(real); !strings.Contains(string(raw), "- 5") {
+		t.Errorf("symlink target not updated:\n%s", raw)
 	}
 }

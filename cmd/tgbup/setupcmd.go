@@ -222,7 +222,7 @@ func cmdSetup(ctx context.Context, env Env) int {
 		for _, dg := range dialogs {
 			titles[dg.ID] = dg.Title
 		}
-		if err := config.WriteTargets(st.paths.Config, d.sel.IDs(), titles); err != nil {
+		if err := config.WriteTargets(st.paths.Config, config.Selected{Chats: d.sel.IDs(), ChatTitles: titles}); err != nil {
 			return err
 		}
 		fmt.Fprintf(env.Stdout, "записано %d чатов в %s\n", len(d.sel), st.paths.Config)

@@ -26,6 +26,8 @@ type Targets struct {
 	Folders []string  `yaml:"folders"`
 	Include []PeerRef `yaml:"include"`
 	Exclude []PeerRef `yaml:"exclude"`
+	// ExcludeTopics maps a forum's chat id to topics whose messages are not archived.
+	ExcludeTopics map[int64][]int `yaml:"exclude_topics"`
 }
 
 type Media struct {
@@ -113,6 +115,13 @@ func (c Config) validate(requireTargets bool) error {
 		_, isID := r.ID()
 		if !isUser && !isID {
 			errs = append(errs, fmt.Errorf("targets: invalid peer %q (want @username or numeric id)", string(r)))
+		}
+	}
+	for chat, topics := range c.Targets.ExcludeTopics {
+		for _, id := range topics {
+			if id < 1 {
+				errs = append(errs, fmt.Errorf("targets: exclude_topics %d: invalid topic id %d", chat, id))
+			}
 		}
 	}
 	if c.Media.Workers < 1 || c.Media.Workers > 16 {

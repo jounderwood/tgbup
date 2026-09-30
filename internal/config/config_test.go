@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		"bad workers":  {"targets: {folders: [x]}\nmedia: {workers: 0}", "media.workers must be 1..16"},
 		"bad peer":     {"targets: {include: [abc]}", `targets: invalid peer "abc"`},
 		"bad size":     {"targets: {folders: [x]}\nmedia: {max_file_size: lots}", `invalid size "LOTS"`},
+		"bad topic":    {"targets: {include: [-1001], exclude_topics: {-1001: [0]}}", "exclude_topics -1001: invalid topic id 0"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -137,5 +139,16 @@ func TestResolvePaths(t *testing.T) {
 
 	if _, err := config.ResolvePaths(func(string) string { return "" }); err == nil {
 		t.Error("missing HOME accepted")
+	}
+}
+
+func TestLoadExcludeTopics(t *testing.T) {
+	p := writeFile(t, t.TempDir(), "c.yaml", "targets:\n  include: [-1001]\n  exclude_topics:\n    -1001: [5, 12] # Family: Flood, Memes\n", 0o600)
+	cfg, err := config.Load(p, "/h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Targets.ExcludeTopics[-1001]; !slices.Equal(got, []int{5, 12}) {
+		t.Fatalf("exclude_topics = %v", cfg.Targets.ExcludeTopics)
 	}
 }
