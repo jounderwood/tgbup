@@ -71,6 +71,23 @@ func (a *API) HistoryAfter(ctx context.Context, peer tg.InputPeerClass, afterID,
 	return p, nil
 }
 
+// HistoryCount returns the chat's total message count from a one-message page.
+func (a *API) HistoryCount(ctx context.Context, peer tg.InputPeerClass) (int, error) {
+	res, err := a.raw.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{Peer: peer, Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	switch r := res.(type) {
+	case *tg.MessagesMessagesSlice:
+		return r.Count, nil
+	case *tg.MessagesChannelMessages:
+		return r.Count, nil
+	case *tg.MessagesMessages:
+		return len(r.Messages), nil
+	}
+	return 0, fmt.Errorf("unexpected history result %T", res)
+}
+
 func (a *API) PinnedIDs(ctx context.Context, peer tg.InputPeerClass) ([]int, error) {
 	const limit = 100
 	var ids []int

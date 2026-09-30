@@ -144,3 +144,29 @@ func TestFileChunk(t *testing.T) {
 		t.Fatalf("chunk = %q %v", got, err)
 	}
 }
+
+func TestHistoryCount(t *testing.T) {
+	cases := []struct {
+		name string
+		res  tg.MessagesMessagesClass
+		want int
+	}{
+		{"slice", &tg.MessagesMessagesSlice{Count: 4812, Messages: msgs(9)}, 4812},
+		{"channel", &tg.MessagesChannelMessages{Count: 220, Messages: msgs(9)}, 220},
+		{"full", &tg.MessagesMessages{Messages: msgs(3, 2, 1)}, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mock := tgmock.NewRequire(t)
+			mock.ExpectFunc(func(b bin.Encoder) {
+				if req := b.(*tg.MessagesGetHistoryRequest); req.Limit != 1 {
+					t.Fatalf("limit = %d, want 1", req.Limit)
+				}
+			}).ThenResult(c.res)
+			got, err := tgclient.NewAPI(tg.NewClient(mock)).HistoryCount(context.Background(), peer)
+			if err != nil || got != c.want {
+				t.Fatalf("count = %d %v, want %d", got, err, c.want)
+			}
+		})
+	}
+}
