@@ -53,7 +53,7 @@ type Target struct {
 
 func (t Target) IsForum() bool { return t.Chat.Type == store.ChatForum }
 
-func (f Folder) matches(d Dialog) bool {
+func (f Folder) Matches(d Dialog) bool {
 	if slices.Contains(f.Exclude, d.ID) {
 		return false
 	}
@@ -135,7 +135,7 @@ func SelectTargets(dialogs []Dialog, folders []Folder, sel config.Targets) ([]Ta
 		}
 		var in []string
 		for _, f := range chosen {
-			if f.matches(d) {
+			if f.Matches(d) {
 				in = append(in, f.Title)
 			}
 		}
