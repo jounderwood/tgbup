@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strconv"
 	"text/tabwriter"
 
 	"github.com/gotd/td/tg"
@@ -53,16 +52,4 @@ func printPlan(w io.Writer, rows []planRow) {
 		fmt.Fprintf(tw, "  %d\t%s\t%s\t%s\t~%s\n", r.ID, r.Type, r.Title, r.Source, groupDigits(r.Count))
 	}
 	tw.Flush()
-}
-
-func groupDigits(n int) string {
-	s := strconv.Itoa(n)
-	var out []byte
-	for i := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			out = append(out, ' ')
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

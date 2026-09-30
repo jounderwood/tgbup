@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gotd/td/telegram"
@@ -16,6 +15,7 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/media"
+	"gitlab.com/joeunderwood/tgbup/internal/stats"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/syncer"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
@@ -152,21 +152,12 @@ func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg con
 	return chatSelection{self: self, dialogs: dialogs, targets: targets, warnings: warnings}, nil
 }
 
-func targetItems(targets []tgclient.Target) []planItem {
-	items := make([]planItem, 0, len(targets))
-	for _, t := range targets {
-		source := "include"
-		if len(t.Chat.Folders) > 0 {
-			source = "folder " + strings.Join(t.Chat.Folders, ", ")
-		}
-		items = append(items, planItem{ID: t.Chat.ID, Type: t.Chat.Type, Title: t.Chat.Title, Source: source, Peer: t.Peer})
-	}
-	return items
-}
-
 // dryRun resolves targets like sync but touches neither run.lock nor the archive.
 func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
-	var warnings []string
+	var (
+		chats    []stats.ChatStats
+		warnings []string
+	)
 	err := tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
 			return err
@@ -176,11 +167,8 @@ func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 		if err != nil {
 			return err
 		}
-		rows, err := planRows(ctx, api, targetItems(sel.targets))
-		if err != nil {
-			return err
-		}
-		printPlan(env.Stdout, rows)
+		chats = stats.Collect(ctx, api, statItems(sel.targets), progressPrinter(env.Stderr, isTerminal(env.Stderr)))
+		printReport(env.Stdout, chats)
 		warnings = sel.warnings
 		return nil
 	})
@@ -191,8 +179,17 @@ func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 		log.Error("dry run failed", "err", err)
 		return 1
 	}
+	return dryRunExit(chats, warnings)
+}
+
+func dryRunExit(chats []stats.ChatStats, warnings []string) int {
 	if len(warnings) > 0 {
 		return 1
+	}
+	for _, c := range chats {
+		if c.Err != nil {
+			return 1
+		}
 	}
 	return 0
 }
