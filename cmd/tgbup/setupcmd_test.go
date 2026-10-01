@@ -119,7 +119,7 @@ func TestSetupListShowsCountsAndTopics(t *testing.T) {
 	d, out := newDialog("1\n\nq\n", state())
 	d.run()
 	wantOutput(t, out.String(), "All chats · page 1/1 · 4 chats · 0 selected",
-		"forum    ~4 812    2", "private  ~5", "group    ?")
+		"forum       ~4 812    2", "private     ~5", "group       ?")
 }
 
 func TestSetupStartsFromCurrentSelection(t *testing.T) {
@@ -313,5 +313,21 @@ func TestSetupDoesNotOfferAnInvalidConfig(t *testing.T) {
 	wantOutput(t, out.String(), "cannot write the config: config: media.workers")
 	if strings.Contains(out.String(), "Write to") {
 		t.Fatalf("asked to write an invalid config:\n%s", out.String())
+	}
+}
+
+// "supergroup" is the longest chat type; the msgs column must not move for it.
+func TestSetupListAlignsLongTypes(t *testing.T) {
+	sg := tgclient.Dialog{ID: 5, Type: store.ChatSupergroup, Title: "Big"}
+	d, out, _ := newDialogOver("1\n\nq\n", state(), []tgclient.Dialog{sg, sMama}, nil)
+	d.run()
+	var cols []int
+	for _, line := range strings.Split(out.String(), "\n") {
+		if i := strings.Index(line, "~5"); i >= 0 && strings.Contains(line, "[ ]") {
+			cols = append(cols, displayWidth(line[:i]))
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Fatalf("msgs column starts at %v:\n%s", cols, out.String())
 	}
 }

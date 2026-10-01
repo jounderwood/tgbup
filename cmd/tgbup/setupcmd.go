@@ -224,9 +224,9 @@ func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pag
 		fmt.Fprintln(s.out, "  (empty)")
 		return
 	}
-	fmt.Fprintf(s.out, "  %4s  %-3s  %-*s  %-7s  %-8s  %s\n", "#", "sel", titleWidth, "chat", "type", "msgs", "topics")
+	fmt.Fprintf(s.out, "  %4s  %-3s  %-*s  %-10s  %-8s  %s\n", "#", "sel", titleWidth, "chat", "type", "msgs", "topics")
 	fmt.Fprintf(s.out, "  %s  %s  %s  %s  %s  %s\n", strings.Repeat("─", 4), strings.Repeat("─", 3),
-		strings.Repeat("─", titleWidth), strings.Repeat("─", 7), strings.Repeat("─", 8), strings.Repeat("─", 10))
+		strings.Repeat("─", titleWidth), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 10))
 	for i, c := range visible {
 		mark := "[ ]"
 		if s.st.Chats[c.ID] {
@@ -242,7 +242,7 @@ func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pag
 				topics += fmt.Sprintf(" (%d excl)", n)
 			}
 		}
-		line := fmt.Sprintf("  %4d  %s  %s  %-7s  %-8s  %s", page*pageSize+i+1, mark, padRight(cleanTitle(c.Title, titleWidth), titleWidth), c.Type, msgs, topics)
+		line := fmt.Sprintf("  %4d  %s  %s  %-10s  %-8s  %s", page*pageSize+i+1, mark, padRight(cleanTitle(c.Title, titleWidth), titleWidth), c.Type, msgs, topics)
 		fmt.Fprintln(s.out, strings.TrimRight(line, " "))
 	}
 	fmt.Fprintln(s.out, " 1,3,5-7 toggle · a/n page all/none · A/N whole list · t 3 topics")
