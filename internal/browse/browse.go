@@ -62,7 +62,11 @@ func link(archiveDir, root string, files []store.DownloadedFile, loc *time.Locat
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return res, err
 	}
-	folders := chatFolders(files)
+	chats := make([]FolderChat, 0, len(files))
+	for _, f := range files {
+		chats = append(chats, FolderChat{ID: f.ChatID, Title: f.ChatTitle, UpgradedTo: f.UpgradedTo, UpgradedTitle: f.UpgradedTitle})
+	}
+	folders := FolderNames(chats)
 	used := map[string]bool{}
 	for _, f := range files {
 		dir := filepath.Join(root, folders[owner(f)])
@@ -70,7 +74,7 @@ func link(archiveDir, root string, files []store.DownloadedFile, loc *time.Locat
 		case f.UpgradedTo != 0:
 			dir = filepath.Join(dir, "before upgrade")
 		case f.ChatType == store.ChatForum:
-			topic := clean(f.TopicTitle)
+			topic := Clean(f.TopicTitle)
 			if topic == "" {
 				topic = "Topic " + strconv.Itoa(f.TopicID)
 			}
@@ -108,19 +112,28 @@ func owner(f store.DownloadedFile) int64 {
 	return f.ChatID
 }
 
-// chatFolders names each chat's folder by its title; chats sharing a title
-// get their id appended so they never mix.
-func chatFolders(files []store.DownloadedFile) map[int64]string {
+// FolderChat is a chat as far as naming its folder is concerned.
+type FolderChat struct {
+	ID            int64
+	Title         string
+	UpgradedTo    int64
+	UpgradedTitle string
+}
+
+// FolderNames names each chat's folder by its title; a group upgraded to a
+// supergroup files under the supergroup, and chats sharing a title get their
+// id appended so they never mix.
+func FolderNames(chats []FolderChat) map[int64]string {
 	titles := map[int64]string{}
-	for _, f := range files {
-		title := f.ChatTitle
-		if f.UpgradedTo != 0 {
-			title = f.UpgradedTitle
+	for _, c := range chats {
+		id, title := c.ID, c.Title
+		if c.UpgradedTo != 0 {
+			id, title = c.UpgradedTo, c.UpgradedTitle
 		}
-		if t := clean(title); t != "" {
-			titles[owner(f)] = t
+		if t := Clean(title); t != "" {
+			titles[id] = t
 		} else {
-			titles[owner(f)] = strconv.FormatInt(owner(f), 10)
+			titles[id] = strconv.FormatInt(id, 10)
 		}
 	}
 	seen := map[string]int{}
@@ -138,7 +151,7 @@ func chatFolders(files []store.DownloadedFile) map[int64]string {
 }
 
 func fileName(f store.DownloadedFile) string {
-	if name := clean(strings.TrimSuffix(f.FileName, filepath.Ext(f.FileName))); name != "" {
+	if name := Clean(strings.TrimSuffix(f.FileName, filepath.Ext(f.FileName))); name != "" {
 		return name
 	}
 	if name, ok := kindNames[f.Kind]; ok {
@@ -147,10 +160,10 @@ func fileName(f store.DownloadedFile) string {
 	return "file"
 }
 
-// clean turns a sender-controlled name into one safe path element: no
+// Clean turns a sender-controlled name into one safe path element: no
 // separators or characters Windows and macOS reject, no control characters,
 // no leading dots (hidden files, ".."), at most maxName characters.
-func clean(s string) string {
+func Clean(s string) string {
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case strings.ContainsRune(`/\:*?"<>|`, r):
