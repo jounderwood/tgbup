@@ -171,7 +171,7 @@ func TestWriteTargetsAddsOptionsReferenceOnce(t *testing.T) {
 		t.Fatalf("options reference appears %d times:\n%s", n, s)
 	}
 	for _, want := range []string{"# mine", "#   max_file_size: 0", "#   skip_kinds: []", "#   workers: 4",
-		"#   run_time_budget: 2h ", "#   max_flood_wait: 5m ", "#   exclude_topics:", "not used yet"} {
+		"#   run_time_budget: 2h ", "#   max_flood_wait: 5m ", "#   exclude_topics:", "# deps:"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("config lacks %q:\n%s", want, s)
 		}

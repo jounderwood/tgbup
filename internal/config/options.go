@@ -36,7 +36,10 @@ func optionsReference() string {
 		{"  prune_every: " + shortDuration(d.Backup.PruneEvery.D()), ""},
 		{"  check_every: " + shortDuration(d.Backup.CheckEvery.D()), ""},
 		{"  check_read_subset: " + d.Backup.CheckReadSubset, ""},
-		{"notify:", "not used yet: bot notifications (planned)"},
+		{"deps:", "own restic/rclone instead of the ones tgbup downloads"},
+		{`  restic: ""`, ""},
+		{`  rclone: ""`, ""},
+		{"notify:", "bot: errors right away, a summary every summary_every"},
 		{"  summary_every: " + shortDuration(d.Notify.SummaryEvery.D()), ""},
 	}
 	width := 0

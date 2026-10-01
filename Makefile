@@ -1,10 +1,14 @@
-.PHONY: build test lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
+.PHONY: build test test-backup lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
 
 build:
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbup ./cmd/tgbup
 
 test:
 	gotestsum -- -race ./...
+
+# Backup tests against a real restic, fetched by tgbup deps (pinned, checksum-verified).
+test-backup: build
+	TGBUP_TEST_RESTIC=$$(bin/tgbup deps | awk '/^restic:/ {print $$2}') gotestsum -- -race ./internal/backup/ ./cmd/tgbup/
 
 lint:
 	golangci-lint run ./...

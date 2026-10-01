@@ -76,6 +76,11 @@ func LastSuccess(ctx context.Context, a Archive, repo string) (time.Time, bool) 
 	return metaTime(ctx, a, metaKey(repo, "ok_at"))
 }
 
+// RecordSuccess notes that the repository got a snapshot at t.
+func RecordSuccess(ctx context.Context, a Archive, repo string, t time.Time) error {
+	return a.SetMeta(ctx, metaKey(repo, "ok_at"), strconv.FormatInt(t.Unix(), 10))
+}
+
 func metaTime(ctx context.Context, a Archive, key string) (time.Time, bool) {
 	v, ok, err := a.Meta(ctx, key)
 	if err != nil || !ok {
@@ -145,7 +150,7 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo string) RepoRes
 		return res
 	}
 	res.Snapshot = snapshotID(out)
-	if err := a.SetMeta(ctx, metaKey(repo, "ok_at"), strconv.FormatInt(now.Unix(), 10)); err != nil {
+	if err := RecordSuccess(ctx, a, repo, now); err != nil {
 		res.Err = err
 		return res
 	}

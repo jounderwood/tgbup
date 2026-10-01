@@ -16,6 +16,16 @@ type setup struct {
 }
 
 func loadSetup(env Env, requireConfig bool) (setup, error) {
+	st, err := loadLocalSetup(env, requireConfig)
+	if err != nil {
+		return setup{}, err
+	}
+	return st, st.secrets.RequireTelegram()
+}
+
+// loadLocalSetup is loadSetup for commands that work on the archive alone
+// (backup, deps) and need no Telegram credentials.
+func loadLocalSetup(env Env, requireConfig bool) (setup, error) {
 	p, err := config.ResolvePaths(env.Getenv)
 	if err != nil {
 		return setup{}, err
@@ -33,9 +43,6 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 	}
 	sec, err := config.LoadSecrets(p.Secrets, env.Getenv)
 	if err != nil {
-		return setup{}, err
-	}
-	if err := sec.RequireTelegram(); err != nil {
 		return setup{}, err
 	}
 	return setup{paths: p, cfg: cfg, secrets: sec, testDC: env.Getenv("TGBUP_TEST_DC") == "1"}, nil

@@ -19,7 +19,14 @@ type Config struct {
 	Media      Media   `yaml:"media"`
 	Sync       Sync    `yaml:"sync"`
 	Backup     Backup  `yaml:"backup"`
+	Deps       Deps    `yaml:"deps"`
 	Notify     Notify  `yaml:"notify"`
+}
+
+// Deps points at restic and rclone binaries to use instead of the ones tgbup downloads.
+type Deps struct {
+	Restic string `yaml:"restic"`
+	Rclone string `yaml:"rclone"`
 }
 
 type Targets struct {
@@ -100,6 +107,7 @@ func parse(path string, data []byte, home string, requireTargets bool) (Config, 
 	for i, r := range cfg.Backup.Repositories {
 		cfg.Backup.Repositories[i] = expandHome(r, home)
 	}
+	cfg.Deps.Restic, cfg.Deps.Rclone = expandHome(cfg.Deps.Restic, home), expandHome(cfg.Deps.Rclone, home)
 	if err := cfg.validate(requireTargets); err != nil {
 		return Config{}, fmt.Errorf("config %s: %w", path, err)
 	}

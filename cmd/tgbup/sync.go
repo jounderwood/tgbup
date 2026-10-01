@@ -110,22 +110,56 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 	}
 	defer db.Close()
 
+	sum, err := syncArchive(ctx, st, db, log, env.Stderr, *useTakeout)
+	return finishSync(env.Stdout, log, sum, err)
+}
+
+// syncArchive runs one sync into an open archive; the caller holds run.lock.
+func syncArchive(ctx context.Context, st setup, db *store.Store, log *slog.Logger, progress io.Writer, takeout bool) (syncSummary, error) {
 	var sum syncSummary
-	err = tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
+	err := tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
 			return err
 		}
 		body := func(ctx context.Context, raw *tg.Client) error {
 			var err error
-			sum, err = runSync(ctx, raw, db, st.cfg, log, env.Stderr)
+			sum, err = runSync(ctx, raw, db, st.cfg, log, progress)
 			return err
 		}
-		if *useTakeout {
+		if takeout {
 			return tgclient.WithTakeout(ctx, c, int64(st.cfg.Media.MaxFileSize), body)
 		}
 		return body(ctx, c.API())
 	})
-	return finishSync(env.Stdout, log, sum, err)
+	return sum, err
+}
+
+// problems lists what went wrong in a sync, one line each, for notifications.
+func (s syncSummary) problems(err error) []string {
+	var out []string
+	if err != nil {
+		out = append(out, err.Error())
+	}
+	out = append(out, s.unresolved...)
+	for id, e := range s.sync.Failed {
+		out = append(out, fmt.Sprintf("chat %d: %v", id, e))
+	}
+	for _, e := range s.media.Errors {
+		out = append(out, e.Error())
+	}
+	if s.media.LocalErr != nil {
+		out = append(out, "media stopped by a local disk error: "+s.media.LocalErr.Error())
+	}
+	if s.filesErr != nil {
+		out = append(out, "files view: "+s.filesErr.Error())
+	}
+	for _, e := range s.render.Errors {
+		out = append(out, "render: "+e.Error())
+	}
+	if s.renderErr != nil {
+		out = append(out, "render: "+s.renderErr.Error())
+	}
+	return out
 }
 
 func finishSync(w io.Writer, log *slog.Logger, sum syncSummary, err error) int {

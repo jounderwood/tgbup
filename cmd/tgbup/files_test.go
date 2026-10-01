@@ -115,3 +115,45 @@ func TestRenderFailureFailsTheRun(t *testing.T) {
 		t.Fatalf("summary = %q", out.String())
 	}
 }
+
+// The backup command end to end, with a real restic (skipped without one).
+func TestBackupCommand(t *testing.T) {
+	restic := os.Getenv("TGBUP_TEST_RESTIC")
+	if restic == "" {
+		t.Skip("set TGBUP_TEST_RESTIC to a restic binary")
+	}
+	env, archive, out := filesEnv(t)
+	home := filepath.Dir(archive)
+	repo := filepath.Join(home, "repo")
+	cfg := "archive_dir: " + archive + "\ntargets:\n  include: [10]\nbackup:\n  repositories: [" + repo + "]\ndeps:\n  restic: " + restic + "\n"
+	if err := os.WriteFile(filepath.Join(home, ".config", "tgbup", "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secrets := filepath.Join(home, ".config", "tgbup", "secrets.env")
+	if err := os.WriteFile(secrets, []byte("RESTIC_PASSWORD=pw\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(context.Background(), []string{"backup"}, env); code != 1 || !strings.Contains(out.String(), "repository does not exist") && !strings.Contains(out.String(), "backup --init") {
+		t.Fatalf("backup before init: code %d\n%s", code, out)
+	}
+	out.Reset()
+	if code := run(context.Background(), []string{"backup", "--init"}, env); code != 0 {
+		t.Fatalf("init: code %d\n%s", code, out)
+	}
+	out.Reset()
+	if code := run(context.Background(), []string{"backup"}, env); code != 0 || !strings.Contains(out.String(), "snapshot") {
+		t.Fatalf("backup: code %d\n%s", code, out)
+	}
+}
+
+func TestBackupNeedsAPassword(t *testing.T) {
+	env, archive, out := filesEnv(t)
+	home := filepath.Dir(archive)
+	cfg := "archive_dir: " + archive + "\ntargets:\n  include: [10]\nbackup:\n  repositories: [" + filepath.Join(home, "repo") + "]\n"
+	if err := os.WriteFile(filepath.Join(home, ".config", "tgbup", "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(context.Background(), []string{"backup"}, env); code != 1 || !strings.Contains(out.String(), "RESTIC_PASSWORD") {
+		t.Fatalf("code %d\n%s", code, out)
+	}
+}

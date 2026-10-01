@@ -112,3 +112,10 @@ func (s *Store) UpdateMessageRaw(ctx context.Context, chatID int64, id int, raw 
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET raw = ? WHERE chat_id = ? AND id = ?`, raw, chatID, id)
 	return err
 }
+
+// CountMedia counts files in a status (e.g. "failed": given up after all attempts).
+func (s *Store) CountMedia(ctx context.Context, status string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM media WHERE status = ?`, status).Scan(&n)
+	return n, err
+}
