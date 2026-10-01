@@ -32,7 +32,11 @@ window.tgbupMedia = {
       types.append(label);
     }
     this.read();
-    document.getElementById('filters').addEventListener('input', () => { this.write(); this.show(); });
+    document.getElementById('filters').addEventListener('input', (e) => {
+      if (e.target.id === 'chat') { document.getElementById('topic').value = ''; this.topics(); }
+      this.write();
+      this.show();
+    });
     window.addEventListener('hashchange', () => { this.read(); this.show(); });
     document.getElementById('more').addEventListener('click', () => { this.shown += this.pageSize; this.render(); });
     this.show();
@@ -44,6 +48,8 @@ window.tgbupMedia = {
     const types = (p.get('types') || '').split(',').filter(Boolean);
     for (const box of document.querySelectorAll('#types input')) box.checked = types.includes(box.value);
     document.getElementById('chat').value = p.get('chat') || '';
+    this.topics();
+    document.getElementById('topic').value = p.get('topic') || '';
     document.getElementById('from').value = p.get('from') || '';
     document.getElementById('to').value = p.get('to') || '';
     document.getElementById('q').value = p.get('q') || '';
@@ -52,7 +58,7 @@ window.tgbupMedia = {
     const p = new URLSearchParams();
     const types = [...document.querySelectorAll('#types input:checked')].map((b) => b.value);
     if (types.length) p.set('types', types.join(','));
-    for (const id of ['chat', 'from', 'to', 'q']) {
+    for (const id of ['chat', 'topic', 'from', 'to', 'q']) {
       const v = document.getElementById(id).value;
       if (v) p.set(id, v);
     }
@@ -62,13 +68,24 @@ window.tgbupMedia = {
   show() {
     const types = new Set([...document.querySelectorAll('#types input:checked')].map((b) => b.value));
     const chat = document.getElementById('chat').value;
+    const topic = document.getElementById('topic').value;
     const from = document.getElementById('from').value;
     const to = document.getElementById('to').value;
     const q = document.getElementById('q').value.trim().toLowerCase();
-    this.matched = this.items.filter((it) => (!types.size || types.has(it.k)) && (!chat || it.c === chat)
+    this.matched = this.items.filter((it) => (!types.size || types.has(it.k)) && (!chat || it.c === chat) && (!topic || it.t === topic)
       && (!from || it.d.slice(0, 10) >= from) && (!to || it.d.slice(0, 10) <= to) && (!q || it.lower.includes(q)));
     this.shown = this.pageSize;
     this.render();
+  },
+
+  // topics fills the topic filter with the selected chat's topics; it is off without a chat.
+  topics() {
+    const chat = document.getElementById('chat').value;
+    const sel = document.getElementById('topic');
+    const names = [...new Set(this.items.filter((it) => it.c === chat && it.t).map((it) => it.t))].sort();
+    sel.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'All topics' }));
+    for (const n of names) sel.append(Object.assign(document.createElement('option'), { value: n, textContent: n }));
+    sel.disabled = !names.length;
   },
 
   render() {

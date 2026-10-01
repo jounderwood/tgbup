@@ -18,6 +18,7 @@ type Page struct {
 	Title  string // "Family › Expenses · page 7 of 38"
 	Crumbs []string
 	ChatID int64
+	Topic  string // the thread inside the chat (forum topic, "before upgrade"); "" for none
 	N      int
 	Total  int
 	Range  string // "2026-03-01 – 2026-03-29"
@@ -104,6 +105,7 @@ func buildPage(in pageInput) Page {
 		Crumbs:  in.Crumbs,
 		ChatID:  in.Key.ChatID,
 		N:       in.Key.N,
+		Topic:   strings.Join(in.Crumbs[min(1, len(in.Crumbs)):], ""),
 		Total:   in.Total,
 		Root:    strings.Repeat("../", depth),
 		Archive: strings.Repeat("../", depth+1),

@@ -289,3 +289,19 @@ func TestTemplateChangeRedraws(t *testing.T) {
 		t.Fatalf("changed templates redrew %d pages, want 4", res.Pages)
 	}
 }
+
+func TestPageLinksItsTopicMedia(t *testing.T) {
+	db, dir := siteFixture(t)
+	if _, err := Render(context.Background(), db, Options{OutDir: dir, Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if s := read(t, filepath.Join(dir, "html/Family/Expenses/p1.html")); !strings.Contains(s, `href="../../media.html#chat=-1001&topic=Expenses"`) {
+		t.Errorf("topic page does not link its media:\n%s", s)
+	}
+	if s := read(t, filepath.Join(dir, "html/Mom/p1.html")); !strings.Contains(s, `href="../media.html#chat=10"`) {
+		t.Errorf("chat page does not link its media")
+	}
+	if !strings.Contains(read(t, filepath.Join(dir, "html/media.html")), `id="topic"`) {
+		t.Error("media page has no topic filter")
+	}
+}
