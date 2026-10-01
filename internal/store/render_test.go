@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -39,45 +40,59 @@ func renderFixture(t *testing.T) *Store {
 	return s
 }
 
-func TestMonthsAndFingerprints(t *testing.T) {
+func TestPagesAndFingerprints(t *testing.T) {
 	s := renderFixture(t)
 	ctx := context.Background()
-	months, err := s.Months(ctx, nil, time.UTC)
+	pages, err := s.Pages(ctx, PageQuery{Size: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(months) != 2 || months[0].Month != "2026-02" || months[0].TopicID != 1 || months[1].Month != "2026-03" || months[1].TopicID != 160 {
-		t.Fatalf("months = %+v", months)
+	type pg struct {
+		topic, n, total int
+		ids             []int
 	}
-	// Months follow the given time zone: 23:30 UTC on Feb 28 is March 1 in Belgrade.
-	bel, _ := time.LoadLocation("Europe/Belgrade")
-	if m, _ := s.Months(ctx, nil, bel); m[0].Month != "2026-03" {
-		t.Fatalf("months in Belgrade = %+v", m)
+	var got []pg
+	for _, p := range pages {
+		got = append(got, pg{p.TopicID, p.N, p.Total, p.IDs})
+	}
+	want := []pg{{1, 1, 1, []int{10}}, {160, 1, 2, []int{11}}, {160, 2, 2, []int{12}}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("pages = %v, want %v", got, want)
+	}
+	if big, _ := s.Pages(ctx, PageQuery{Size: 500}); len(big) != 2 || len(big[1].IDs) != 2 {
+		t.Fatalf("pages of 500 = %+v", big)
+	}
+	if only, _ := s.Pages(ctx, PageQuery{Size: 500, Topics: []int{160}, From: time.Date(2026, 3, 1, 0, 30, 30, 0, time.UTC).Unix()}); len(only) != 1 || fmt.Sprint(only[0].IDs) != "[12]" {
+		t.Fatalf("filtered pages = %+v", only)
 	}
 
-	before := months[1].Fingerprint
 	if err := s.MediaDone(ctx, "document:9", "media/document/9.pdf"); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := s.Months(ctx, nil, time.UTC)
-	if after[1].Fingerprint == before || after[0].Fingerprint != months[0].Fingerprint {
-		t.Fatalf("a downloaded file must change only its month: %q→%q, %q→%q",
-			before, after[1].Fingerprint, months[0].Fingerprint, after[0].Fingerprint)
+	after, _ := s.Pages(ctx, PageQuery{Size: 1})
+	if after[1].Fingerprint == pages[1].Fingerprint || after[0].Fingerprint != pages[0].Fingerprint || after[2].Fingerprint != pages[2].Fingerprint {
+		t.Fatal("a downloaded file must change only its own page")
 	}
 
-	if err := s.SetRendered(ctx, after[1]); err != nil {
+	if err := s.SetRendered(ctx, after[1].PageKey, "fp"); err != nil {
 		t.Fatal(err)
 	}
 	done, err := s.RenderedFingerprints(ctx)
-	if err != nil || done[after[1].Page()] != after[1].Fingerprint || len(done) != 1 {
+	if err != nil || done[after[1].PageKey] != "fp" || len(done) != 1 {
 		t.Fatalf("rendered = %v %v", done, err)
+	}
+	if err := s.ClearRendered(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if done, _ := s.RenderedFingerprints(ctx); len(done) != 0 {
+		t.Fatalf("after clear = %v", done)
 	}
 }
 
-func TestMonthMessagesAndRefs(t *testing.T) {
+func TestPageMessagesAndRefs(t *testing.T) {
 	s := renderFixture(t)
 	ctx := context.Background()
-	msgs, err := s.MonthMessages(ctx, -1001, 160, "2026-03", time.UTC)
+	msgs, err := s.PageMessages(ctx, -1001, []int{12, 11})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,11 +105,11 @@ func TestMonthMessagesAndRefs(t *testing.T) {
 	if m := msgs[0].Media; m == nil || m.Key != "document:9" || m.FileName != "lease.pdf" || m.Status != "pending" || m.Size != 2048 {
 		t.Fatalf("media = %+v", msgs[0].Media)
 	}
-	refs, err := s.MessageRefs(ctx, -1001, []int{10, 99}, time.UTC)
+	refs, err := s.MessageRefs(ctx, -1001, []int{10, 99})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r, ok := refs[10]; !ok || r.TopicID != 1 || r.Month != "2026-02" || r.SenderName != "Ann Lee" || r.Text != "hello" {
+	if r, ok := refs[10]; !ok || r.TopicID != 1 || r.SenderName != "Ann Lee" || r.Text != "hello" {
 		t.Fatalf("ref = %+v", refs[10])
 	}
 	if _, ok := refs[99]; ok {

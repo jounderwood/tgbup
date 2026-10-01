@@ -1,6 +1,7 @@
 // Package render turns the archive into static HTML pages and Markdown notes:
-// one page per chat (or forum topic) and month, chat and archive indexes, and
-// a search index. Pages whose content did not change are not redrawn.
+// every chat (or forum topic) thread is cut into pages of a fixed number of
+// messages, with a date calendar, chat and archive indexes and a search
+// index. Pages whose content did not change are not redrawn.
 package render
 
 import (
@@ -20,6 +21,13 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
+// DefaultPageSize is how many messages one page holds.
+const DefaultPageSize = 500
+
+// layoutVersion changes when the files render writes change shape; an archive
+// drawn with another version is cleared and drawn again.
+const layoutVersion = "pages-1"
+
 type Options struct {
 	// OutDir receives html/ and md/; pages link media/ as its sibling.
 	OutDir string
@@ -31,6 +39,7 @@ type Options struct {
 	ChatIDs  []int64
 	Topics   []int
 	From, To string
+	PageSize int
 	Loc      *time.Location
 }
 
@@ -45,133 +54,309 @@ type Result struct {
 
 const beforeUpgrade = "before upgrade"
 
+// thread is one chat's or topic's run of pages.
+type thread struct {
+	ChatID  int64
+	TopicID int
+	Dir     string
+	Pages   []store.ThreadPage
+}
+
 func Render(ctx context.Context, db *store.Store, opts Options) (Result, error) {
 	var res Result
+	if opts.PageSize <= 0 {
+		opts.PageSize = DefaultPageSize
+	}
+	if opts.Track {
+		if err := upgradeLayout(ctx, db, opts.OutDir); err != nil {
+			return res, err
+		}
+	}
 	chats, err := db.RenderChats(ctx)
 	if err != nil {
 		return res, err
 	}
 	l := newLayout(chats)
-	months, err := db.Months(ctx, opts.ChatIDs, opts.Loc)
+	q := store.PageQuery{ChatIDs: opts.ChatIDs, Topics: opts.Topics, Size: opts.PageSize}
+	if q.From, q.To, err = monthRange(opts.From, opts.To, opts.Loc); err != nil {
+		return res, err
+	}
+	pages, err := db.Pages(ctx, q)
 	if err != nil {
 		return res, err
 	}
-	months = slices.DeleteFunc(months, func(m store.MonthKey) bool { return !opts.wants(m) })
 	done := map[store.PageKey]string{}
 	if opts.Track && !opts.Full {
 		if done, err = db.RenderedFingerprints(ctx); err != nil {
 			return res, err
 		}
 	}
-	var inScope func(store.PageKey) bool
-	if len(opts.Topics) > 0 || opts.From != "" || opts.To != "" {
-		scope := map[store.PageKey]bool{}
-		for _, m := range months {
-			scope[m.Page()] = true
+	where := map[int64]map[int]store.PageKey{}
+	for _, p := range pages {
+		if where[p.ChatID] == nil {
+			where[p.ChatID] = map[int]store.PageKey{}
 		}
-		inScope = func(k store.PageKey) bool { return scope[k] }
+		for _, id := range p.IDs {
+			where[p.ChatID][id] = p.PageKey
+		}
+	}
+	locate := func(chat int64, id int) (store.PageKey, bool) {
+		k, ok := where[chat][id]
+		return k, ok
 	}
 
 	changed := map[int64]bool{}
-	for i, m := range months {
+	for _, p := range pages {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		var prev, next string
-		if i > 0 && sameThread(months[i-1], m) {
-			prev = months[i-1].Month
-		}
-		if i+1 < len(months) && sameThread(months[i+1], m) {
-			next = months[i+1].Month
-		}
-		// What a page shows also depends on where it lives, its neighbours and
-		// the time zone, so a rename or a new month redraws it too.
-		m.Fingerprint = strings.Join([]string{m.Fingerprint, l.dir(m.ChatID, m.TopicID), prev, next, zoneOf(m.Month, opts.Loc)}, "|")
-		if done[m.Page()] == m.Fingerprint {
+		dir := l.dir(p.ChatID, p.TopicID)
+		// What a page shows also depends on where it lives, how many pages its
+		// thread has (the pager) and the time zone, so those redraw it too.
+		fp := strings.Join([]string{p.Fingerprint, dir, strconv.Itoa(p.Total), zoneAt(p.First, opts.Loc)}, "|")
+		if done[p.PageKey] == fp {
 			res.Skipped++
 			continue
 		}
-		n, media, err := renderMonth(ctx, db, l, opts, m, prev, next, inScope)
+		media, err := renderPage(ctx, db, l, opts, p, locate)
 		if err != nil {
-			res.Errors = append(res.Errors, fmt.Errorf("page %s/%s: %w", l.dir(m.ChatID, m.TopicID), m.Month, err))
+			res.Errors = append(res.Errors, fmt.Errorf("page %s/%s: %w", dir, pageName(p.N), err))
+			// Forget the old fingerprint: the file may be gone, so retry next time.
+			if opts.Track {
+				if err := db.SetRendered(ctx, p.PageKey, ""); err != nil {
+					return res, err
+				}
+			}
 			continue
 		}
 		res.Pages++
-		res.Messages += n
+		res.Messages += len(p.IDs)
 		res.Media = append(res.Media, media...)
-		changed[m.ChatID] = true
+		changed[p.ChatID] = true
 		if opts.Track {
-			if err := db.SetRendered(ctx, m); err != nil {
+			if err := db.SetRendered(ctx, p.PageKey, fp); err != nil {
 				return res, err
 			}
 		}
 	}
-	if err := writeIndexes(ctx, db, l, opts, months, changed); err != nil {
+	if !opts.Track {
+		// An export counts everything it contains; a tracked render counts what it redrew.
+		res.Messages = 0
+		for _, p := range pages {
+			res.Messages += len(p.IDs)
+		}
+	}
+	threads := groupThreads(l, pages)
+	if err := writeThreadIndexes(l, opts, threads); err != nil {
+		return res, err
+	}
+	if err := writeIndexes(ctx, db, l, opts, threads, where, changed); err != nil {
 		return res, err
 	}
 	return res, nil
 }
 
-func zoneOf(month string, loc *time.Location) string {
-	t, err := time.ParseInLocation("2006-01", month, loc)
-	if err != nil {
-		return loc.String()
+// upgradeLayout clears html/ and md/ drawn by an older layout, so no stale
+// pages are left behind, and makes every page draw again.
+func upgradeLayout(ctx context.Context, db *store.Store, outDir string) error {
+	v, _, err := db.Meta(ctx, "render_layout")
+	if err != nil || v == layoutVersion {
+		return err
 	}
-	name, offset := t.Zone()
+	for _, d := range []string{"html", "md"} {
+		if err := os.RemoveAll(filepath.Join(outDir, d)); err != nil {
+			return err
+		}
+	}
+	if err := db.ClearRendered(ctx); err != nil {
+		return err
+	}
+	return db.SetMeta(ctx, "render_layout", layoutVersion)
+}
+
+func monthRange(from, to string, loc *time.Location) (int64, int64, error) {
+	var a, b int64
+	if from != "" {
+		t, err := time.ParseInLocation("2006-01", from, loc)
+		if err != nil {
+			return 0, 0, err
+		}
+		a = t.Unix()
+	}
+	if to != "" {
+		t, err := time.ParseInLocation("2006-01", to, loc)
+		if err != nil {
+			return 0, 0, err
+		}
+		b = t.AddDate(0, 1, 0).Unix()
+	}
+	return a, b, nil
+}
+
+func zoneAt(unix int64, loc *time.Location) string {
+	name, offset := time.Unix(unix, 0).In(loc).Zone()
 	return name + strconv.Itoa(offset)
 }
 
-func (o Options) wants(m store.MonthKey) bool {
-	if len(o.Topics) > 0 && !slices.Contains(o.Topics, m.TopicID) {
-		return false
-	}
-	return (o.From == "" || m.Month >= o.From) && (o.To == "" || m.Month <= o.To)
-}
-
-func sameThread(a, b store.MonthKey) bool { return a.ChatID == b.ChatID && a.TopicID == b.TopicID }
-
-func renderMonth(ctx context.Context, db *store.Store, l *layout, opts Options, m store.MonthKey, prev, next string,
-	inScope func(store.PageKey) bool) (int, []string, error) {
-	msgs, err := db.MonthMessages(ctx, m.ChatID, m.TopicID, m.Month, opts.Loc)
+func renderPage(ctx context.Context, db *store.Store, l *layout, opts Options, p store.ThreadPage,
+	locate func(int64, int) (store.PageKey, bool)) ([]string, error) {
+	msgs, err := db.PageMessages(ctx, p.ChatID, p.IDs)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	var replyIDs []int
+	var userIDs []int64
 	var media []string
 	for _, msg := range msgs {
 		if msg.ReplyToID != 0 {
 			replyIDs = append(replyIDs, msg.ReplyToID)
 		}
+		userIDs = append(userIDs, todoUsers(msg.MetaJSON)...)
 		if msg.Media != nil && msg.Media.Status == "done" && msg.Media.LocalPath != "" {
 			media = append(media, msg.Media.LocalPath)
 		}
 	}
-	refs, err := db.MessageRefs(ctx, m.ChatID, replyIDs, opts.Loc)
+	refs, err := db.MessageRefs(ctx, p.ChatID, replyIDs)
 	if err != nil {
-		return 0, nil, err
-	}
-	var userIDs []int64
-	for _, msg := range msgs {
-		userIDs = append(userIDs, todoUsers(msg.MetaJSON)...)
+		return nil, err
 	}
 	names, err := db.Names(ctx, userIDs)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	dir := l.dir(m.ChatID, m.TopicID)
+	dir := l.dir(p.ChatID, p.TopicID)
 	page := buildPage(pageInput{
-		Key: m.Page(), Dir: dir, Messages: msgs, Refs: refs, DirOf: l.dir, InScope: inScope, Names: names,
-		Loc: opts.Loc, Crumbs: l.crumbs(m.ChatID, m.TopicID), Prev: prev, Next: next,
+		Key: p.PageKey, Total: p.Total, Dir: dir, Messages: msgs, Refs: refs, DirOf: l.dir, Locate: locate,
+		Names: names, Loc: opts.Loc, Crumbs: l.crumbs(p.ChatID, p.TopicID),
 	})
-	if err := writeFile(filepath.Join(opts.OutDir, "html", filepath.FromSlash(dir), m.Month+".html"), func(w io.Writer) error {
-		return writeMonthHTML(w, page)
+	if err := writeFile(filepath.Join(opts.OutDir, "html", filepath.FromSlash(dir), pageName(p.N)+".html"), func(w io.Writer) error {
+		return writePageHTML(w, page)
 	}); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	err = writeFile(filepath.Join(opts.OutDir, "md", filepath.FromSlash(dir), m.Month+".md"), func(w io.Writer) error {
-		return writeMonthMD(w, page)
+	err = writeFile(filepath.Join(opts.OutDir, "md", filepath.FromSlash(dir), pageName(p.N)+".md"), func(w io.Writer) error {
+		return writePageMD(w, page)
 	})
-	return len(msgs), media, err
+	return media, err
+}
+
+func groupThreads(l *layout, pages []store.ThreadPage) []*thread {
+	var out []*thread
+	for _, p := range pages {
+		if n := len(out); n == 0 || out[n-1].ChatID != p.ChatID || out[n-1].TopicID != p.TopicID {
+			out = append(out, &thread{ChatID: p.ChatID, TopicID: p.TopicID, Dir: l.dir(p.ChatID, p.TopicID)})
+		}
+		t := out[len(out)-1]
+		t.Pages = append(t.Pages, p)
+	}
+	return out
+}
+
+func (t *thread) messages() int {
+	n := 0
+	for _, p := range t.Pages {
+		n += len(p.IDs)
+	}
+	return n
+}
+
+func (t *thread) latest() string { return pageName(len(t.Pages)) }
+
+func dateRange(first, last int64, loc *time.Location) string {
+	a, b := time.Unix(first, 0).In(loc).Format("2006-01-02"), time.Unix(last, 0).In(loc).Format("2006-01-02")
+	if a == b {
+		return a
+	}
+	return a + " – " + b
+}
+
+func (t *thread) dateRange(loc *time.Location) string {
+	return dateRange(t.Pages[0].First, t.Pages[len(t.Pages)-1].Last, loc)
+}
+
+type calendar struct {
+	Title  string
+	Crumbs []string
+	Root   string
+	Latest string
+	Years  []calYear
+	Pages  []calPage
+}
+
+type calYear struct {
+	Year   string
+	Months []calMonth
+}
+
+type calMonth struct {
+	Name string
+	Days []calDay
+}
+
+type calDay struct {
+	Day    string
+	Href   string // to the day's anchor on its page, .html
+	MDHref string
+	Count  int
+}
+
+type calPage struct {
+	N     int
+	Href  string
+	Range string
+	Count int
+}
+
+// writeThreadIndexes writes each thread's calendar (dates.html, dates.md).
+func writeThreadIndexes(l *layout, opts Options, threads []*thread) error {
+	for _, t := range threads {
+		crumbs := l.crumbs(t.ChatID, t.TopicID)
+		cal := calendar{Title: strings.Join(crumbs, " › "), Crumbs: crumbs,
+			Root: strings.Repeat("../", strings.Count(t.Dir, "/")+1), Latest: t.latest()}
+		for _, p := range t.Pages {
+			cal.Pages = append(cal.Pages, calPage{N: p.N, Href: pageName(p.N), Range: dateRange(p.First, p.Last, opts.Loc), Count: len(p.IDs)})
+			for _, d := range p.Dates {
+				day := time.Unix(d, 0).In(opts.Loc)
+				year, month := day.Format("2006"), day.Format("January 2006")
+				if n := len(cal.Years); n == 0 || cal.Years[n-1].Year != year {
+					cal.Years = append(cal.Years, calYear{Year: year})
+				}
+				y := &cal.Years[len(cal.Years)-1]
+				if n := len(y.Months); n == 0 || y.Months[n-1].Name != month {
+					y.Months = append(y.Months, calMonth{Name: month})
+				}
+				m := &y.Months[len(y.Months)-1]
+				label := strconv.Itoa(day.Day())
+				if n := len(m.Days); n > 0 && m.Days[n-1].Day == label {
+					m.Days[n-1].Count++
+					continue
+				}
+				date := day.Format("2006-01-02")
+				m.Days = append(m.Days, calDay{Day: label, Count: 1,
+					Href: pageName(p.N) + ".html#d" + date, MDHref: pageName(p.N) + ".md#" + date})
+			}
+		}
+		dir := filepath.FromSlash(t.Dir)
+		if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "dates.html"), func(w io.Writer) error {
+			return datesHTML.Execute(w, cal)
+		}); err != nil {
+			return err
+		}
+		if err := writeFile(filepath.Join(opts.OutDir, "md", dir, "dates.md"), func(w io.Writer) error {
+			return datesMD.Execute(w, cal)
+		}); err != nil {
+			return err
+		}
+		// A topic folder opens on its latest page; a chat folder gets its own index.
+		if strings.Contains(t.Dir, "/") {
+			if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "index.html"), func(w io.Writer) error {
+				return redirectHTML.Execute(w, t.latest()+".html")
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // layout decides where every chat's and topic's pages live.
@@ -282,83 +467,76 @@ type indexChat struct {
 	ID       int64
 	Title    string
 	Type     string
+	Forum    bool
 	Href     string // chat index relative to html/ or md/ root, without extension
-	Months   int
+	Messages int
 	Last     string
-	Sections []indexSection
+	last     int64
+	Threads  []indexThread
 }
 
-type indexSection struct {
-	Title  string
-	Last   string
-	Months []indexMonth
+type indexThread struct {
+	Title    string
+	Latest   string // relative to the chat folder, without extension
+	Dates    string // .html
+	DatesMD  string
+	Messages int
+	Range    string
+	last     int64
 }
 
-type indexMonth struct {
-	Month string
-	Href  string // relative to the chat folder, without extension
+type siteIndex struct {
+	Chats       []indexChat
+	SearchFiles []string
 }
 
-func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options, months []store.MonthKey, changed map[int64]bool) error {
+func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options, threads []*thread,
+	where map[int64]map[int]store.PageKey, changed map[int64]bool) error {
 	byOwner := map[int64]*indexChat{}
 	var order []int64
-	sections := map[int64]map[string]*indexSection{}
-	searchChats := map[int64]bool{}
-	for _, m := range months {
-		owner := l.owner(m.ChatID)
+	for _, t := range threads {
+		owner := l.owner(t.ChatID)
 		ic, ok := byOwner[owner]
 		if !ok {
 			c := l.chats[owner]
 			ic = &indexChat{ID: owner, Title: orDefault(c.Title, strconv.FormatInt(owner, 10)), Type: c.Type,
-				Href: escapePath(l.folder[owner]) + "/index"}
+				Forum: c.Type == store.ChatForum, Href: escapePath(l.folder[owner]) + "/index"}
 			byOwner[owner] = ic
-			sections[owner] = map[string]*indexSection{}
 			order = append(order, owner)
 		}
-		crumbs := l.crumbs(m.ChatID, m.TopicID)
+		crumbs := l.crumbs(t.ChatID, t.TopicID)
+		sub := ""
 		title := ""
 		if len(crumbs) > 1 {
 			title = crumbs[1]
+			sub = escapePath(crumbs[1]) + "/"
 		}
-		sec, ok := sections[owner][title]
-		if !ok {
-			sec = &indexSection{Title: title}
-			sections[owner][title] = sec
-		}
-		sub := strings.Join(crumbs[1:], "/")
-		href := m.Month
-		if sub != "" {
-			href = escapePath(sub) + "/" + m.Month
-		}
-		sec.Months = append(sec.Months, indexMonth{Month: m.Month, Href: href})
-		sec.Last = max(sec.Last, m.Month)
-		ic.Months++
-		ic.Last = max(ic.Last, m.Month)
-		searchChats[m.ChatID] = true
+		last := t.Pages[len(t.Pages)-1].Last
+		ic.Threads = append(ic.Threads, indexThread{Title: title, Latest: sub + t.latest(), Dates: sub + "dates.html",
+			DatesMD: sub + "dates.md", Messages: t.messages(), Range: t.dateRange(opts.Loc), last: last})
+		ic.Messages += t.messages()
+		ic.last = max(ic.last, last)
 	}
 	chats := make([]indexChat, 0, len(order))
 	for _, id := range order {
 		ic := byOwner[id]
-		for _, sec := range sections[id] {
-			slices.Reverse(sec.Months) // newest first
-			ic.Sections = append(ic.Sections, *sec)
-		}
-		// Topics with recent activity first; "before upgrade" (oldest history) last.
-		slices.SortFunc(ic.Sections, func(a, b indexSection) int {
+		ic.Last = time.Unix(ic.last, 0).In(opts.Loc).Format("2006-01-02")
+		// Recently active topics first; "before upgrade" (the oldest history) last.
+		slices.SortFunc(ic.Threads, func(a, b indexThread) int {
 			if (a.Title == beforeUpgrade) != (b.Title == beforeUpgrade) {
 				if a.Title == beforeUpgrade {
 					return 1
 				}
 				return -1
 			}
-			return cmp.Or(cmp.Compare(b.Last, a.Last), cmp.Compare(a.Title, b.Title))
+			return cmp.Or(cmp.Compare(b.last, a.last), cmp.Compare(a.Title, b.Title))
 		})
 		chats = append(chats, *ic)
 	}
-	slices.SortFunc(chats, func(a, b indexChat) int { return cmp.Or(cmp.Compare(b.Last, a.Last), cmp.Compare(a.Title, b.Title)) })
+	slices.SortFunc(chats, func(a, b indexChat) int { return cmp.Or(cmp.Compare(b.last, a.last), cmp.Compare(a.Title, b.Title)) })
 
 	var searchIDs []int64
-	for id := range searchChats {
+	for id := range where {
 		searchIDs = append(searchIDs, id)
 	}
 	slices.Sort(searchIDs)
@@ -367,7 +545,7 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 		if _, err := os.Stat(path); err == nil && !changed[id] && !opts.Full {
 			continue
 		}
-		if err := writeSearch(ctx, db, l, opts, id, path); err != nil {
+		if err := writeSearch(ctx, db, l, opts, id, where[id], path); err != nil {
 			return err
 		}
 	}
@@ -399,9 +577,12 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 	}
 	for _, c := range chats {
 		dir := filepath.FromSlash(l.folder[c.ID])
-		if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "index.html"), func(w io.Writer) error {
-			return chatHTML.Execute(w, c)
-		}); err != nil {
+		write := func(w io.Writer) error { return chatHTML.Execute(w, c) }
+		// A chat with one thread at its folder root opens straight on the latest page.
+		if len(c.Threads) == 1 && c.Threads[0].Title == "" {
+			write = func(w io.Writer) error { return redirectHTML.Execute(w, c.Threads[0].Latest+".html") }
+		}
+		if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "index.html"), write); err != nil {
 			return err
 		}
 		if err := writeFile(filepath.Join(opts.OutDir, "md", dir, "index.md"), func(w io.Writer) error {
@@ -413,28 +594,22 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 	return nil
 }
 
-type siteIndex struct {
-	Chats       []indexChat
-	SearchFiles []string
-}
-
 // writeSearch writes a chat's search index as a script: pages opened from
 // disk (file://) may not fetch JSON, but may load scripts.
-func writeSearch(ctx context.Context, db *store.Store, l *layout, opts Options, chat int64, path string) error {
+func writeSearch(ctx context.Context, db *store.Store, l *layout, opts Options, chat int64, where map[int]store.PageKey, path string) error {
 	texts, err := db.SearchTexts(ctx, chat)
 	if err != nil {
 		return err
 	}
 	entries := make([][4]any, 0, len(texts))
 	for _, t := range texts {
-		when := time.Unix(t.Date, 0).In(opts.Loc)
-		k := store.MonthKey{ChatID: chat, TopicID: t.TopicID, Month: when.Format("2006-01")}
-		if !opts.wants(k) {
+		k, ok := where[t.ID]
+		if !ok {
 			continue
 		}
-		page := escapePath(l.dir(chat, t.TopicID)) + "/" + k.Month + ".html#m" + strconv.Itoa(t.ID)
+		page := escapePath(l.dir(chat, t.TopicID)) + "/" + pageName(k.N) + ".html#m" + strconv.Itoa(t.ID)
 		text := strings.TrimSpace(t.Text + " " + metaText(t.MetaJSON))
-		entries = append(entries, [4]any{t.ID, when.Format("2006-01-02 15:04"), page, text})
+		entries = append(entries, [4]any{t.ID, time.Unix(t.Date, 0).In(opts.Loc).Format("2006-01-02 15:04"), page, text})
 	}
 	crumbs := l.crumbs(chat, 0)
 	if l.chats[chat].Type == store.ChatForum {

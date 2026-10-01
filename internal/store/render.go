@@ -6,82 +6,129 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 )
 
-// PageKey identifies one rendered page: a chat's (or forum topic's) month.
+// PageKey identifies one rendered page: the n-th page (from 1, oldest first)
+// of a chat's or forum topic's message thread.
 type PageKey struct {
 	ChatID  int64
 	TopicID int
-	Month   string
+	N       int
 }
 
-// MonthKey is a page with a fingerprint of everything shown on it.
-type MonthKey struct {
-	ChatID      int64
-	TopicID     int
-	Month       string
+// ThreadPage is a page of a thread with a fingerprint of what it shows.
+type ThreadPage struct {
+	PageKey
+	Total       int   // pages in the thread
+	IDs         []int   // message ids, oldest first
+	Dates       []int64 // their dates, for day anchors and the calendar
+	First, Last int64   // dates of its first and last message
 	Fingerprint string
 }
 
-func (m MonthKey) Page() PageKey { return PageKey{m.ChatID, m.TopicID, m.Month} }
+// PageQuery narrows paging, for exports. From/To are unix times, To exclusive; 0 is open.
+type PageQuery struct {
+	ChatIDs  []int64
+	Topics   []int
+	From, To int64
+	Size     int
+}
 
-// Months lists every chat/topic month with messages, in chat, topic, month
-// order; months follow loc. Empty chatIDs means all chats.
-func (s *Store) Months(ctx context.Context, chatIDs []int64, loc *time.Location) ([]MonthKey, error) {
-	q := `
+// Pages cuts every chat/topic thread into pages of q.Size messages counted
+// from the oldest, so new messages only ever change the last page.
+func (s *Store) Pages(ctx context.Context, q PageQuery) ([]ThreadPage, error) {
+	query := `
 SELECT msg.chat_id, COALESCE(msg.topic_id, 0), msg.id, msg.date, COALESCE(msg.edit_date, 0), msg.pinned,
-       length(COALESCE(msg.reactions_json, '')) + length(COALESCE(msg.meta_json, '')), COALESCE(m.status, ''), COALESCE(m.local_path, '')
+       COALESCE(msg.reactions_json, '') || COALESCE(msg.meta_json, ''), COALESCE(m.status, ''), COALESCE(m.local_path, '')
 FROM messages msg
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
-LEFT JOIN media m ON m.key = mm.media_key`
-	args := make([]any, 0, len(chatIDs))
-	if len(chatIDs) > 0 {
-		q += " WHERE msg.chat_id IN (?" + strings.Repeat(",?", len(chatIDs)-1) + ")"
-		for _, id := range chatIDs {
+LEFT JOIN media m ON m.key = mm.media_key
+WHERE 1 = 1`
+	var args []any
+	if len(q.ChatIDs) > 0 {
+		query += " AND msg.chat_id IN (?" + strings.Repeat(",?", len(q.ChatIDs)-1) + ")"
+		for _, id := range q.ChatIDs {
 			args = append(args, id)
 		}
 	}
-	q += " ORDER BY msg.chat_id, COALESCE(msg.topic_id, 0), msg.date, msg.id"
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	if len(q.Topics) > 0 {
+		query += " AND COALESCE(msg.topic_id, 0) IN (?" + strings.Repeat(",?", len(q.Topics)-1) + ")"
+		for _, id := range q.Topics {
+			args = append(args, id)
+		}
+	}
+	if q.From != 0 {
+		query += " AND msg.date >= ?"
+		args = append(args, q.From)
+	}
+	if q.To != 0 {
+		query += " AND msg.date < ?"
+		args = append(args, q.To)
+	}
+	query += " ORDER BY msg.chat_id, COALESCE(msg.topic_id, 0), msg.date, msg.id"
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	var (
-		out  []MonthKey
-		cur  PageKey
+		out  []ThreadPage
+		cur  *ThreadPage
 		hash = sha256.New()
+		size = max(q.Size, 1)
 	)
 	flush := func() {
-		if cur.Month != "" {
-			out = append(out, MonthKey{cur.ChatID, cur.TopicID, cur.Month, hex.EncodeToString(hash.Sum(nil))[:16]})
+		if cur != nil {
+			cur.Fingerprint = hex.EncodeToString(hash.Sum(nil))[:16]
+			out = append(out, *cur)
 		}
 		hash.Reset()
+		cur = nil
 	}
 	for rows.Next() {
 		var (
-			k                          PageKey
-			id                         int
-			date, edit, pinned, reacts int64
-			status, path               string
+			chat                int64
+			topic, id           int
+			date, edit, pinned  int64
+			extra, status, path string
 		)
-		if err := rows.Scan(&k.ChatID, &k.TopicID, &id, &date, &edit, &pinned, &reacts, &status, &path); err != nil {
+		if err := rows.Scan(&chat, &topic, &id, &date, &edit, &pinned, &extra, &status, &path); err != nil {
 			return nil, err
 		}
-		k.Month = time.Unix(date, 0).In(loc).Format("2006-01")
-		if k != cur {
+		next := 1
+		switch {
+		case cur != nil && (cur.ChatID != chat || cur.TopicID != topic):
 			flush()
-			cur = k
+		case cur != nil && len(cur.IDs) == size:
+			next = cur.N + 1
+			flush()
 		}
-		fmt.Fprintf(hash, "%d:%d:%d:%d:%s:%s;", id, edit, pinned, reacts, status, path)
+		if cur == nil {
+			cur = &ThreadPage{PageKey: PageKey{chat, topic, next}, First: date}
+		}
+		cur.IDs = append(cur.IDs, id)
+		cur.Dates = append(cur.Dates, date)
+		cur.Last = date
+		fmt.Fprintf(hash, "%d:%d:%d:%s:%s:%s;", id, edit, pinned, extra, status, path)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	flush()
+	// Every page shows the thread's page count in its pager.
+	for i := 0; i < len(out); {
+		j := i
+		for j < len(out) && out[j].ChatID == out[i].ChatID && out[j].TopicID == out[i].TopicID {
+			j++
+		}
+		for k := i; k < j; k++ {
+			out[k].Total = j - i
+		}
+		i = j
+	}
 	return out, nil
 }
 
@@ -94,22 +141,33 @@ func (s *Store) RenderedFingerprints(ctx context.Context) (map[PageKey]string, e
 	out := map[PageKey]string{}
 	for rows.Next() {
 		var (
-			k  PageKey
-			fp string
+			k        PageKey
+			page, fp string
 		)
-		if err := rows.Scan(&k.ChatID, &k.TopicID, &k.Month, &fp); err != nil {
+		if err := rows.Scan(&k.ChatID, &k.TopicID, &page, &fp); err != nil {
 			return nil, err
 		}
-		out[k] = fp
+		// Rows from the old one-page-per-month layout have no number and never match.
+		if k.N, err = strconv.Atoi(page); err == nil {
+			out[k] = fp
+		}
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) SetRendered(ctx context.Context, m MonthKey) error {
+// SetRendered records the fingerprint a page was drawn with. The month column
+// predates paging and now holds the page number.
+func (s *Store) SetRendered(ctx context.Context, k PageKey, fingerprint string) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO render_pages (chat_id, topic_id, month, fingerprint) VALUES (?, ?, ?, ?)
 ON CONFLICT(chat_id, topic_id, month) DO UPDATE SET fingerprint = excluded.fingerprint`,
-		m.ChatID, m.TopicID, m.Month, m.Fingerprint)
+		k.ChatID, k.TopicID, strconv.Itoa(k.N), fingerprint)
+	return err
+}
+
+// ClearRendered forgets all fingerprints, so the next render draws every page.
+func (s *Store) ClearRendered(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM render_pages`)
 	return err
 }
 
@@ -179,11 +237,14 @@ LEFT JOIN users u ON u.id = msg.from_id
 LEFT JOIN peers p ON p.id = msg.from_id
 LEFT JOIN chats c ON c.id = msg.from_id`
 
-// MonthMessages returns one page's messages in order, with sender names and media.
-func (s *Store) MonthMessages(ctx context.Context, chatID int64, topicID int, month string, loc *time.Location) ([]RenderMessage, error) {
-	start, err := time.ParseInLocation("2006-01", month, loc)
-	if err != nil {
-		return nil, err
+// PageMessages returns a page's messages in order, with sender names and media.
+func (s *Store) PageMessages(ctx context.Context, chatID int64, ids []int) ([]RenderMessage, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := []any{chatID}
+	for _, id := range ids {
+		args = append(args, id)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT msg.chat_id, msg.id, COALESCE(msg.topic_id, 0), msg.date, COALESCE(msg.from_id, 0), msg.text,
@@ -198,8 +259,8 @@ LEFT JOIN peers fp ON fp.id = json_extract(msg.fwd_from_json, '$.from_id')
 LEFT JOIN chats fc ON fc.id = json_extract(msg.fwd_from_json, '$.from_id')
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
-WHERE msg.chat_id = ? AND COALESCE(msg.topic_id, 0) = ? AND msg.date >= ? AND msg.date < ?
-ORDER BY msg.date, msg.id`, chatID, topicID, start.Unix(), start.AddDate(0, 1, 0).Unix())
+WHERE msg.chat_id = ? AND msg.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)
+ORDER BY msg.date, msg.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,13 +291,12 @@ type MessageRef struct {
 	ChatID     int64
 	ID         int
 	TopicID    int
-	Month      string
 	SenderName string
 	Text       string
 	MediaKind  string
 }
 
-func (s *Store) MessageRefs(ctx context.Context, chatID int64, ids []int, loc *time.Location) (map[int]MessageRef, error) {
+func (s *Store) MessageRefs(ctx context.Context, chatID int64, ids []int) (map[int]MessageRef, error) {
 	out := map[int]MessageRef{}
 	if len(ids) == 0 {
 		return out, nil
@@ -246,7 +306,7 @@ func (s *Store) MessageRefs(ctx context.Context, chatID int64, ids []int, loc *t
 		args = append(args, id)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, msg.text, `+senderName+`, COALESCE(m.kind, '')
+SELECT msg.id, COALESCE(msg.topic_id, 0), msg.text, `+senderName+`, COALESCE(m.kind, '')
 FROM messages msg`+senderJoins+`
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
@@ -257,11 +317,9 @@ WHERE msg.chat_id = ? AND msg.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)`, ar
 	defer rows.Close()
 	for rows.Next() {
 		r := MessageRef{ChatID: chatID}
-		var date int64
-		if err := rows.Scan(&r.ID, &r.TopicID, &date, &r.Text, &r.SenderName, &r.MediaKind); err != nil {
+		if err := rows.Scan(&r.ID, &r.TopicID, &r.Text, &r.SenderName, &r.MediaKind); err != nil {
 			return nil, err
 		}
-		r.Month = time.Unix(date, 0).In(loc).Format("2006-01")
 		out[r.ID] = r
 	}
 	return out, rows.Err()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -12,19 +13,30 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
-// Page is one month of a chat or forum topic.
+// Page is one page of a chat's or forum topic's thread.
 type Page struct {
-	Title  string // "Family › Expenses · 2026-03"
+	Title  string // "Family › Expenses · page 7 of 38"
 	Crumbs []string
-	Month  string
+	N      int
+	Total  int
+	Range  string // "2026-03-01 – 2026-03-29"
 	// Root leads from the page to the html/ (or md/) root, Archive to the archive root.
 	Root, Archive string
-	Prev, Next    string // sibling month pages, without extension; "" when none
+	Prev, Next    string // neighbouring pages without extension ("p6"); "" when none
+	Pager         []PagerItem
 	Days          []Day
+}
+
+type PagerItem struct {
+	Label   string
+	Href    string // without extension; "" for the current page and gaps
+	Current bool
+	Gap     bool
 }
 
 type Day struct {
 	Date     string
+	Anchor   string // "d2026-03-14"
 	Messages []PageMessage
 }
 
@@ -67,30 +79,39 @@ type PageMedia struct {
 
 type pageInput struct {
 	Key      store.PageKey
+	Total    int
 	Dir      string // the page's folder inside html/ and md/, slash-separated
 	Messages []store.RenderMessage
 	Refs     map[int]store.MessageRef
-	// DirOf gives the folder of another page of the same chat.
+	// DirOf gives the folder of another thread of the same chat.
 	DirOf func(chat int64, topic int) string
-	// InScope reports whether a page exists in this render (an export may leave pages out).
-	InScope func(store.PageKey) bool
+	// Locate finds the page a message is drawn on; false when it is not in
+	// this render (an export may leave messages out).
+	Locate func(chat int64, id int) (store.PageKey, bool)
 	// Names resolves ids met in meta (who completed a checklist item).
-	Names      map[int64]string
-	Loc        *time.Location
-	Crumbs     []string
-	Prev, Next string
+	Names  map[int64]string
+	Loc    *time.Location
+	Crumbs []string
 }
+
+func pageName(n int) string { return "p" + strconv.Itoa(n) }
 
 func buildPage(in pageInput) Page {
 	depth := strings.Count(in.Dir, "/") + 1
 	p := Page{
-		Title:   strings.Join(in.Crumbs, " › ") + " · " + in.Key.Month,
+		Title:   fmt.Sprintf("%s · page %d of %d", strings.Join(in.Crumbs, " › "), in.Key.N, in.Total),
 		Crumbs:  in.Crumbs,
-		Month:   in.Key.Month,
+		N:       in.Key.N,
+		Total:   in.Total,
 		Root:    strings.Repeat("../", depth),
 		Archive: strings.Repeat("../", depth+1),
-		Prev:    in.Prev,
-		Next:    in.Next,
+		Pager:   pager(in.Key.N, in.Total),
+	}
+	if in.Key.N > 1 {
+		p.Prev = pageName(in.Key.N - 1)
+	}
+	if in.Key.N < in.Total {
+		p.Next = pageName(in.Key.N + 1)
 	}
 	for _, m := range in.Messages {
 		t := time.Unix(m.Date, 0).In(in.Loc)
@@ -122,12 +143,40 @@ func buildPage(in pageInput) Page {
 		}
 		day := t.Format("2006-01-02")
 		if len(p.Days) == 0 || p.Days[len(p.Days)-1].Date != day {
-			p.Days = append(p.Days, Day{Date: day})
+			p.Days = append(p.Days, Day{Date: day, Anchor: "d" + day})
 		}
 		d := &p.Days[len(p.Days)-1]
 		d.Messages = append(d.Messages, pm)
 	}
+	if len(p.Days) > 0 {
+		p.Range = p.Days[0].Date
+		if last := p.Days[len(p.Days)-1].Date; last != p.Range {
+			p.Range += " – " + last
+		}
+	}
 	return p
+}
+
+// pager lists the first and last pages, the current one with two neighbours
+// each side, and gaps between them.
+func pager(n, total int) []PagerItem {
+	var out []PagerItem
+	last := 0
+	for i := 1; i <= total; i++ {
+		if i != 1 && i != total && (i < n-2 || i > n+2) {
+			continue
+		}
+		if last != 0 && i > last+1 {
+			out = append(out, PagerItem{Label: "…", Gap: true})
+		}
+		item := PagerItem{Label: strconv.Itoa(i), Href: pageName(i), Current: i == n}
+		if item.Current {
+			item.Href = ""
+		}
+		out = append(out, item)
+		last = i
+	}
+	return out
 }
 
 func reply(in pageInput, id int) *Reply {
@@ -136,19 +185,19 @@ func reply(in pageInput, id int) *Reply {
 		return &Reply{ID: id, Missing: true}
 	}
 	r := &Reply{ID: id, Sender: orDefault(ref.SenderName, "Deleted account"), Text: preview(ref.Text, ref.MediaKind)}
-	target := store.PageKey{ChatID: in.Key.ChatID, TopicID: ref.TopicID, Month: ref.Month}
+	target, ok := in.Locate(in.Key.ChatID, id)
 	switch {
-	case target == in.Key:
-	case in.InScope != nil && !in.InScope(target):
+	case !ok:
 		r.NoLink = true
+	case target == in.Key:
 	default:
-		r.Page = relPage(in.Dir, in.DirOf(in.Key.ChatID, ref.TopicID), ref.Month)
+		r.Page = relPage(in.Dir, in.DirOf(in.Key.ChatID, target.TopicID), pageName(target.N))
 	}
 	return r
 }
 
 // relPage is the target page relative to dir, URL-escaped, without extension.
-func relPage(dir, targetDir, month string) string {
+func relPage(dir, targetDir, name string) string {
 	from, to := strings.Split(dir, "/"), strings.Split(targetDir, "/")
 	common := 0
 	for common < len(from) && common < len(to) && from[common] == to[common] {
@@ -161,7 +210,7 @@ func relPage(dir, targetDir, month string) string {
 	for _, seg := range to[common:] {
 		parts = append(parts, url.PathEscape(seg))
 	}
-	return strings.Join(append(parts, month), "/")
+	return strings.Join(append(parts, name), "/")
 }
 
 func escapePath(p string) string {

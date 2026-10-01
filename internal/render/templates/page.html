@@ -8,11 +8,11 @@
 <script src="{{.Root}}assets/page.js" defer></script>
 </head>
 <body>
-<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} › {{.Month}}</nav>
-<nav class="months">{{if .Prev}}<a href="{{.Prev}}.html">← {{.Prev}}</a>{{end}}<span>{{.Month}}</span>{{if .Next}}<a href="{{.Next}}.html">{{.Next}} →</a>{{end}}</nav>
+<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}}</nav>
+{{template "pager" .}}
 <main>
 {{- range .Days}}
-<h2 class="day">{{.Date}}</h2>
+<h2 class="day" id="{{.Anchor}}"><a href="#{{.Anchor}}">{{.Date}}</a></h2>
 {{- range .Messages}}
 {{- if .Service}}
 <div class="service" id="m{{.ID}}">{{.Sender}} {{.Service}} · {{.Time}}</div>
@@ -91,6 +91,18 @@
 {{- end}}
 {{- end}}
 </main>
-<nav class="months">{{if .Prev}}<a href="{{.Prev}}.html">← {{.Prev}}</a>{{end}}<span>{{.Month}}</span>{{if .Next}}<a href="{{.Next}}.html">{{.Next}} →</a>{{end}}</nav>
+{{template "pager" .}}
 </body>
 </html>
+{{define "pager"}}
+<nav class="pager">
+{{- if .Prev}}<a href="{{.Prev}}.html">← older</a>{{else}}<span class="off">← older</span>{{end}}
+<span class="pages">
+{{- range .Pager}}
+{{- if .Gap}} <span class="gap">…</span>{{else if .Current}} <b>{{.Label}}</b>{{else}} <a href="{{.Href}}.html">{{.Label}}</a>{{end}}
+{{- end}}
+</span>
+<a href="dates.html">Jump to date</a>
+{{- if .Next}}<a href="{{.Next}}.html">newer →</a>{{else}}<span class="off">newer →</span>{{end}}
+</nav>
+{{- end}}

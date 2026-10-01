@@ -11,12 +11,15 @@ import (
 var files embed.FS
 
 var (
-	monthHTML = htmlTemplate("month.html")
-	indexHTML = htmlTemplate("index.html")
-	chatHTML  = htmlTemplate("chat.html")
-	monthMD   = mdTemplate("month.md")
-	indexMD   = mdTemplate("index.md")
-	chatMD    = mdTemplate("chat.md")
+	pageHTML     = htmlTemplate("page.html")
+	indexHTML    = htmlTemplate("index.html")
+	chatHTML     = htmlTemplate("chat.html")
+	datesHTML    = htmlTemplate("dates.html")
+	redirectHTML = htmlTemplate("redirect.html")
+	pageMD       = mdTemplate("page.md")
+	indexMD      = mdTemplate("index.md")
+	chatMD       = mdTemplate("chat.md")
+	datesMD      = mdTemplate("dates.md")
 )
 
 func htmlTemplate(name string) *htmltemplate.Template {
@@ -27,6 +30,6 @@ func mdTemplate(name string) *texttemplate.Template {
 	return texttemplate.Must(texttemplate.New(name).Funcs(texttemplate.FuncMap{"md": mdEscaper.Replace}).ParseFS(files, "templates/"+name))
 }
 
-func writeMonthHTML(w io.Writer, p Page) error { return monthHTML.Execute(w, p) }
+func writePageHTML(w io.Writer, p Page) error { return pageHTML.Execute(w, p) }
 
-func writeMonthMD(w io.Writer, p Page) error { return monthMD.Execute(w, p) }
+func writePageMD(w io.Writer, p Page) error { return pageMD.Execute(w, p) }

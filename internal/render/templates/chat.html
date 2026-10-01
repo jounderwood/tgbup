@@ -9,15 +9,11 @@
 <body>
 <nav class="crumbs"><a href="../index.html">Archive</a> › {{.Title}}</nav>
 <h1>{{.Title}}</h1>
-{{- range .Sections}}
-{{- if .Title}}
-<h2>{{.Title}}</h2>
+<table class="chats">
+<tr><th>{{if .Forum}}Topic{{else}}Part{{end}}</th><th class="num">Messages</th><th>Dates</th><th></th></tr>
+{{- range .Threads}}
+<tr><td><a href="{{.Latest}}.html">{{or .Title "Messages"}}</a></td><td class="num">{{.Messages}}</td><td>{{.Range}}</td><td><a href="{{.Dates}}">calendar</a></td></tr>
 {{- end}}
-<ul class="months-list">
-{{- range .Months}}
-<li><a href="{{.Href}}.html">{{.Month}}</a></li>
-{{- end}}
-</ul>
-{{- end}}
+</table>
 </body>
 </html>

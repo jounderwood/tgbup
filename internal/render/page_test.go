@@ -38,34 +38,47 @@ func samplePage(t *testing.T) Page {
 		{Message: store.Message{ID: 13, Date: at("2026-03-02", "10:10"), Text: "nice", ReactionsJSON: `[{"emoji":"👍","count":3},{"custom_emoji_id":5,"count":2}]`}, SenderName: "Bob"},
 	}
 	refs := map[int]store.MessageRef{
-		1:  {ID: 1, TopicID: 160, Month: "2026-03", SenderName: "Ann", Text: "hello <world>"},
-		40: {ID: 40, TopicID: 1, Month: "2026-02", SenderName: "Cy", Text: strings.Repeat("long ", 40)},
+		1:  {ID: 1, TopicID: 160, SenderName: "Ann", Text: "hello <world>"},
+		40: {ID: 40, TopicID: 1, SenderName: "Cy", Text: strings.Repeat("long ", 40)},
 	}
+	key := store.PageKey{ChatID: -1001, TopicID: 160, N: 3}
 	return buildPage(pageInput{
-		Key:      store.PageKey{ChatID: -1001, TopicID: 160, Month: "2026-03"},
+		Key:      key,
+		Total:    9,
 		Dir:      "Family/Expenses",
 		Messages: msgs,
 		Refs:     refs,
 		DirOf: func(chat int64, topic int) string {
 			return map[int]string{1: "Family/General", 160: "Family/Expenses"}[topic]
 		},
+		Locate: func(chat int64, id int) (store.PageKey, bool) {
+			switch id {
+			case 1:
+				return key, true
+			case 40:
+				return store.PageKey{ChatID: -1001, TopicID: 1, N: 2}, true
+			}
+			return store.PageKey{}, false
+		},
 		Loc:    time.UTC,
 		Crumbs: []string{"Family", "Expenses"},
 	})
 }
 
-func TestMonthHTML(t *testing.T) {
+func TestPageHTML(t *testing.T) {
 	var b bytes.Buffer
-	if err := writeMonthHTML(&b, samplePage(t)); err != nil {
+	if err := writePageHTML(&b, samplePage(t)); err != nil {
 		t.Fatal(err)
 	}
 	got := b.String()
 	for _, want := range []string{
 		`<link rel="stylesheet" href="../../assets/style.css">`,
 		`id="m1"`, "hello &lt;world&gt;", ">edited<", ">pinned<",
-		`2026-03-01`, `2026-03-02`,
+		`<h2 class="day" id="d2026-03-01">`, `<h2 class="day" id="d2026-03-02">`, "2026-03-01 – 2026-03-02",
+		`<a href="p2.html">← older</a>`, `<a href="p4.html">newer →</a>`, `<a href="dates.html">Jump to date</a>`,
+		`<a href="p1.html">1</a>`, `<span class="gap">…</span>`, `<b>3</b>`, `<a href="p5.html">5</a>`, `<a href="p9.html">9</a>`,
 		`<a class="reply" href="#m1">`,
-		`<a class="reply" href="../General/2026-02.html#m40">`,
+		`<a class="reply" href="../General/p2.html#m40">`,
 		"reply to a message not in the archive",
 		"Forwarded from Old Friend", "Forwarded from News",
 		`<img loading="lazy" src="../../../media/photo/7.jpg"`,
@@ -89,17 +102,18 @@ func TestMonthHTML(t *testing.T) {
 	}
 }
 
-func TestMonthMarkdown(t *testing.T) {
+func TestPageMarkdown(t *testing.T) {
 	var b bytes.Buffer
-	if err := writeMonthMD(&b, samplePage(t)); err != nil {
+	if err := writePageMD(&b, samplePage(t)); err != nil {
 		t.Fatal(err)
 	}
 	got := b.String()
 	for _, want := range []string{
-		"# Family › Expenses · 2026-03",
+		"# Family › Expenses · page 3 of 9",
+		"[← older](p2.md) · [dates](dates.md) · [newer →](p4.md)",
 		"**Ann** · 09:00", "hello \\<world\\>", "^m1",
 		"> Ann: hello \\<world\\>",
-		"](../General/2026-02.md#^m40)",
+		"](../General/p2.md#^m40)",
 		"![](../../../media/photo/7.jpg)",
 		"[lease 2026.pdf](../../../media/document/9.pdf)",
 		"_video not downloaded: larger than max\\_file\\_size_",
@@ -134,13 +148,14 @@ func metaPage(t *testing.T) Page {
 		{Message: store.Message{ID: 7, Date: at("2026-03-01", "09:06"), MetaJSON: `{"dice":{"emoji":"🎲","value":4}}`}, SenderName: "Ann"},
 		{Message: store.Message{ID: 8, Date: at("2026-03-01", "09:07"), MetaJSON: `{"other":{"type":"messageMediaStory"}}`}, SenderName: "Ann"},
 	}
-	return buildPage(pageInput{Key: store.PageKey{ChatID: 10, Month: "2026-03"}, Dir: "Mom", Messages: msgs,
-		Names: map[int64]string{7: "Bob"}, Loc: time.UTC, Crumbs: []string{"Mom"}})
+	return buildPage(pageInput{Key: store.PageKey{ChatID: 10, N: 1}, Total: 1, Dir: "Mom", Messages: msgs,
+		Locate: func(int64, int) (store.PageKey, bool) { return store.PageKey{}, false },
+		Names:  map[int64]string{7: "Bob"}, Loc: time.UTC, Crumbs: []string{"Mom"}})
 }
 
 func TestMetaHTML(t *testing.T) {
 	var b bytes.Buffer
-	if err := writeMonthHTML(&b, metaPage(t)); err != nil {
+	if err := writePageHTML(&b, metaPage(t)); err != nil {
 		t.Fatal(err)
 	}
 	got := b.String()
@@ -168,7 +183,7 @@ func TestMetaHTML(t *testing.T) {
 
 func TestMetaMarkdown(t *testing.T) {
 	var b bytes.Buffer
-	if err := writeMonthMD(&b, metaPage(t)); err != nil {
+	if err := writePageMD(&b, metaPage(t)); err != nil {
 		t.Fatal(err)
 	}
 	got := b.String()

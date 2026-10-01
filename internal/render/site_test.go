@@ -75,16 +75,17 @@ func TestRenderSite(t *testing.T) {
 	}
 	for _, p := range []string{
 		"html/index.html", "html/assets/style.css", "html/assets/search.js",
-		"html/Family/index.html", "html/Family/General/2026-02.html", "html/Family/Expenses/2026-03.html",
-		"html/Family/before upgrade/2025-12.html", "html/Mom/2026-03.html", "html/search/-1001.js",
-		"md/index.md", "md/Family/Expenses/2026-03.md", "md/Mom/2026-03.md",
+		"html/Family/index.html", "html/Family/General/p1.html", "html/Family/Expenses/p1.html",
+		"html/Family/Expenses/index.html", "html/Family/Expenses/dates.html",
+		"html/Family/before upgrade/p1.html", "html/Mom/p1.html", "html/Mom/index.html", "html/search/-1001.js",
+		"md/index.md", "md/Family/Expenses/p1.md", "md/Family/Expenses/dates.md", "md/Mom/p1.md",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s", p)
 		}
 	}
-	expenses := read(t, filepath.Join(dir, "html/Family/Expenses/2026-03.html"))
-	if !strings.Contains(expenses, `href="../General/2026-02.html#m10"`) {
+	expenses := read(t, filepath.Join(dir, "html/Family/Expenses/p1.html"))
+	if !strings.Contains(expenses, `href="../General/p1.html#m10"`) {
 		t.Errorf("reply across topics not linked:\n%s", expenses)
 	}
 	index := read(t, filepath.Join(dir, "html/index.html"))
@@ -98,12 +99,12 @@ func TestRenderSite(t *testing.T) {
 		t.Error("index.html loads search indexes eagerly")
 	}
 	chat := read(t, filepath.Join(dir, "html/Family/index.html"))
-	for _, want := range []string{"Expenses", `href="Expenses/2026-03.html"`, "before upgrade", `href="before%20upgrade/2025-12.html"`} {
+	for _, want := range []string{"Expenses", `href="Expenses/p1.html"`, "before upgrade", `href="before%20upgrade/p1.html"`, `href="Expenses/dates.html"`} {
 		if !strings.Contains(chat, want) {
 			t.Errorf("chat index lacks %q:\n%s", want, chat)
 		}
 	}
-	if s := read(t, filepath.Join(dir, "html/search/-1001.js")); !strings.Contains(s, "rent paid") || !strings.Contains(s, "Family/Expenses/2026-03.html#m11") {
+	if s := read(t, filepath.Join(dir, "html/search/-1001.js")); !strings.Contains(s, "rent paid") || !strings.Contains(s, "Family/Expenses/p1.html#m11") {
 		t.Errorf("search index = %s", s)
 	}
 
@@ -125,11 +126,18 @@ func TestRenderSite(t *testing.T) {
 
 func TestRenderKeepsGoingAfterAPageFails(t *testing.T) {
 	db, dir := siteFixture(t)
-	// A directory where a page file should go makes that one write fail.
-	if err := os.MkdirAll(filepath.Join(dir, "html/Mom/2026-03.html"), 0o755); err != nil {
+	if _, err := Render(context.Background(), db, Options{OutDir: dir, Track: true, Loc: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Render(context.Background(), db, Options{OutDir: dir, Track: true, Loc: time.UTC})
+	// A directory where a page file should go makes that one write fail.
+	page := filepath.Join(dir, "html/Mom/p1.html")
+	if err := os.Remove(page); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(page, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Render(context.Background(), db, Options{OutDir: dir, Track: true, Full: true, Loc: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,15 +145,14 @@ func TestRenderKeepsGoingAfterAPageFails(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	// The failed page is retried next time rather than marked as done.
-	os.Remove(filepath.Join(dir, "html/Mom/2026-03.html"))
+	os.Remove(filepath.Join(dir, "html/Mom/p1.html"))
 	if res, _ := Render(context.Background(), db, Options{OutDir: dir, Track: true, Loc: time.UTC}); res.Pages != 1 {
 		t.Fatalf("retry drew %d pages", res.Pages)
 	}
 }
 
-// A page's place and neighbours are part of what it shows: a renamed chat
-// moves its pages, and a new month adds a "next" link to the previous one.
-func TestRenderRedrawsMovedPagesAndNewNeighbours(t *testing.T) {
+// A page's place is part of what it shows: a renamed chat moves its pages.
+func TestRenderRedrawsMovedPages(t *testing.T) {
 	db, dir := siteFixture(t)
 	ctx := context.Background()
 	opts := Options{OutDir: dir, Track: true, Loc: time.UTC}
@@ -155,21 +162,70 @@ func TestRenderRedrawsMovedPagesAndNewNeighbours(t *testing.T) {
 	if err := db.UpsertChat(ctx, store.Chat{ID: 10, Type: store.ChatPrivate, Title: "Mother"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveBatch(ctx, store.Batch{ChatID: -1001, Messages: []store.Message{
-		{ChatID: -1001, ID: 13, TopicID: 160, Date: at("2026-04-01", "10:00"), Text: "april", Raw: []byte{1}},
-	}}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := Render(ctx, db, opts); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "html/Mother/2026-03.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "html/Mother/p1.html")); err != nil {
 		t.Errorf("renamed chat's page not written to its new folder: %v", err)
 	}
-	if s := read(t, filepath.Join(dir, "html/search/10.js")); !strings.Contains(s, "Mother/2026-03.html") {
+	if s := read(t, filepath.Join(dir, "html/search/10.js")); !strings.Contains(s, "Mother/p1.html") {
 		t.Errorf("search still points at the old folder: %s", s)
 	}
-	if s := read(t, filepath.Join(dir, "html/Family/Expenses/2026-03.html")); !strings.Contains(s, `href="2026-04.html"`) {
-		t.Error("March page has no link to the new April page")
+}
+
+// Pages hold a fixed number of messages counted from the oldest: new messages
+// touch only the last page, until a new page appears and every pager grows.
+func TestRenderPaging(t *testing.T) {
+	db, dir := siteFixture(t)
+	ctx := context.Background()
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC, PageSize: 2}
+	add := func(id int, day string) {
+		t.Helper()
+		if err := db.SaveBatch(ctx, store.Batch{ChatID: 10, Messages: []store.Message{
+			{ChatID: 10, ID: id, Date: at(day, "09:00"), Text: "msg " + day, Raw: []byte{1}},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(2, "2026-03-06") // Mom: 2 messages → one full page
+	if _, err := Render(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	add(3, "2026-03-07")
+	res, _ := Render(ctx, db, opts)
+	// A new page 2: page 1's pager changes too.
+	if res.Pages != 2 {
+		t.Fatalf("a message that opens a new page redrew %d pages, want 2", res.Pages)
+	}
+	add(4, "2026-03-08")
+	if res, _ := Render(ctx, db, opts); res.Pages != 1 {
+		t.Fatalf("a message on the last page redrew %d pages, want 1", res.Pages)
+	}
+	if s := read(t, filepath.Join(dir, "html/Mom/index.html")); !strings.Contains(s, "p2.html") {
+		t.Errorf("chat does not open on the latest page: %s", s)
+	}
+	dates := read(t, filepath.Join(dir, "html/Mom/dates.html"))
+	for _, want := range []string{"March 2026", `href="p1.html#d2026-03-05"`, `href="p2.html#d2026-03-08"`, "page 2"} {
+		if !strings.Contains(dates, want) {
+			t.Errorf("calendar lacks %q:\n%s", want, dates)
+		}
+	}
+}
+
+// Month pages from the previous layout are removed when the archive is redrawn as pages.
+func TestRenderClearsOldLayout(t *testing.T) {
+	db, dir := siteFixture(t)
+	old := filepath.Join(dir, "html/Mom/2026-03.html")
+	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Render(context.Background(), db, Options{OutDir: dir, Track: true, Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Error("an old month page was left behind")
 	}
 }

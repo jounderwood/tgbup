@@ -11,9 +11,9 @@
 <input id="q" type="search" placeholder="Search all chats…" autofocus>
 <div id="results"></div>
 <table class="chats">
-<tr><th>Chat</th><th>Type</th><th class="num">Months</th><th class="num">Last</th></tr>
+<tr><th>Chat</th><th>Type</th><th class="num">Messages</th><th class="num">Last</th></tr>
 {{- range .Chats}}
-<tr><td><a href="{{.Href}}.html">{{.Title}}</a></td><td>{{.Type}}</td><td class="num">{{.Months}}</td><td class="num">{{.Last}}</td></tr>
+<tr><td><a href="{{.Href}}.html">{{.Title}}</a></td><td>{{.Type}}</td><td class="num">{{.Messages}}</td><td class="num">{{.Last}}</td></tr>
 {{- end}}
 </table>
 <script src="assets/search.js"></script>

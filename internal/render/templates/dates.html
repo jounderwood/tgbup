@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · dates</title>
+<link rel="stylesheet" href="{{.Root}}assets/style.css">
+</head>
+<body>
+<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · <a href="{{.Latest}}.html">latest messages</a></nav>
+<h1>{{.Title}}</h1>
+{{- range .Years}}
+<h2>{{.Year}}</h2>
+{{- range .Months}}
+<div class="cal-month"><span class="cal-name">{{.Name}}</span>
+{{- range .Days}} <a href="{{.Href}}" title="{{.Count}} messages">{{.Day}}</a>{{end}}
+</div>
+{{- end}}
+{{- end}}
+<h2>Pages</h2>
+<ul class="page-list">
+{{- range .Pages}}
+<li><a href="{{.Href}}.html">page {{.N}}</a> · {{.Range}} · {{.Count}} messages</li>
+{{- end}}
+</ul>
+</body>
+</html>

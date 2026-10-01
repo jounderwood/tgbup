@@ -1,4 +1,6 @@
-# {{.Title}}
+# {{md .Title}}
+
+{{if .Prev}}[← older]({{.Prev}}.md) · {{end}}[dates](dates.md){{if .Next}} · [newer →]({{.Next}}.md){{end}}
 {{range .Days}}
 ## {{.Date}}
 {{range .Messages}}

@@ -103,13 +103,13 @@ func TestExportChatWithMedia(t *testing.T) {
 		t.Fatalf("exit code = %d:\n%s", code, out)
 	}
 	names := zipNames(t, zipPath)
-	for _, want := range []string{"family/index.html", "family/html/index.html", "family/html/Family/General/2026-02.html",
-		"family/html/Family/Expenses/2026-03.html", "family/md/Family/Expenses/2026-03.md", "family/media/document/9.pdf"} {
+	for _, want := range []string{"family/index.html", "family/html/index.html", "family/html/Family/General/p1.html",
+		"family/html/Family/Expenses/p1.html", "family/md/Family/Expenses/p1.md", "family/media/document/9.pdf"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("zip lacks %s; has %v", want, names)
 		}
 	}
-	if has(names, "Mom/2026-03.html") {
+	if has(names, "Mom/p1.html") {
 		t.Errorf("another chat leaked into the export: %v", names)
 	}
 	if !strings.Contains(out.String(), "2 messages, 1 files") {
@@ -125,13 +125,13 @@ func TestExportTopicPeriodWithoutMedia(t *testing.T) {
 		t.Fatalf("exit code = %d:\n%s", code, out)
 	}
 	names := zipNames(t, zipPath)
-	if !has(names, "html/Family/Expenses/2026-03.html") || has(names, "General/2026-02.html") || has(names, "9.pdf") {
+	if !has(names, "html/Family/Expenses/p1.html") || has(names, "General/p1.html") || has(names, "9.pdf") {
 		t.Fatalf("zip = %v", names)
 	}
 	r, _ := zip.OpenReader(zipPath)
 	defer r.Close()
 	for _, f := range r.File {
-		if strings.HasSuffix(f.Name, "Expenses/2026-03.html") {
+		if strings.HasSuffix(f.Name, "Expenses/p1.html") {
 			rc, err := f.Open()
 			if err != nil {
 				t.Fatal(err)
@@ -143,7 +143,7 @@ func TestExportTopicPeriodWithoutMedia(t *testing.T) {
 				t.Fatal(err)
 			}
 			// The replied-to message is outside the export: quoted, not linked.
-			if strings.Contains(b.String(), "2026-02.html") || !strings.Contains(b.String(), "hello") {
+			if strings.Contains(b.String(), "General/p1.html") || !strings.Contains(b.String(), "hello") {
 				t.Errorf("reply outside the export:\n%s", b.String())
 			}
 		}
