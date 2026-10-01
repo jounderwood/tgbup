@@ -17,6 +17,7 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/browse"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/media"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/syncer"
@@ -30,13 +31,15 @@ type syncSummary struct {
 	// silently stops being archived, so it fails the run.
 	unresolved []string
 	// notes are config problems that lose nothing (e.g. a stale exclude_topics key).
-	notes    []string
-	files    browse.Result
-	filesErr error
+	notes     []string
+	files     browse.Result
+	filesErr  error
+	render    render.Result
+	renderErr error
 }
 
 func (s syncSummary) ok() bool {
-	return s.sync.OK() && len(s.unresolved) == 0 && s.filesErr == nil &&
+	return s.sync.OK() && len(s.unresolved) == 0 && s.filesErr == nil && s.renderErr == nil && len(s.render.Errors) == 0 &&
 		s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
 }
 
@@ -64,6 +67,7 @@ func (s syncSummary) print(w io.Writer) {
 	if s.filesErr != nil {
 		fmt.Fprintf(w, "files view: %v\n", s.filesErr)
 	}
+	printRender(w, s.render, s.renderErr)
 }
 
 func cmdSync(ctx context.Context, args []string, env Env) int {
@@ -259,5 +263,6 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		return sum, sum.media.AuthErr
 	}
 	sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
+	sum.render, sum.renderErr = renderArchive(ctx, db, cfg.ArchiveDir, false)
 	return sum, nil
 }

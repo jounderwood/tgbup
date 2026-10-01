@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"gitlab.com/joeunderwood/tgbup/internal/browse"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/syncer"
 )
@@ -80,6 +81,37 @@ func TestFilesViewFailureFailsTheRun(t *testing.T) {
 	var out bytes.Buffer
 	sum.print(&out)
 	if !strings.Contains(out.String(), "files view: disk full") {
+		t.Fatalf("summary = %q", out.String())
+	}
+}
+
+func TestRenderCommandBuildsTheSite(t *testing.T) {
+	env, archive, out := filesEnv(t)
+	if code := run(context.Background(), []string{"render"}, env); code != 0 {
+		t.Fatalf("exit code = %d:\n%s", code, out)
+	}
+	for _, p := range []string{"html/index.html", "md/index.md"} {
+		if _, err := os.Stat(filepath.Join(archive, p)); err != nil {
+			t.Errorf("missing %s:\n%s", p, out)
+		}
+	}
+	if !strings.Contains(out.String(), "rendered=1 unchanged=0") {
+		t.Errorf("output = %q", out.String())
+	}
+	out.Reset()
+	if code := run(context.Background(), []string{"render", "--full"}, env); code != 0 || !strings.Contains(out.String(), "rendered=1") {
+		t.Fatalf("--full: code %d, output %q", code, out.String())
+	}
+}
+
+func TestRenderFailureFailsTheRun(t *testing.T) {
+	sum := syncSummary{sync: syncer.Report{Chats: 1}, render: render.Result{Errors: []error{errors.New("page Mom/2026-03: disk full")}}}
+	if sum.ok() {
+		t.Fatal("a failed page did not fail the run")
+	}
+	var out bytes.Buffer
+	sum.print(&out)
+	if !strings.Contains(out.String(), "render: page Mom/2026-03: disk full") {
 		t.Fatalf("summary = %q", out.String())
 	}
 }

@@ -18,6 +18,7 @@ commands:
   setup     choose which chats to archive (writes the config)
   sync      download new messages and media
   files     rebuild files/, the readable view of downloaded media
+  render    redraw html/ and md/ from the archive (--full: every page)
   version   print version
 `
 
@@ -51,6 +52,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return cmdSync(ctx, args[1:], env)
 	case "files":
 		return cmdFiles(ctx, env)
+	case "render":
+		return cmdRender(ctx, args[1:], env)
 	default:
 		fmt.Fprintf(env.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
