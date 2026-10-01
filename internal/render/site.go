@@ -549,7 +549,19 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 			return err
 		}
 	}
-	for _, a := range []string{"style.css", "page.js", "search.js"} {
+	for _, id := range searchIDs {
+		path := filepath.Join(opts.OutDir, "html", "media", strconv.FormatInt(id, 10)+".js")
+		if _, err := os.Stat(path); err == nil && !changed[id] && !opts.Full {
+			continue
+		}
+		if err := writeMediaIndex(ctx, db, l, opts, id, where[id], path); err != nil {
+			return err
+		}
+	}
+	if err := writeMediaPage(l, opts, chats, searchIDs); err != nil {
+		return err
+	}
+	for _, a := range []string{"style.css", "page.js", "search.js", "media.js"} {
 		body, err := files.ReadFile("assets/" + a)
 		if err != nil {
 			return err
@@ -592,6 +604,32 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 		}
 	}
 	return nil
+}
+
+type mediaChat struct {
+	ID    int64
+	Title string
+}
+
+// writeMediaPage writes media.html, which filters every chat's media index.
+func writeMediaPage(l *layout, opts Options, chats []indexChat, ids []int64) error {
+	page := struct {
+		Chats []mediaChat
+		Files []string
+	}{}
+	for _, c := range chats {
+		page.Chats = append(page.Chats, mediaChat{ID: c.ID, Title: c.Title})
+	}
+	for _, id := range ids {
+		page.Files = append(page.Files, "media/"+strconv.FormatInt(id, 10)+".js")
+		// The group a chat was upgraded from is filtered with that chat.
+		if up, ok := l.upgradedTo[id]; ok && slices.ContainsFunc(chats, func(c indexChat) bool { return c.ID == up }) {
+			page.Chats = append(page.Chats, mediaChat{ID: id, Title: strings.Join(l.crumbs(id, 0), " › ")})
+		}
+	}
+	return writeFile(filepath.Join(opts.OutDir, "html", "media.html"), func(w io.Writer) error {
+		return mediaHTML.Execute(w, page)
+	})
 }
 
 // writeSearch writes a chat's search index as a script: pages opened from

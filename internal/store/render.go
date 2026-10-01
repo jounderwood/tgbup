@@ -378,3 +378,49 @@ FROM (SELECT ? AS from_id) msg`+senderJoins, id).Scan(&name)
 	}
 	return out, nil
 }
+
+// MediaItem is a message that carries more than text: a file, meta (link
+// preview, place, poll, …) or a link in its text.
+type MediaItem struct {
+	ID           int
+	TopicID      int
+	Date         int64
+	Text         string
+	EntitiesJSON string
+	MetaJSON     string
+	Media        *RenderMedia
+}
+
+func (s *Store) MediaItems(ctx context.Context, chatID int64) ([]MediaItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, msg.text, COALESCE(msg.entities_json, ''), COALESCE(msg.meta_json, ''),
+       m.key, m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
+FROM messages msg
+LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
+LEFT JOIN media m ON m.key = mm.media_key
+WHERE msg.chat_id = ? AND (m.key IS NOT NULL OR msg.meta_json IS NOT NULL
+   OR msg.entities_json LIKE '%messageEntityUrl%' OR msg.entities_json LIKE '%messageEntityTextUrl%')
+ORDER BY msg.date, msg.id`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MediaItem
+	for rows.Next() {
+		var (
+			it                                       MediaItem
+			key, kind, name, mime, status, path, mer sql.NullString
+			size                                     sql.NullInt64
+		)
+		if err := rows.Scan(&it.ID, &it.TopicID, &it.Date, &it.Text, &it.EntitiesJSON, &it.MetaJSON,
+			&key, &kind, &name, &mime, &size, &status, &path, &mer); err != nil {
+			return nil, err
+		}
+		if key.Valid {
+			it.Media = &RenderMedia{Key: key.String, Kind: kind.String, FileName: name.String, Mime: mime.String,
+				Size: size.Int64, Status: status.String, LocalPath: path.String, Error: mer.String}
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}

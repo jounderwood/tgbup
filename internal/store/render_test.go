@@ -149,3 +149,30 @@ func TestNames(t *testing.T) {
 		t.Fatalf("names = %v", got)
 	}
 }
+
+func TestMediaItems(t *testing.T) {
+	s := renderFixture(t)
+	ctx := context.Background()
+	if err := s.SaveBatch(ctx, Batch{ChatID: -1001, Messages: []Message{
+		{ChatID: -1001, ID: 13, TopicID: 1, Date: 1772400000, Text: "see example.com", Raw: []byte{1},
+			EntitiesJSON: `[{"type":"messageEntityUrl","offset":4,"length":11}]`},
+		{ChatID: -1001, ID: 14, TopicID: 1, Date: 1772400001, Text: "plain", Raw: []byte{1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MediaItems(ctx, -1001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int
+	for _, it := range got {
+		ids = append(ids, it.ID)
+	}
+	// 11: a document, 11 also has meta; 13: a link in the text; 10, 12, 14: text only.
+	if fmt.Sprint(ids) != "[11 13]" {
+		t.Fatalf("media items = %v", ids)
+	}
+	if got[0].Media == nil || got[0].Media.FileName != "lease.pdf" || got[0].MetaJSON == "" || got[1].EntitiesJSON == "" {
+		t.Fatalf("items = %+v", got)
+	}
+}

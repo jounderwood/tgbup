@@ -17,6 +17,7 @@ import (
 type Page struct {
 	Title  string // "Family › Expenses · page 7 of 38"
 	Crumbs []string
+	ChatID int64
 	N      int
 	Total  int
 	Range  string // "2026-03-01 – 2026-03-29"
@@ -101,6 +102,7 @@ func buildPage(in pageInput) Page {
 	p := Page{
 		Title:   fmt.Sprintf("%s · page %d of %d", strings.Join(in.Crumbs, " › "), in.Key.N, in.Total),
 		Crumbs:  in.Crumbs,
+		ChatID:  in.Key.ChatID,
 		N:       in.Key.N,
 		Total:   in.Total,
 		Root:    strings.Repeat("../", depth),

@@ -9,6 +9,7 @@
 <body>
 <nav class="crumbs"><a href="../index.html">Archive</a> › {{.Title}}</nav>
 <h1>{{.Title}}</h1>
+<p><a href="../media.html#chat={{.ID}}">Media of this chat</a></p>
 <table class="chats">
 <tr><th>{{if .Forum}}Topic{{else}}Part{{end}}</th><th class="num">Messages</th><th>Dates</th><th></th></tr>
 {{- range .Threads}}

@@ -198,7 +198,7 @@ func TestExportStoresMediaUncompressed(t *testing.T) {
 	}
 	defer r.Close()
 	for _, f := range r.File {
-		if strings.Contains(f.Name, "/media/") && f.Method != zip.Store {
+		if strings.HasPrefix(f.Name, "f/media/") && f.Method != zip.Store {
 			t.Errorf("%s compressed with method %d", f.Name, f.Method)
 		}
 	}

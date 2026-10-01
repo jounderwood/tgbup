@@ -8,7 +8,7 @@
 <script src="{{.Root}}assets/page.js" defer></script>
 </head>
 <body>
-<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}}</nav>
+<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}} · <a href="{{.Root}}media.html#chat={{.ChatID}}">media</a></nav>
 {{template "pager" .}}
 <main>
 {{- range .Days}}

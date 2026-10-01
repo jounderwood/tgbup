@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media · Telegram archive</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="wide">
+<nav class="crumbs"><a href="index.html">Archive</a> › Media</nav>
+<h1>Media</h1>
+<form id="filters" onsubmit="return false">
+<div id="types" class="types"></div>
+<div class="row">
+<select id="chat"><option value="">All chats</option>
+{{- range .Chats}}<option value="{{.ID}}">{{.Title}}</option>{{end}}
+</select>
+<label>from <input type="date" id="from"></label>
+<label>to <input type="date" id="to"></label>
+<input type="search" id="q" placeholder="Name or title…">
+</div>
+</form>
+<p id="count" class="count"></p>
+<div id="grid" class="grid"></div>
+<div id="list" class="list"></div>
+<button id="more" type="button" hidden>Show more</button>
+<script src="assets/media.js"></script>
+<script>tgbupMedia.init({{.Files}})</script>
+</body>
+</html>
