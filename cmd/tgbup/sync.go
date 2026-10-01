@@ -14,6 +14,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
+	"gitlab.com/joeunderwood/tgbup/internal/browse"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/media"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
@@ -29,11 +30,13 @@ type syncSummary struct {
 	// silently stops being archived, so it fails the run.
 	unresolved []string
 	// notes are config problems that lose nothing (e.g. a stale exclude_topics key).
-	notes []string
+	notes    []string
+	files    browse.Result
+	filesErr error
 }
 
 func (s syncSummary) ok() bool {
-	return s.sync.OK() && len(s.unresolved) == 0 &&
+	return s.sync.OK() && len(s.unresolved) == 0 && s.filesErr == nil &&
 		s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
 }
 
@@ -56,6 +59,10 @@ func (s syncSummary) print(w io.Writer) {
 	}
 	if s.media.LocalErr != nil {
 		fmt.Fprintf(w, "media stopped by a local disk error: %v\n", s.media.LocalErr)
+	}
+	fmt.Fprintf(w, "files_linked=%d files_missing=%d\n", s.files.Linked, s.files.Missing)
+	if s.filesErr != nil {
+		fmt.Fprintf(w, "files view: %v\n", s.filesErr)
 	}
 }
 
@@ -248,5 +255,9 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	if err != nil {
 		return sum, err
 	}
-	return sum, sum.media.AuthErr
+	if sum.media.AuthErr != nil {
+		return sum, sum.media.AuthErr
+	}
+	sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
+	return sum, nil
 }

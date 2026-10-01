@@ -186,6 +186,19 @@ func checkPrivateAndGroup(t *testing.T, db *sql.DB) {
 	}
 }
 
+// checkFilesView looks for the seeded documents under readable names in files/.
+func checkFilesView(t *testing.T, archive string) {
+	t.Helper()
+	for _, pattern := range []string{
+		filepath.Join(archive, "files", fx.Title, "*", "* отчёт 2026.pdf"),
+		filepath.Join(archive, "files", "Saved Messages", "* отчёт 2026.pdf"),
+	} {
+		if m, _ := filepath.Glob(pattern); len(m) != 1 {
+			t.Errorf("files view: %d matches for %s", len(m), pattern)
+		}
+	}
+}
+
 func TestSyncArchivesForum(t *testing.T) {
 	cfgPath, archive := newArchive(t)
 	runSync(t, cfgPath)
@@ -223,6 +236,7 @@ func TestSyncArchivesForum(t *testing.T) {
 	}
 	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
+	checkFilesView(t, archive)
 
 	before := scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ?`, fx.ChatID)
 	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {

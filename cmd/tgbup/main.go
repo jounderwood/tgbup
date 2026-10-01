@@ -17,6 +17,7 @@ commands:
   login     interactive Telegram login, stores the session
   setup     choose which chats to archive (writes the config)
   sync      download new messages and media
+  files     rebuild files/, the readable view of downloaded media
   version   print version
 `
 
@@ -48,6 +49,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return cmdSetup(ctx, env)
 	case "sync":
 		return cmdSync(ctx, args[1:], env)
+	case "files":
+		return cmdFiles(ctx, env)
 	default:
 		fmt.Fprintf(env.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
