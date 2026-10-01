@@ -88,10 +88,14 @@ func TestRenderSite(t *testing.T) {
 		t.Errorf("reply across topics not linked:\n%s", expenses)
 	}
 	index := read(t, filepath.Join(dir, "html/index.html"))
-	for _, want := range []string{`href="Family/index.html"`, `href="Mom/index.html"`, `<script src="search/-1001.js"></script>`} {
+	for _, want := range []string{`href="Family/index.html"`, `href="Mom/index.html"`, `"search/-1001.js"`} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index lacks %q", want)
 		}
+	}
+	// Search indexes can be hundreds of MB for big chats: they load on first search, not with the chat list.
+	if strings.Contains(index, `<script src="search/`) {
+		t.Error("index.html loads search indexes eagerly")
 	}
 	chat := read(t, filepath.Join(dir, "html/Family/index.html"))
 	for _, want := range []string{"Expenses", `href="Expenses/2026-03.html"`, "before upgrade", `href="before%20upgrade/2025-12.html"`} {
@@ -136,5 +140,36 @@ func TestRenderKeepsGoingAfterAPageFails(t *testing.T) {
 	os.Remove(filepath.Join(dir, "html/Mom/2026-03.html"))
 	if res, _ := Render(context.Background(), db, Options{OutDir: dir, Track: true, Loc: time.UTC}); res.Pages != 1 {
 		t.Fatalf("retry drew %d pages", res.Pages)
+	}
+}
+
+// A page's place and neighbours are part of what it shows: a renamed chat
+// moves its pages, and a new month adds a "next" link to the previous one.
+func TestRenderRedrawsMovedPagesAndNewNeighbours(t *testing.T) {
+	db, dir := siteFixture(t)
+	ctx := context.Background()
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC}
+	if _, err := Render(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertChat(ctx, store.Chat{ID: 10, Type: store.ChatPrivate, Title: "Mother"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveBatch(ctx, store.Batch{ChatID: -1001, Messages: []store.Message{
+		{ChatID: -1001, ID: 13, TopicID: 160, Date: at("2026-04-01", "10:00"), Text: "april", Raw: []byte{1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Render(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "html/Mother/2026-03.html")); err != nil {
+		t.Errorf("renamed chat's page not written to its new folder: %v", err)
+	}
+	if s := read(t, filepath.Join(dir, "html/search/10.js")); !strings.Contains(s, "Mother/2026-03.html") {
+		t.Errorf("search still points at the old folder: %s", s)
+	}
+	if s := read(t, filepath.Join(dir, "html/Family/Expenses/2026-03.html")); !strings.Contains(s, `href="2026-04.html"`) {
+		t.Error("March page has no link to the new April page")
 	}
 }

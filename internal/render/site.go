@@ -77,16 +77,19 @@ func Render(ctx context.Context, db *store.Store, opts Options) (Result, error) 
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if done[m.Page()] == m.Fingerprint {
-			res.Skipped++
-			continue
-		}
 		var prev, next string
 		if i > 0 && sameThread(months[i-1], m) {
 			prev = months[i-1].Month
 		}
 		if i+1 < len(months) && sameThread(months[i+1], m) {
 			next = months[i+1].Month
+		}
+		// What a page shows also depends on where it lives, its neighbours and
+		// the time zone, so a rename or a new month redraws it too.
+		m.Fingerprint = strings.Join([]string{m.Fingerprint, l.dir(m.ChatID, m.TopicID), prev, next, zoneOf(m.Month, opts.Loc)}, "|")
+		if done[m.Page()] == m.Fingerprint {
+			res.Skipped++
+			continue
 		}
 		n, media, err := renderMonth(ctx, db, l, opts, m, prev, next, inScope)
 		if err != nil {
@@ -107,6 +110,15 @@ func Render(ctx context.Context, db *store.Store, opts Options) (Result, error) 
 		return res, err
 	}
 	return res, nil
+}
+
+func zoneOf(month string, loc *time.Location) string {
+	t, err := time.ParseInLocation("2006-01", month, loc)
+	if err != nil {
+		return loc.String()
+	}
+	name, offset := t.Zone()
+	return name + strconv.Itoa(offset)
 }
 
 func (o Options) wants(m store.MonthKey) bool {
@@ -363,7 +375,10 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 			return err
 		}
 	}
-	idx := siteIndex{Chats: chats, SearchIDs: searchIDs}
+	idx := siteIndex{Chats: chats}
+	for _, id := range searchIDs {
+		idx.SearchFiles = append(idx.SearchFiles, "search/"+strconv.FormatInt(id, 10)+".js")
+	}
 	if err := writeFile(filepath.Join(opts.OutDir, "html", "index.html"), func(w io.Writer) error {
 		return indexHTML.Execute(w, idx)
 	}); err != nil {
@@ -391,8 +406,8 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 }
 
 type siteIndex struct {
-	Chats     []indexChat
-	SearchIDs []int64
+	Chats       []indexChat
+	SearchFiles []string
 }
 
 // writeSearch writes a chat's search index as a script: pages opened from

@@ -42,7 +42,8 @@ func exportEnv(t *testing.T) (Env, string, *bytes.Buffer) {
 	defer db.Close()
 	ctx := context.Background()
 	for _, c := range []store.Chat{
-		{ID: -1001, Type: store.ChatForum, Title: "Family", Username: "famforum"},
+		{ID: -1001, Type: store.ChatForum, Title: "Family", Username: "famforum", MigratedFromID: -5},
+		{ID: -5, Type: store.ChatGroup, Title: "Family"}, // the group the forum was upgraded from
 		{ID: 10, Type: store.ChatPrivate, Title: "Mom"},
 		{ID: -20, Type: store.ChatGroup, Title: "Twins"},
 		{ID: -21, Type: store.ChatGroup, Title: "twins"},
@@ -168,5 +169,50 @@ func TestExportRejectsUnknownOrAmbiguousChat(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "a.zip")); !os.IsNotExist(err) {
 		t.Error("a failed export left a zip behind")
+	}
+}
+
+func TestExportByNegativeIDAndByTitleOfUpgradedForum(t *testing.T) {
+	env, home, out := exportEnv(t)
+	for _, args := range [][]string{
+		{"export", "-1001", "-o", filepath.Join(home, "a.zip")},
+		{"export", "Family", "-o", filepath.Join(home, "b.zip")},
+	} {
+		out.Reset()
+		if code := run(context.Background(), args, env); code != 0 {
+			t.Errorf("%v: exit %d:\n%s", args, code, out)
+		}
+	}
+}
+
+// Media are already compressed: stored as is, they cost no CPU and no temp copies.
+func TestExportStoresMediaUncompressed(t *testing.T) {
+	env, home, out := exportEnv(t)
+	zipPath := filepath.Join(home, "f.zip")
+	if code := run(context.Background(), []string{"export", "@famforum", "-o", zipPath}, env); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		if strings.Contains(f.Name, "/media/") && f.Method != zip.Store {
+			t.Errorf("%s compressed with method %d", f.Name, f.Method)
+		}
+	}
+}
+
+func TestExportSkipsMediaMissingOnDisk(t *testing.T) {
+	env, home, out := exportEnv(t)
+	if err := os.Remove(filepath.Join(home, "archive", "media", "document", "9.pdf")); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(context.Background(), []string{"export", "@famforum", "-o", filepath.Join(home, "f.zip")}, env); code != 0 {
+		t.Fatalf("one missing file failed the export: exit %d:\n%s", code, out)
+	}
+	if !strings.Contains(out.String(), "1 files missing on disk") {
+		t.Errorf("output = %q", out.String())
 	}
 }

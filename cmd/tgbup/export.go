@@ -39,8 +39,9 @@ func cmdExport(ctx context.Context, args []string, env Env) int {
 	noMedia := fs.Bool("no-media", false, "leave media files out")
 	outPath := fs.String("o", "", "zip file to write")
 	// The chat comes first, before the flags: flag stops at the first non-flag.
+	// Group and channel ids are negative, so a number is a chat, not a flag.
 	var chat string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || isNumber(args[0])) {
 		chat, args = args[0], args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
@@ -107,6 +108,11 @@ func resolveExport(ctx context.Context, db *store.Store, chat, topic string) ([]
 			found = append(found, c)
 		}
 	}
+	// A forum and the group it was upgraded from usually share a title; the
+	// group's history comes with the forum anyway.
+	found = slices.DeleteFunc(found, func(c store.RenderChat) bool {
+		return slices.ContainsFunc(found, func(o store.RenderChat) bool { return o.MigratedFromID == c.ID })
+	})
 	switch len(found) {
 	case 0:
 		return nil, nil, usageErr("no archived chat matches %q (use its title, @username or id)", chat)
@@ -155,26 +161,30 @@ func export(ctx context.Context, db *store.Store, archiveDir string, opts render
 	if res.Pages == 0 {
 		return usageErr("nothing to export: no messages in that chat, topic or period")
 	}
-	media := slices.Compact(slices.Sorted(slices.Values(res.Media)))
+	var media []string
 	var size int64
+	missing := 0
 	if withMedia {
-		for _, p := range media {
-			n, err := copyFile(filepath.Join(archiveDir, p), filepath.Join(tmp, p))
+		for _, p := range slices.Compact(slices.Sorted(slices.Values(res.Media))) {
+			st, err := os.Stat(filepath.Join(archiveDir, p))
 			if err != nil {
-				return err
+				missing++
+				continue
 			}
-			size += n
+			media = append(media, p)
+			size += st.Size()
 		}
-	} else {
-		media = nil
 	}
 	redirect := `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=html/index.html"><a href="html/index.html">Open the archive</a>` + "\n"
 	if err := os.WriteFile(filepath.Join(tmp, "index.html"), []byte(redirect), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "%d messages, %d files, ~%s\n", res.Messages, len(media), mib(size))
+	if missing > 0 {
+		fmt.Fprintf(w, "warning: %d files missing on disk, left out\n", missing)
+	}
 	root := strings.TrimSuffix(filepath.Base(outPath), filepath.Ext(outPath))
-	if err := writeZip(tmp, root, outPath); err != nil {
+	if err := writeZip(ctx, tmp, archiveDir, media, root, outPath); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "wrote %s\n", outPath)
@@ -183,35 +193,33 @@ func export(ctx context.Context, db *store.Store, archiveDir string, opts render
 
 func mib(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/(1<<20)) }
 
-func copyFile(src, dst string) (int64, error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return 0, err
-	}
-	out, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	n, err := io.Copy(out, in)
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	return n, err
-}
-
-// writeZip packs dir under a top folder named root, through a temp file so a
-// failed export leaves no partial zip.
-func writeZip(dir, root, outPath string) error {
+// writeZip packs the rendered pages in dir and the media files straight from
+// the archive under a top folder named root. Media are stored, not deflated:
+// they are compressed already. A temp file and a rename mean a failed export
+// leaves no partial zip.
+func writeZip(ctx context.Context, dir, archiveDir string, media []string, root, outPath string) error {
 	f, err := os.CreateTemp(filepath.Dir(outPath), ".export-*.zip")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	zw := zip.NewWriter(f)
+	add := func(src, name string, method uint16) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		in, err := os.Open(src)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		zf, err := zw.CreateHeader(&zip.FileHeader{Name: root + "/" + name, Method: method, Modified: time.Now()})
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(zf, in)
+		return err
+	}
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -220,18 +228,14 @@ func writeZip(dir, root, outPath string) error {
 		if err != nil {
 			return err
 		}
-		zf, err := zw.Create(root + "/" + filepath.ToSlash(rel))
-		if err != nil {
-			return err
-		}
-		src, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer src.Close()
-		_, err = io.Copy(zf, src)
-		return err
+		return add(p, filepath.ToSlash(rel), zip.Deflate)
 	})
+	for _, m := range media {
+		if err != nil {
+			break
+		}
+		err = add(filepath.Join(archiveDir, m), filepath.ToSlash(m), zip.Store)
+	}
 	if err == nil {
 		err = zw.Close()
 	}

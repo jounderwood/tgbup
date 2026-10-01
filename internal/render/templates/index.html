@@ -17,9 +17,6 @@
 {{- end}}
 </table>
 <script src="assets/search.js"></script>
-{{- range .SearchIDs}}
-<script src="search/{{.}}.js"></script>
-{{- end}}
-<script>tgbupSearch.init()</script>
+<script>tgbupSearch.init({{.SearchFiles}})</script>
 </body>
 </html>

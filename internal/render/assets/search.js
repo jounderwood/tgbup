@@ -1,15 +1,35 @@
-// Search over the per-chat indexes loaded as scripts (search/<chat>.js).
+// Search over the per-chat indexes (search/<chat>.js). They are loaded as
+// scripts, since pages opened from disk may not fetch, and only once the
+// search box is used, since big chats make them large.
 // Results are built with DOM text nodes only, never from HTML strings.
 window.tgbupSearch = {
   chats: [],
-  add(c) { this.chats.push(c); },
-  init() {
+  loading: null,
+  add(c) {
+    for (const e of c.entries) e.push(e[3].toLowerCase());
+    this.chats.push(c);
+  },
+  init(files) {
     const q = document.getElementById('q');
     const out = document.getElementById('results');
+    const load = () => {
+      this.loading = this.loading || Promise.all(files.map((src) => new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = s.onerror = resolve;
+        document.head.append(s);
+      })));
+      return this.loading;
+    };
+    q.addEventListener('focus', load);
     let timer;
     q.addEventListener('input', () => {
       clearTimeout(timer);
-      timer = setTimeout(() => this.show(q.value.trim().toLowerCase(), out), 150);
+      timer = setTimeout(async () => {
+        if (!this.loading) out.textContent = 'Loading the search index…';
+        await load();
+        this.show(q.value.trim().toLowerCase(), out);
+      }, 150);
     });
   },
   show(needle, out) {
@@ -18,8 +38,8 @@ window.tgbupSearch = {
     const max = 200;
     let found = 0;
     for (const c of this.chats) {
-      for (const [, date, page, text] of c.entries) {
-        const at = text.toLowerCase().indexOf(needle);
+      for (const [, date, page, text, lower] of c.entries) {
+        const at = lower.indexOf(needle);
         if (at < 0) continue;
         out.append(this.hit(c.chat, date, page, text, at, needle.length));
         if (++found >= max) {
