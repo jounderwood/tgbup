@@ -21,6 +21,7 @@ commands:
   backup    snapshot the archive into the restic repositories (--init: create them)
   deps      find or download restic and rclone
   notify    notify test: send a test message through the bot
+  schedule  install|uninstall|status: start tgbup run 4 times a day (launchd)
   files     rebuild files/, the readable view of downloaded media
   render    redraw html/ and md/ from the archive (--full: every page)
   export    pack a chat, topic or period with its media into a zip
@@ -65,6 +66,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return cmdDeps(ctx, env)
 	case "notify":
 		return cmdNotify(ctx, args[1:], env)
+	case "schedule":
+		return cmdSchedule(args[1:], env)
 	case "render":
 		return cmdRender(ctx, args[1:], env)
 	case "export":
