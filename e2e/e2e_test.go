@@ -6,6 +6,7 @@
 package e2e
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -103,12 +104,17 @@ func newArchive(t *testing.T) (cfgPath, archive string) {
 
 func runSync(t *testing.T, cfgPath string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command(binPath, append([]string{"sync"}, args...)...)
+	return runTgbup(t, cfgPath, append([]string{"sync"}, args...)...)
+}
+
+func runTgbup(t *testing.T, cfgPath string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(binPath, args...)
 	cmd.Env = testServerEnv(cfgPath)
 	out, err := cmd.CombinedOutput()
-	t.Logf("tgbup sync %s:\n%s", strings.Join(args, " "), out)
+	t.Logf("tgbup %s:\n%s", strings.Join(args, " "), out)
 	if err != nil {
-		t.Fatalf("tgbup sync failed: %v", err)
+		t.Fatalf("tgbup %s failed: %v", args[0], err)
 	}
 	return string(out)
 }
@@ -199,6 +205,58 @@ func checkFilesView(t *testing.T, archive string) {
 	}
 }
 
+// checkRendered finds the seeded document on a forum page and follows its link.
+func checkRendered(t *testing.T, archive string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(archive, "html", "index.html")); err != nil {
+		t.Errorf("html/index.html: %v", err)
+	}
+	pages, _ := filepath.Glob(filepath.Join(archive, "html", fx.Title, "*", "*.html"))
+	linked := false
+	for _, p := range pages {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := strings.Index(string(b), "📄 отчёт 2026.pdf")
+		if i < 0 {
+			continue
+		}
+		head := string(b[:i])
+		href := head[strings.LastIndex(head, `href="`)+len(`href="`):]
+		href = href[:strings.Index(href, `"`)]
+		if _, err := os.Stat(filepath.Join(filepath.Dir(p), filepath.FromSlash(href))); err != nil {
+			t.Errorf("document link %s on %s is broken: %v", href, p, err)
+		}
+		linked = true
+	}
+	if !linked {
+		t.Errorf("no forum page links the seeded document (pages: %v)", pages)
+	}
+	if md, _ := filepath.Glob(filepath.Join(archive, "md", fx.Title, "*", "*.md")); len(md) == 0 {
+		t.Error("no Markdown pages for the forum")
+	}
+}
+
+func checkExport(t *testing.T, cfgPath string) {
+	t.Helper()
+	zipPath := filepath.Join(t.TempDir(), "forum.zip")
+	runTgbup(t, cfgPath, "export", fx.Title, "-o", zipPath)
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	var doc, page bool
+	for _, f := range r.File {
+		doc = doc || (strings.HasPrefix(f.Name, "forum/media/document/") && strings.HasSuffix(f.Name, ".pdf"))
+		page = page || strings.HasPrefix(f.Name, "forum/html/"+fx.Title+"/")
+	}
+	if !doc || !page {
+		t.Errorf("export zip: document %v, forum pages %v", doc, page)
+	}
+}
+
 func TestSyncArchivesForum(t *testing.T) {
 	cfgPath, archive := newArchive(t)
 	runSync(t, cfgPath)
@@ -237,6 +295,8 @@ func TestSyncArchivesForum(t *testing.T) {
 	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
 	checkFilesView(t, archive)
+	checkRendered(t, archive)
+	checkExport(t, cfgPath)
 
 	before := scalar[int](t, db, `SELECT count(*) FROM messages WHERE chat_id = ?`, fx.ChatID)
 	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
