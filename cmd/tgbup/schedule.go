@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 const launchdLabel = "com.gitlab.joeunderwood.tgbup"
@@ -29,6 +30,9 @@ type launchdJob struct {
 	UID       int
 	Env       map[string]string
 	launchctl func(args ...string) ([]byte, error)
+	// retryDelay is the pause between bootstrap attempts while launchd is still
+	// tearing down the job that was just booted out.
+	retryDelay time.Duration
 }
 
 func (j launchdJob) path() string   { return filepath.Join(j.AgentsDir, j.Label+".plist") }
@@ -74,10 +78,16 @@ func (j launchdJob) install() error {
 	}
 	// Replace a job installed earlier (another tgbup path or schedule); none is fine.
 	_, _ = j.launchctl("bootout", j.target())
-	if out, err := j.launchctl("bootstrap", fmt.Sprintf("gui/%d", j.UID), j.path()); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(out)))
+	var err error
+	for range 5 {
+		var out []byte
+		if out, err = j.launchctl("bootstrap", fmt.Sprintf("gui/%d", j.UID), j.path()); err == nil {
+			return nil
+		}
+		err = fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(out)))
+		time.Sleep(j.retryDelay)
 	}
-	return nil
+	return err
 }
 
 func (j launchdJob) uninstall() error {
@@ -110,6 +120,18 @@ func (j launchdJob) status() string {
 	return s
 }
 
+// jobEnv carries the variables that move tgbup's files, so the scheduled run
+// finds the same config, secrets and state as the shell that installed it.
+func jobEnv(getenv func(string) string) map[string]string {
+	out := map[string]string{}
+	for _, k := range []string{"TGBUP_CONFIG", "TGBUP_SECRETS", "TGBUP_STATE_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
+		if v := getenv(k); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func cmdSchedule(args []string, env Env) int {
 	if len(args) != 1 || !slices.Contains([]string{"install", "uninstall", "status"}, args[0]) {
 		fmt.Fprintln(env.Stderr, "usage: tgbup schedule install|uninstall|status")
@@ -132,16 +154,12 @@ func cmdSchedule(args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
 		return 1
 	}
-	jobEnv := map[string]string{}
-	for _, k := range []string{"TGBUP_CONFIG", "TGBUP_SECRETS", "TGBUP_STATE_DIR"} {
-		if v := env.Getenv(k); v != "" {
-			jobEnv[k] = v
-		}
-	}
+
 	j := launchdJob{
 		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.paths.Home, "Library", "LaunchAgents"),
-		LogPath: filepath.Join(p.paths.StateDir, "logs", "run.log"), UID: os.Getuid(), Env: jobEnv,
-		launchctl: func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
+		LogPath: filepath.Join(p.paths.StateDir, "logs", "run.log"), UID: os.Getuid(), Env: jobEnv(env.Getenv),
+		retryDelay: time.Second,
+		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
 	}
 	switch args[0] {
 	case "install":

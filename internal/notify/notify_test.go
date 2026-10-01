@@ -76,3 +76,21 @@ func TestSummaryText(t *testing.T) {
 		}
 	}
 }
+
+// Telegram rejects messages over 4096 characters; a run with hundreds of
+// errors must still get its alert through.
+func TestErrorTextFitsTelegram(t *testing.T) {
+	var errs []string
+	for i := range 500 {
+		errs = append(errs, "media document:"+strings.Repeat("9", 10)+" failed with a long reason "+strings.Repeat("x", 40)+" #"+string(rune('a'+i%26)))
+	}
+	got := ErrorText("mac", RunResult{SyncErrors: errs, BackupErrors: []string{"icloud: disk full"}})
+	if n := len([]rune(got)); n > 4000 {
+		t.Fatalf("message is %d characters", n)
+	}
+	for _, want := range []string{"… and 490 more", "icloud: disk full"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("message lacks %q", want)
+		}
+	}
+}

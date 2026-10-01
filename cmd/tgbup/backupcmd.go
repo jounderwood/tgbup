@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/deps"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
@@ -140,23 +141,21 @@ func cmdRun(ctx context.Context, env Env) int {
 	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
 	st, err := loadSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
-		return 1
+		return failEarly(ctx, log, botFromSecrets(env), "load the setup", err)
 	}
+	bot := notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID}
 	release, err := acquireLock(st.paths.Lock())
 	if errors.Is(err, errLocked) {
 		log.Info("skipping: another run is in progress")
 		return 0
 	}
 	if err != nil {
-		log.Error("lock failed", "err", err)
-		return 1
+		return failEarly(ctx, log, bot, "take run.lock", err)
 	}
 	defer release()
 	db, err := store.Open(filepath.Join(st.cfg.ArchiveDir, "archive.sqlite"))
 	if err != nil {
-		log.Error("open archive", "err", err)
-		return 1
+		return failEarly(ctx, log, bot, "open the archive", err)
 	}
 	defer db.Close()
 	return runOnce(ctx, runParts{
@@ -173,7 +172,7 @@ func cmdRun(ctx context.Context, env Env) int {
 			}
 			return backup.Run(ctx, db, o), true
 		},
-		db: db, bot: notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID},
+		db: db, bot: bot,
 		host: hostname(), archiveDir: st.cfg.ArchiveDir, repos: st.cfg.Backup.Repositories,
 		summaryEvery: st.cfg.Notify.SummaryEvery.D(), now: time.Now, loc: time.Local,
 		out: env.Stdout, log: log,
@@ -201,4 +200,27 @@ func cmdNotify(ctx context.Context, args []string, env Env) int {
 	}
 	fmt.Fprintln(env.Stdout, "sent")
 	return 0
+}
+
+// failEarly reports a run that could not start: unattended, a broken config
+// would otherwise fail every scheduled run with nobody told.
+func failEarly(ctx context.Context, log *slog.Logger, bot notify.Bot, what string, err error) int {
+	log.Error(what, "err", err)
+	if bot.Enabled() {
+		msg := notify.ErrorText(hostname(), notify.RunResult{SyncErrors: []string{what + ": " + err.Error()}})
+		if serr := bot.Send(ctx, msg); serr != nil {
+			log.Error("notify", "err", serr)
+		}
+	}
+	return 1
+}
+
+// botFromSecrets reads only the secrets file, for when the rest of the setup failed to load.
+func botFromSecrets(env Env) notify.Bot {
+	p, err := config.ResolvePaths(env.Getenv)
+	if err != nil {
+		return notify.Bot{}
+	}
+	sec, _ := config.LoadSecrets(p.Secrets, env.Getenv)
+	return notify.Bot{Token: sec.BotToken, ChatID: sec.BotChatID}
 }

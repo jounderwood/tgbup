@@ -66,18 +66,37 @@ type RunResult struct {
 func ErrorText(host string, r RunResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "⚠️ tgbup on %s: the run had errors\n", host)
+	// Telegram refuses messages over 4096 characters: show the first errors of
+	// each section, each cut short, so the alert always goes through.
 	section := func(title string, errs []string) {
 		if len(errs) == 0 {
 			return
 		}
 		fmt.Fprintf(&b, "\n%s:\n", title)
-		for _, e := range errs {
-			fmt.Fprintf(&b, "• %s\n", e)
+		for i, e := range errs {
+			if i == maxItems {
+				fmt.Fprintf(&b, "… and %d more\n", len(errs)-maxItems)
+				break
+			}
+			fmt.Fprintf(&b, "• %s\n", cut(e, maxItemLen))
 		}
 	}
 	section("Sync", r.SyncErrors)
 	section("Backup", r.BackupErrors)
-	return strings.TrimRight(b.String(), "\n")
+	return cut(strings.TrimRight(b.String(), "\n"), maxMessage)
+}
+
+const (
+	maxItems   = 10
+	maxItemLen = 300
+	maxMessage = 4000
+)
+
+func cut(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
 
 type RepoTime struct {

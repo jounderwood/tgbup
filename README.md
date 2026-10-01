@@ -87,12 +87,18 @@ restic и rclone ставить отдельно не нужно: `tgbup deps` (
 Не входят: `html/`, `md/`, `files/` (пересобираются), сессия Telegram, `secrets.env`. Хранение: 4 последних,
 7 дневных, 4 недельных, 12 месячных; `prune` — раз в сутки, `check` (5% данных) — раз в 30 дней.
 
-Восстановление (без tgbup):
-```bash
-RESTIC_PASSWORD=… ~/.local/state/tgbup/bin/restic-0.19.1/restic -r "<репозиторий>" restore latest --target ~/restore
-```
-В `~/restore` будут `…/state/tgbup/backup/archive.sqlite`, `config.yaml` и `…/TelegramArchive/media/`: положите
-`archive.sqlite` и `media/` в `archive_dir`, затем `tgbup render` и `tgbup files` пересоберут просмотр.
+Восстановление, в том числе на новом компьютере (tgbup не нужен):
+1. Поставить restic (`brew install restic` или выпуск с github.com/restic/restic); для репозитория в Google Drive —
+   ещё rclone и заново `rclone config` с тем же именем удалённого хранилища (`gdrive`): настройки rclone в снимок не входят.
+2. Восстановить последний снимок:
+   ```bash
+   RESTIC_PASSWORD=… restic -r "<репозиторий>" restore latest --target ~/restore
+   ```
+   Пути в снимке абсолютные: в `~/restore` будут `…/.local/state/tgbup/backup/archive.sqlite`, `…/config.yaml`
+   и `…/TelegramArchive/media/`.
+3. Положить `archive.sqlite` и `media/` в `archive_dir`, `config.yaml` — в `~/.config/tgbup/`; `secrets.env`
+   создать заново. Сессия Telegram в снимок не входит — `tgbup login`. Затем `tgbup render` и `tgbup files`
+   пересоберут просмотр.
 
 ## Чтение архива
 

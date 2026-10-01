@@ -1,16 +1,25 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-type fakeLaunchctl struct{ calls []string }
+type fakeLaunchctl struct {
+	calls []string
+	// busy makes this many bootstrap calls fail, as when launchd is still tearing down the old job.
+	busy int
+}
 
 func (f *fakeLaunchctl) run(args ...string) ([]byte, error) {
 	f.calls = append(f.calls, strings.Join(args, " "))
+	if args[0] == "bootstrap" && f.busy > 0 {
+		f.busy--
+		return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit status 5")
+	}
 	if args[0] == "print" {
 		return []byte("state = not running\nlast exit code = 0\n"), nil
 	}
@@ -68,5 +77,26 @@ func TestScheduleInstallAndUninstall(t *testing.T) {
 	}
 	if len(f.calls) != 1 || f.calls[0] != "bootout gui/501/com.example.tgbup" {
 		t.Fatalf("launchctl calls = %q", f.calls)
+	}
+}
+
+func TestScheduleInstallRetriesBusyBootstrap(t *testing.T) {
+	j, f := testSchedule(t)
+	j.retryDelay = 0
+	f.busy = 2
+	if err := j.install(); err != nil {
+		t.Fatalf("install gave up while launchd was busy: %v", err)
+	}
+	f.busy = 10
+	if err := j.install(); err == nil || !strings.Contains(err.Error(), "Input/output error") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScheduleKeepsPathOverrides(t *testing.T) {
+	env := map[string]string{"XDG_CONFIG_HOME": "/x/config", "XDG_STATE_HOME": "/x/state", "TGBUP_SECRETS": "/s.env", "OTHER": "no"}
+	got := jobEnv(func(k string) string { return env[k] })
+	if len(got) != 3 || got["XDG_CONFIG_HOME"] != "/x/config" || got["XDG_STATE_HOME"] != "/x/state" || got["TGBUP_SECRETS"] != "/s.env" {
+		t.Fatalf("job env = %v", got)
 	}
 }

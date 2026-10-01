@@ -150,3 +150,16 @@ func TestRunWithoutBotOrBackup(t *testing.T) {
 		}
 	}
 }
+
+// A run that cannot even start (a config broken by an edit) must still reach the bot.
+func TestEarlyFailureIsNotified(t *testing.T) {
+	bot := newFakeBot(t)
+	var out bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&out, nil))
+	if code := failEarly(context.Background(), log, bot.bot(), "load the config", errors.New("yaml: line 12: did not find expected key")); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if len(bot.sent) != 1 || !strings.Contains(bot.sent[0], "load the config: yaml: line 12") {
+		t.Fatalf("bot got %q", bot.sent)
+	}
+}
