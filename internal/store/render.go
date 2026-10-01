@@ -265,3 +265,35 @@ WHERE msg.chat_id = ? AND msg.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)`, ar
 	}
 	return out, rows.Err()
 }
+
+// SearchText is what the search index holds for one message: its text and,
+// for media, the file name.
+type SearchText struct {
+	ID      int
+	TopicID int
+	Date    int64
+	Text    string
+}
+
+func (s *Store) SearchTexts(ctx context.Context, chatID int64) ([]SearchText, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, trim(msg.text || ' ' || COALESCE(m.file_name, ''))
+FROM messages msg
+LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
+LEFT JOIN media m ON m.key = mm.media_key
+WHERE msg.chat_id = ? AND (msg.text != '' OR COALESCE(m.file_name, '') != '')
+ORDER BY msg.date, msg.id`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SearchText
+	for rows.Next() {
+		var t SearchText
+		if err := rows.Scan(&t.ID, &t.TopicID, &t.Date, &t.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}

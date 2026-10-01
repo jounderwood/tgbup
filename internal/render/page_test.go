@@ -46,9 +46,11 @@ func samplePage(t *testing.T) Page {
 		Dir:      "Family/Expenses",
 		Messages: msgs,
 		Refs:     refs,
-		DirOf:    func(chat int64, topic int) string { return map[int]string{1: "Family/General", 160: "Family/Expenses"}[topic] },
-		Loc:      time.UTC,
-		Crumbs:   []string{"Family", "Expenses"},
+		DirOf: func(chat int64, topic int) string {
+			return map[int]string{1: "Family/General", 160: "Family/Expenses"}[topic]
+		},
+		Loc:    time.UTC,
+		Crumbs: []string{"Family", "Expenses"},
 	})
 }
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -301,6 +300,3 @@ func orDefault(s, def string) string {
 	}
 	return s
 }
-
-// pagePath joins a page's folder and month into a slash path without extension.
-func pagePath(dir, month string) string { return path.Join(dir, month) }

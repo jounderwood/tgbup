@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<nav class="crumbs"><a href="../index.html">Archive</a> › {{.Title}}</nav>
+<h1>{{.Title}}</h1>
+{{- range .Sections}}
+{{- if .Title}}
+<h2>{{.Title}}</h2>
+{{- end}}
+<ul class="months-list">
+{{- range .Months}}
+<li><a href="{{.Href}}.html">{{.Month}}</a></li>
+{{- end}}
+</ul>
+{{- end}}
+</body>
+</html>

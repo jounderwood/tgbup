@@ -108,3 +108,14 @@ func TestRenderChats(t *testing.T) {
 		t.Fatalf("chats = %+v", chats)
 	}
 }
+
+func TestSearchTexts(t *testing.T) {
+	s := renderFixture(t)
+	got, err := s.SearchTexts(context.Background(), -1001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Text != "hello" || got[1].Text != "rent lease.pdf" || got[1].TopicID != 160 {
+		t.Fatalf("texts = %+v", got)
+	}
+}
