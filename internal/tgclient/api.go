@@ -134,15 +134,6 @@ func (a *API) SearchCounters(ctx context.Context, peer tg.InputPeerClass) (TypeC
 	return c, nil
 }
 
-// TopicCount returns how many topics a forum has.
-func (a *API) TopicCount(ctx context.Context, peer tg.InputPeerClass) (int, error) {
-	res, err := a.raw.MessagesGetForumTopics(ctx, &tg.MessagesGetForumTopicsRequest{Peer: peer, Limit: 1})
-	if err != nil {
-		return 0, err
-	}
-	return res.Count, nil
-}
-
 // TopicMessageCount returns the message count of one forum topic.
 func (a *API) TopicMessageCount(ctx context.Context, peer tg.InputPeerClass, topicID int) (int, error) {
 	res, err := a.raw.MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{Peer: peer, MsgID: topicID, Limit: 1})

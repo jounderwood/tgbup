@@ -75,18 +75,52 @@ func (s *setupDialog) ask(prompt string) (string, bool) {
 	}
 }
 
+// russianLayout maps keys typed in the Russian layout to the commands on the
+// same keys, so switching layout is not needed.
+var russianLayout = map[string]string{
+	"б": "<", "ю": ">", "ф": "a", "т": "n", "Ф": "A", "Т": "N", "е": "t", "з": "p", "ы": "s", "в": "d", "й": "q",
+}
+
+// normalizeCommand accepts Russian-layout commands and "p2"/"t3" without a space.
+func normalizeCommand(line string) string {
+	cmd, arg, _ := strings.Cut(line, " ")
+	if en, ok := russianLayout[firstRune(cmd)]; ok && (len([]rune(cmd)) == 1 || isNumber(string([]rune(cmd)[1:]))) {
+		cmd = en + string([]rune(cmd)[1:])
+	}
+	if len(cmd) > 1 && (cmd[0] == 'p' || cmd[0] == 't') && isNumber(cmd[1:]) {
+		arg, cmd = cmd[1:], cmd[:1]
+	}
+	if arg == "" {
+		return cmd
+	}
+	return cmd + " " + strings.TrimSpace(arg)
+}
+
+func firstRune(s string) string {
+	for _, r := range s {
+		return string(r)
+	}
+	return ""
+}
+
+func isNumber(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
+}
+
 func (s *setupDialog) run() bool {
 	width := 0
 	for _, g := range s.groups {
-		width = max(width, len([]rune(g.Title)))
+		width = max(width, displayWidth(g.Title))
 	}
 	for {
 		fmt.Fprintf(s.out, "\nSelected: %d chats\n", len(s.st.Chats))
 		for i, g := range s.groups {
-			fmt.Fprintf(s.out, "  %d) %-*s  (%d, selected %d)\n", i+1, width, g.Title, len(g.Chats), s.st.Chats.Count(g.Chats))
+			fmt.Fprintf(s.out, "  %d) %s  (%d, selected %d)\n", i+1, padRight(g.Title, width), len(g.Chats), s.st.Chats.Count(g.Chats))
 		}
 		fmt.Fprintln(s.out, "  s) search   d) done   q) quit without saving")
 		line, ok := s.ask("> ")
+		line = normalizeCommand(line)
 		if !ok || line == "q" {
 			return false
 		}
@@ -129,6 +163,7 @@ func (s *setupDialog) editList(title string, chats []tgclient.Dialog) bool {
 		if !ok {
 			return false
 		}
+		line = normalizeCommand(line)
 		cmd, arg, _ := strings.Cut(line, " ")
 		switch {
 		case line == "":
@@ -205,7 +240,7 @@ func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pag
 				topics += fmt.Sprintf(" (%d excl)", n)
 			}
 		}
-		line := fmt.Sprintf("  %4d  %s  %-*s  %-7s  %-8s  %s", page*pageSize+i+1, mark, titleWidth, cleanTitle(c.Title, titleWidth), c.Type, msgs, topics)
+		line := fmt.Sprintf("  %4d  %s  %s  %-7s  %-8s  %s", page*pageSize+i+1, mark, padRight(cleanTitle(c.Title, titleWidth), titleWidth), c.Type, msgs, topics)
 		fmt.Fprintln(s.out, strings.TrimRight(line, " "))
 	}
 	fmt.Fprintln(s.out, " 1,3,5-7 toggle · a/n page all/none · A/N whole list · t 3 topics")
@@ -256,14 +291,14 @@ func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
 				mark = "[x]"
 			}
 			name := cleanTitle(t.Title, titleWidth-8) + " #" + strconv.Itoa(t.ID)
-			fmt.Fprintf(s.out, "  %4d  %-4s  %-*s  ~%s\n", i+1, mark, titleWidth, name, groupDigits(t.Count))
+			fmt.Fprintf(s.out, "  %4d  %-4s  %s  ~%s\n", i+1, mark, padRight(name, titleWidth), groupDigits(t.Count))
 		}
 		fmt.Fprintln(s.out, " 1,3 toggle · a/n all/none · Enter back")
 		line, ok := s.ask("> ")
 		if !ok {
 			return false
 		}
-		switch line {
+		switch line = normalizeCommand(line); line {
 		case "":
 			return true
 		case "a", "n":
@@ -398,7 +433,11 @@ func listRowStats(ctx context.Context, api *tgclient.API, ds []tgclient.Dialog, 
 		var r rowInfo
 		r.Msgs, r.Err = api.HistoryCount(ctx, d.Peer)
 		if r.Err == nil && d.Type == store.ChatForum {
-			r.Topics, r.Err = api.TopicCount(ctx, d.Peer)
+			// Counted from the topic list, as the report does: the count field of
+			// messages.getForumTopics came out one lower on real forums.
+			var topics []tgclient.Topic
+			topics, r.Err = api.ForumTopics(ctx, d.Peer)
+			r.Topics = len(topics)
 		}
 		out[d.ID] = r
 		progress(i+1, len(ds))

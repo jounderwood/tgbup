@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -33,7 +32,7 @@ func printReport(w io.Writer, chats []stats.ChatStats) {
 	fmt.Fprintf(w, "would archive %d chats, ~%s messages:\n", len(chats), groupDigits(saved))
 	for i, c := range chats {
 		header := fmt.Sprintf("── %d. %s · %s · %d ", i+1, cleanTitle(c.Item.Title, titleWidth), c.Item.Type, c.Item.ID)
-		fmt.Fprintln(w, header+strings.Repeat("─", max(headerWidth-utf8.RuneCountInString(header), 2)))
+		fmt.Fprintln(w, header+strings.Repeat("─", max(headerWidth-displayWidth(header), 2)))
 		if c.Err != nil {
 			fmt.Fprintf(w, "   ? could not count: %v\n", c.Err)
 			continue
@@ -70,12 +69,15 @@ func printTopics(w io.Writer, c stats.ChatStats) {
 			kept = append(kept, s)
 		}
 	}
-	indent := strings.Repeat(" ", 3+16)
+	// The label column fits the longer label plus two spaces, so a long count never touches the list.
+	topicsLabel := fmt.Sprintf("topics %d of %d:", len(kept), len(c.Topics))
+	col := max(len(topicsLabel), len("excluded:")) + 2
+	indent := strings.Repeat(" ", 3+col)
 	if len(kept) > 0 {
-		fmt.Fprint(w, wrapList(fmt.Sprintf("   %-16s", fmt.Sprintf("topics %d of %d:", len(kept), len(c.Topics))), indent, kept))
+		fmt.Fprint(w, wrapList("   "+padRight(topicsLabel, col), indent, kept))
 	}
 	if len(dropped) > 0 {
-		list := strings.TrimSuffix(wrapList("   excluded:       ", indent, dropped), "\n")
+		list := strings.TrimSuffix(wrapList("   "+padRight("excluded:", col), indent, dropped), "\n")
 		fmt.Fprintf(w, "%s   (~%s msgs not saved)\n", list, groupDigits(notSaved))
 	}
 }
@@ -89,7 +91,7 @@ func wrapList(first, indent string, items []string) string {
 		if i > 0 {
 			sep = " · "
 		}
-		if i > 0 && utf8.RuneCountInString(line+sep+it) > lineWidth {
+		if i > 0 && displayWidth(line+sep+it) > lineWidth {
 			b.WriteString(line + " ·\n")
 			line, sep = indent, ""
 		}
@@ -135,10 +137,7 @@ func cleanTitle(s string, width int) string {
 		return -1
 	}, strings.ToValidUTF8(s, ""))
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > width {
-		return string(r[:width-1]) + "…"
-	}
-	return s
+	return truncateWidth(s, width)
 }
 
 func groupDigits(n int) string {

@@ -235,3 +235,50 @@ func TestSetupTopicsScreenWithoutTopics(t *testing.T) {
 	}
 	wantOutput(t, out.String(), "no topics to choose from")
 }
+
+// Commands typed in the Russian layout (same keys) and "p2"/"t1" without a space.
+func TestSetupRussianLayoutAndCompactCommands(t *testing.T) {
+	var many []tgclient.Dialog
+	for i := range 25 {
+		many = append(many, tgclient.Dialog{ID: int64(1000 + i), Type: store.ChatPrivate, Title: fmt.Sprintf("Chat %02d", i+1)})
+	}
+	d, out, _ := newDialogOver("1\nю\nб\np2\nф\nТ\nф\n\nв\nн\nй\n", state(), many, nil)
+	d.run()
+	wantOutput(t, out.String(), "page 2/2", "· 5 selected", "· 0 selected", "not written")
+	if strings.Contains(out.String(), "error") || strings.Contains(out.String(), "unknown command") {
+		t.Fatalf("russian-layout command rejected:\n%s", out.String())
+	}
+	if len(d.st.Chats) != 5 {
+		t.Fatalf("selected = %d, want the 5 chats of page 2", len(d.st.Chats))
+	}
+}
+
+func TestSetupListAlignsWideTitles(t *testing.T) {
+	wide := tgclient.Dialog{ID: 5, Type: store.ChatForum, Title: "👨\u200d💻"}
+	cjk := tgclient.Dialog{ID: 6, Type: store.ChatPrivate, Title: "Misha 米哈"}
+	d, out, _ := newDialogOver("1\n\nq\n", state(), []tgclient.Dialog{wide, cjk}, nil)
+	d.run()
+	var cols []int
+	for _, line := range strings.Split(out.String(), "\n") {
+		if i := strings.Index(line, "forum"); i >= 0 && strings.Contains(line, "[ ]") {
+			cols = append(cols, displayWidth(line[:i]))
+		}
+		if i := strings.Index(line, "private"); i >= 0 && strings.Contains(line, "[ ]") {
+			cols = append(cols, displayWidth(line[:i]))
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Fatalf("type column starts at %v:\n%s", cols, out.String())
+	}
+}
+
+// Search text is not a command: Cyrillic single letters must stay as typed.
+func TestSetupSearchIsNotNormalized(t *testing.T) {
+	v := tgclient.Dialog{ID: 7, Type: store.ChatPrivate, Title: "в гостях"}
+	d, out, _ := newDialogOver("s\nв\n1\n\nq\n", state(), []tgclient.Dialog{v, sMama}, nil)
+	d.run()
+	wantOutput(t, out.String(), "Search: в")
+	if !d.st.Chats[v.ID] {
+		t.Fatalf("search for «в» did not find the chat:\n%s", out.String())
+	}
+}

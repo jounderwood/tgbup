@@ -194,18 +194,6 @@ func TestSearchCounters(t *testing.T) {
 	}
 }
 
-func TestTopicCount(t *testing.T) {
-	mock := tgmock.NewRequire(t)
-	mock.ExpectFunc(func(b bin.Encoder) {
-		if req := b.(*tg.MessagesGetForumTopicsRequest); req.Limit != 1 {
-			t.Fatalf("limit = %d", req.Limit)
-		}
-	}).ThenResult(&tg.MessagesForumTopics{Count: 7, Topics: []tg.ForumTopicClass{topic(1, "General", false, 1)}})
-	if n, err := tgclient.NewAPI(tg.NewClient(mock)).TopicCount(context.Background(), peer); err != nil || n != 7 {
-		t.Fatalf("topics = %d %v", n, err)
-	}
-}
-
 func TestTopicMessageCount(t *testing.T) {
 	mock := tgmock.NewRequire(t)
 	mock.ExpectFunc(func(b bin.Encoder) {

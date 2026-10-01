@@ -92,3 +92,16 @@ func TestDryRunExitCode(t *testing.T) {
 		t.Errorf("a chat that could not be counted = %d", code)
 	}
 }
+
+// A label longer than the column must still be followed by a space.
+func TestTopicLabelNeverTouchesList(t *testing.T) {
+	var topics []stats.TopicStats
+	for i := range 24 {
+		topics = append(topics, stats.TopicStats{ID: i + 1, Title: "T", Count: 1})
+	}
+	var out bytes.Buffer
+	printReport(&out, []stats.ChatStats{{Item: stats.Item{ID: 1, Type: "forum", Title: "F"}, Total: 24, Topics: topics}})
+	if !strings.Contains(out.String(), "topics 24 of 24:  T #1 ~1") {
+		t.Fatalf("label glued to the list:\n%s", out.String())
+	}
+}
