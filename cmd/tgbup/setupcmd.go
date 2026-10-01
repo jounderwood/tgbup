@@ -410,7 +410,7 @@ func cmdSetup(ctx context.Context, env Env) int {
 		for _, w := range warnings {
 			fmt.Fprintf(env.Stdout, "current config: %s\n", w)
 		}
-		progress := progressPrinter(env.Stderr, isTerminal(env.Stderr))
+		progress := progressPrinter(env.Stderr, isTerminal(env.Stderr), "counting")
 		d := &setupDialog{
 			ctx: ctx, out: env.Stdout,
 			in:     readLines(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) }),

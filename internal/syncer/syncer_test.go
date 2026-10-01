@@ -456,3 +456,26 @@ func TestReincludedTopicIsBackfilled(t *testing.T) {
 		t.Fatalf("an unchanged run read history backwards again (%d calls)", e.tg.before-before)
 	}
 }
+
+func TestReportsProgressPerPageAndChat(t *testing.T) {
+	e := newEnv(t)
+	a, b := target(1, store.ChatSupergroup), target(2, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 250)
+	e.tg.add(b.Chat.ID, 1, 3)
+	type call struct {
+		chat  int64
+		saved int
+		done  bool
+	}
+	var calls []call
+	e.s.Progress = func(c store.Chat, saved int, done bool) { calls = append(calls, call{c.ID, saved, done}) }
+	e.s.Run(context.Background(), []tgclient.Target{a, b}, dialogsOf(a, b))
+
+	want := []call{
+		{a.Chat.ID, 100, false}, {a.Chat.ID, 200, false}, {a.Chat.ID, 250, false}, {a.Chat.ID, 250, true},
+		{b.Chat.ID, 3, false}, {b.Chat.ID, 3, true},
+	}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("progress = %v, want %v", calls, want)
+	}
+}

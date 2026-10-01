@@ -301,3 +301,15 @@ func TestRelPathIgnoresHostileFileName(t *testing.T) {
 		t.Errorf("unsafe ext accepted: %s", e)
 	}
 }
+
+func TestReportsProgressPerFile(t *testing.T) {
+	e := newEnv(t, 100)
+	var calls [][2]int
+	e.d.Progress = func(done, total int) { calls = append(calls, [2]int{done, total}) }
+	if _, err := e.d.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != [2]int{1, 1} {
+		t.Fatalf("progress calls = %v", calls)
+	}
+}

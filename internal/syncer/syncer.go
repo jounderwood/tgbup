@@ -22,6 +22,9 @@ type Syncer struct {
 	PageSize int
 	Now      func() time.Time
 	Log      *slog.Logger
+	// Progress, if set, gets the messages saved so far in a chat after each
+	// page, and once more with done=true when the chat is finished.
+	Progress func(chat store.Chat, saved int, done bool)
 }
 
 type Report struct {
@@ -57,6 +60,7 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 		}
 		n, err := s.syncChat(ctx, t, deadline)
 		r.NewMessages += n
+		s.progress(t.Chat, n, true)
 		if err == nil {
 			r.Chats++
 			continue
@@ -142,6 +146,7 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 			if err != nil {
 				return total, err
 			}
+			s.progress(t.Chat, total, false)
 			if len(page.Messages) < s.PageSize {
 				break
 			}
@@ -174,6 +179,7 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		if err != nil {
 			return total, err
 		}
+		s.progress(t.Chat, total, false)
 	}
 
 	pinned, err := s.TG.PinnedIDs(ctx, t.Peer)
@@ -187,6 +193,12 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 }
 
 // syncTopics stores the forum's topics and returns their ids.
+func (s *Syncer) progress(c store.Chat, saved int, done bool) {
+	if s.Progress != nil {
+		s.Progress(c, saved, done)
+	}
+}
+
 func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) ([]int, error) {
 	topics, err := s.TG.ForumTopics(ctx, t.Peer)
 	if err != nil {

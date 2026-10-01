@@ -72,7 +72,7 @@ func TestCleanTitle(t *testing.T) {
 
 func TestProgressWithoutTerminal(t *testing.T) {
 	var out bytes.Buffer
-	p := progressPrinter(&out, false)
+	p := progressPrinter(&out, false, "counting")
 	for i := 1; i <= 25; i++ {
 		p(i, 25)
 	}
@@ -122,5 +122,24 @@ func TestReportMarksPreUpgradeGroup(t *testing.T) {
 	printReport(&out, chats)
 	if !strings.Contains(out.String(), "── 2. Family · group · -4510946492 · history before the upgrade, see 1. ─") {
 		t.Fatalf("pre-upgrade group not marked:\n%s", out.String())
+	}
+}
+
+func TestChatProgressWithoutTerminal(t *testing.T) {
+	var out bytes.Buffer
+	p := chatProgress(&out, false)
+	c := store.Chat{Title: "Family"}
+	p(c, 100, false)
+	p(c, 906, true)
+	if got := out.String(); got != "Family: +906 messages\n" {
+		t.Fatalf("progress = %q", got)
+	}
+}
+
+func TestMediaProgressLabel(t *testing.T) {
+	var out bytes.Buffer
+	progressPrinter(&out, false, "media")(10, 25)
+	if got := out.String(); got != "media 10/25\n" {
+		t.Fatalf("progress = %q", got)
 	}
 }

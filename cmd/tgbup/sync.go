@@ -106,7 +106,7 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 		}
 		body := func(ctx context.Context, raw *tg.Client) error {
 			var err error
-			sum, err = runSync(ctx, raw, db, st.cfg, log)
+			sum, err = runSync(ctx, raw, db, st.cfg, log, env.Stderr)
 			return err
 		}
 		if *useTakeout {
@@ -184,7 +184,7 @@ func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 		if err != nil {
 			return err
 		}
-		chats = stats.Collect(ctx, api, statItems(sel.targets), progressPrinter(env.Stderr, isTerminal(env.Stderr)))
+		chats = stats.Collect(ctx, api, statItems(sel.targets), progressPrinter(env.Stderr, isTerminal(env.Stderr), "counting"))
 		printReport(env.Stdout, chats)
 		warnings, notes = sel.warnings, sel.notes
 		return nil
@@ -211,7 +211,9 @@ func dryRunExit(chats []stats.ChatStats, warnings []string) int {
 	return 0
 }
 
-func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger) (syncSummary, error) {
+// runSync reports progress to progressOut: per chat, and per media file.
+func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger, progressOut io.Writer) (syncSummary, error) {
+	tty := isTerminal(progressOut)
 	api := tgclient.NewAPI(raw)
 	sel, err := selectChats(ctx, api, raw, cfg, log)
 	if err != nil {
@@ -230,6 +232,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 
 	s := syncer.Syncer{
 		TG: api, Store: db, SelfID: self, Budget: cfg.Sync.RunTimeBudget.D(), PageSize: 100, Now: time.Now, Log: log,
+		Progress: chatProgress(progressOut, tty),
 	}
 	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings, notes: sel.notes}
 	if sum.sync.AuthErr != nil {
@@ -239,6 +242,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	d := media.Downloader{
 		TG: api, Store: db, ArchiveDir: cfg.ArchiveDir, Peers: peers, Workers: cfg.Media.Workers,
 		MaxFileSize: int64(cfg.Media.MaxFileSize), SkipKinds: cfg.Media.SkipKinds, Log: log,
+		Progress: progressPrinter(progressOut, tty, "media"),
 	}
 	sum.media, err = d.Run(ctx)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
@@ -159,17 +160,33 @@ func groupDigits(n int) string {
 	return string(out)
 }
 
-// progressPrinter reports counting progress: one rewritten line on a
-// terminal, every tenth chat in logs.
-func progressPrinter(w io.Writer, tty bool) func(done, total int) {
+// progressPrinter reports "<label> done/total": one rewritten line on a
+// terminal, every tenth item in logs.
+func progressPrinter(w io.Writer, tty bool, label string) func(done, total int) {
 	return func(done, total int) {
 		switch {
 		case tty && done == total:
 			fmt.Fprint(w, "\r\033[K")
 		case tty:
-			fmt.Fprintf(w, "\rcounting %d/%d…", done, total)
+			fmt.Fprintf(w, "\r\033[K%s %d/%d…", label, done, total)
 		case done%10 == 0 || done == total:
-			fmt.Fprintf(w, "counting %d/%d\n", done, total)
+			fmt.Fprintf(w, "%s %d/%d\n", label, done, total)
+		}
+	}
+}
+
+// chatProgress shows messages saved in the chat being synced on a terminal
+// and one line per finished chat everywhere.
+func chatProgress(w io.Writer, tty bool) func(c store.Chat, saved int, done bool) {
+	return func(c store.Chat, saved int, done bool) {
+		title := cleanTitle(c.Title, titleWidth)
+		switch {
+		case done && tty:
+			fmt.Fprintf(w, "\r\033[K%s: +%s messages\n", title, groupDigits(saved))
+		case done:
+			fmt.Fprintf(w, "%s: +%s messages\n", title, groupDigits(saved))
+		case tty:
+			fmt.Fprintf(w, "\r\033[K%s: %s messages…", title, groupDigits(saved))
 		}
 	}
 }

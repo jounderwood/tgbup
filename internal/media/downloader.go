@@ -35,6 +35,9 @@ type Downloader struct {
 	MaxFileSize int64
 	SkipKinds   []string
 	Log         *slog.Logger
+	// Progress, if set, is called after each file with how many of the
+	// pending files have been handled.
+	Progress func(done, total int)
 }
 
 type Report struct {
@@ -69,9 +72,10 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 	defer cancel(nil)
 
 	var (
-		mu sync.Mutex
-		r  Report
-		wg sync.WaitGroup
+		mu      sync.Mutex
+		r       Report
+		wg      sync.WaitGroup
+		handled int
 	)
 	ch := make(chan store.MediaJob)
 	for range max(d.Workers, 1) {
@@ -111,6 +115,10 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 				default:
 					r.Failed++
 					r.Errors = append(r.Errors, fmt.Errorf("media %s: %w", j.Key, err))
+				}
+				handled++
+				if d.Progress != nil {
+					d.Progress(handled, len(jobs))
 				}
 				mu.Unlock()
 			}

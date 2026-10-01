@@ -79,4 +79,6 @@ type framed struct{}
 
 func (framed) Error() string { return "callback: boom" }
 
-func (framed) Format(s fmt.State, verb rune) { fmt.Fprint(s, "callback:\n    telegram/connect.go:224\n  - boom") }
+func (framed) Format(s fmt.State, verb rune) {
+	fmt.Fprint(s, "callback:\n    telegram/connect.go:224\n  - boom")
+}
