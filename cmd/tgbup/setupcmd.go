@@ -36,6 +36,8 @@ type setupDialog struct {
 	cfgPath  string
 	rowStats func([]tgclient.Dialog) map[int64]rowInfo
 	details  func([]stats.Item) []stats.ChatStats
+	// preview renders the config file that would be written.
+	preview func(config.Selected) (string, error)
 
 	rows map[int64]rowInfo
 	// last holds the stats shown at confirmation; their topic titles go into config comments.
@@ -333,6 +335,13 @@ func (s *setupDialog) confirm() (save, ok bool) {
 	s.last = s.details(items)
 	fmt.Fprintln(s.out)
 	printReport(s.out, s.last)
+	text, err := s.preview(s.selected())
+	if err != nil {
+		fmt.Fprintf(s.out, "cannot write the config: %v\n", err)
+		return false, true
+	}
+	rule := strings.Repeat("─", headerWidth)
+	fmt.Fprintf(s.out, "\nConfig to write to %s:\n%s\n%s%s\n", s.cfgPath, rule, text, rule)
 	ans, ok := s.ask(fmt.Sprintf("Write to %s (%d chats)? [y/N]: ", s.cfgPath, len(items)))
 	if !ok {
 		return false, false
@@ -408,6 +417,10 @@ func cmdSetup(ctx context.Context, env Env) int {
 			groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: state, cfgPath: st.paths.Config,
 			rowStats: func(ds []tgclient.Dialog) map[int64]rowInfo { return listRowStats(ctx, api, ds, progress) },
 			details:  func(items []stats.Item) []stats.ChatStats { return stats.Collect(ctx, api, items, progress) },
+			preview: func(sel config.Selected) (string, error) {
+				b, err := config.RenderTargets(st.paths.Config, sel)
+				return string(b), err
+			},
 		}
 		if !d.run() {
 			fmt.Fprintln(env.Stdout, "config not changed")

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/selector"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
@@ -24,8 +25,9 @@ var (
 )
 
 type fakeSetup struct {
-	asked    []int64 // chat ids whose row stats were requested
-	noTopics bool
+	asked      []int64 // chat ids whose row stats were requested
+	noTopics   bool
+	previewErr error
 }
 
 func (f *fakeSetup) rowStats(ds []tgclient.Dialog) map[int64]rowInfo {
@@ -67,6 +69,12 @@ func newDialogOver(input string, st *selector.State, dialogs []tgclient.Dialog, 
 		ctx: context.Background(), in: readLines(strings.NewReader(input), nil), out: &out,
 		groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: st, cfgPath: "/c.yaml",
 		rowStats: f.rowStats, details: f.details,
+		preview: func(sel config.Selected) (string, error) {
+			if f.previewErr != nil {
+				return "", f.previewErr
+			}
+			return fmt.Sprintf("targets:\n  include: %v\n", sel.Chats), nil
+		},
 	}, &out, f
 }
 
@@ -280,5 +288,30 @@ func TestSetupSearchIsNotNormalized(t *testing.T) {
 	wantOutput(t, out.String(), "Search: в")
 	if !d.st.Chats[v.ID] {
 		t.Fatalf("search for «в» did not find the chat:\n%s", out.String())
+	}
+}
+
+func TestSetupShowsConfigBeforeWriting(t *testing.T) {
+	d, out := newDialog("2\n2\n\nd\ny\n", state())
+	if !d.run() {
+		t.Fatalf("not saved:\n%s", out)
+	}
+	got := out.String()
+	preview := strings.Index(got, "targets:\n  include: [10]\n")
+	question := strings.Index(got, "Write to /c.yaml")
+	if !strings.Contains(got, "Config to write to /c.yaml:") || preview < 0 || preview > question {
+		t.Fatalf("config not shown before the question:\n%s", got)
+	}
+}
+
+func TestSetupDoesNotOfferAnInvalidConfig(t *testing.T) {
+	d, out, f := newDialogOver("1\n1\n\nd\nq\n", state(), []tgclient.Dialog{sMama}, nil)
+	f.previewErr = errors.New("config: media.workers must be 1..16")
+	if d.run() {
+		t.Fatal("saved a config that cannot be written")
+	}
+	wantOutput(t, out.String(), "cannot write the config: config: media.workers")
+	if strings.Contains(out.String(), "Write to") {
+		t.Fatalf("asked to write an invalid config:\n%s", out.String())
 	}
 }

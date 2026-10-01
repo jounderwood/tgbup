@@ -88,6 +88,10 @@ func load(path, home string, requireTargets bool) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
+	return parse(path, data, home, requireTargets)
+}
+
+func parse(path string, data []byte, home string, requireTargets bool) (Config, error) {
 	cfg := Default()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)

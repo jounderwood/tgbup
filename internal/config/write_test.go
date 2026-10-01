@@ -134,7 +134,7 @@ func TestWriteTargetsExcludeTopics(t *testing.T) {
 	if err := config.WriteTargets(path, config.Selected{Chats: []int64{-1001}}); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "exclude_topics") {
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "\n  exclude_topics:") {
 		t.Errorf("empty exclusions left the key behind:\n%s", raw)
 	}
 }
@@ -155,5 +155,46 @@ func TestWriteTargetsKeepsSymlink(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(real); !strings.Contains(string(raw), "- 5") {
 		t.Errorf("symlink target not updated:\n%s", raw)
+	}
+}
+
+func TestWriteTargetsAddsOptionsReferenceOnce(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yaml", "archive_dir: /a # mine\n", 0o600)
+	for range 2 {
+		if err := config.WriteTargets(path, config.Selected{Chats: []int64{5}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := os.ReadFile(path)
+	s := string(raw)
+	if n := strings.Count(s, config.OptionsMarker); n != 1 {
+		t.Fatalf("options reference appears %d times:\n%s", n, s)
+	}
+	for _, want := range []string{"# mine", "#   max_file_size: 0", "#   skip_kinds: []", "#   workers: 4",
+		"#   run_time_budget: 2h ", "#   max_flood_wait: 5m ", "#   exclude_topics:", "not used yet"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("config lacks %q:\n%s", want, s)
+		}
+	}
+	if _, err := config.Load(path, "/h"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenderTargetsMatchesWhatIsWritten(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yaml", "archive_dir: /a\n", 0o600)
+	sel := config.Selected{Chats: []int64{5}, ChatTitles: map[int64]string{5: "Mom"}}
+	preview, err := config.RenderTargets(path, sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "archive_dir: /a\n" {
+		t.Fatal("rendering changed the file")
+	}
+	if err := config.WriteTargets(path, sel); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != string(preview) {
+		t.Fatalf("written config differs from the preview:\n%s\n---\n%s", raw, preview)
 	}
 }

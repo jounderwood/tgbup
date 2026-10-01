@@ -27,29 +27,40 @@ type Selected struct {
 // chat ids and topic exclusions (titles become comments) and leaves every
 // other section and its comments as they are.
 func WriteTargets(path string, sel Selected) error {
-	if len(sel.Chats) == 0 {
-		return errors.New("no chats selected")
+	data, err := RenderTargets(path, sel)
+	if err != nil {
+		return err
 	}
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
+	}
+	return replaceFile(path, data)
+}
+
+// RenderTargets returns the config WriteTargets would write, already
+// validated, without touching the file. The first write also appends a
+// commented reference of every option.
+func RenderTargets(path string, sel Selected) ([]byte, error) {
+	if len(sel.Chats) == 0 {
+		return nil, errors.New("no chats selected")
 	}
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		data = []byte("archive_dir: ~/TelegramArchive\n")
 	case err != nil:
-		return err
+		return nil, err
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if len(doc.Content) == 0 {
 		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	}
 	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return fmt.Errorf("%s: top level is not a mapping", path)
+		return nil, fmt.Errorf("%s: top level is not a mapping", path)
 	}
 	targets := targetsNode(sel)
 	replaced := false
@@ -67,12 +78,18 @@ func WriteTargets(path string, sel Selected) error {
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	return replaceFile(path, buf.Bytes())
+	if !bytes.Contains(buf.Bytes(), []byte(OptionsMarker)) {
+		buf.WriteString("\n" + optionsReference())
+	}
+	if _, err := parse(path, buf.Bytes(), "/", true); err != nil {
+		return nil, fmt.Errorf("refusing to write an invalid config: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func targetsNode(sel Selected) *yaml.Node {
@@ -132,8 +149,8 @@ func commentText(title string) string {
 	return strings.Join(strings.Fields(title), " ")
 }
 
-// replaceFile validates the new config from a temp file next to path and only
-// then renames it over path, so a bad or half-written config never replaces a good one.
+// replaceFile writes a temp file next to path and renames it over path, so a
+// half-written config never replaces a good one.
 func replaceFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -158,9 +175,6 @@ func replaceFile(path string, data []byte) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
-	}
-	if _, err := Load(tmp.Name(), "/"); err != nil {
-		return fmt.Errorf("refusing to write an invalid config: %w", err)
 	}
 	return os.Rename(tmp.Name(), path)
 }
