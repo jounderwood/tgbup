@@ -47,6 +47,42 @@
 {{- if .HTML}}
 <div class="text">{{.HTML}}</div>
 {{- end}}
+{{- with .Meta}}
+{{- with .Link}}
+{{if .Href}}<a class="card link" href="{{.Href}}" rel="noopener">{{else}}<div class="card link">{{end}}
+{{- if .Photo}}<img loading="lazy" src="{{.Photo}}" alt="">{{end}}
+{{- with .Site}}<span class="site">{{.}}</span>{{end}}
+{{- with .Title}}<b>{{.}}</b>{{end}}
+{{- with .Description}}<span class="desc">{{.}}</span>{{end}}
+{{- if .Href}}</a>{{else}}</div>{{end}}
+{{- end}}
+{{- with .Place}}
+<div class="card place">📍 {{with .Name}}{{.}} · {{end}}<a href="{{.MapURL}}" rel="noopener">{{.Coords}}</a>{{if .Live}} · live location (last point){{end}}</div>
+{{- end}}
+{{- with .Contact}}
+<div class="card contact">👤 {{.Name}}{{if .Tel}} · <a href="{{.Tel}}">{{.Phone}}</a>{{else if .Phone}} · {{.Phone}}{{end}}</div>
+{{- end}}
+{{- with .Poll}}
+<div class="card poll"><b>📊 {{.Question}}</b>
+{{- range .Answers}}
+<div class="answer"><span class="bar" style="width: {{.Percent}}%"></span>{{.Text}} — {{.Percent}}% ({{.Voters}}){{if .Correct}} ✓{{end}}</div>
+{{- end}}
+<div class="meta">{{.Total}} votes{{with .Flags}} · {{.}}{{end}}</div></div>
+{{- end}}
+{{- with .Todo}}
+<div class="card todo"><b>{{.Title}}</b><ul>
+{{- range .Items}}
+<li>{{if .Done}}☑{{else}}☐{{end}} {{.Title}}{{with .By}} <span class="by">— {{.}}</span>{{end}}</li>
+{{- end}}
+</ul></div>
+{{- end}}
+{{- with .Dice}}
+<div class="card">{{.}}</div>
+{{- end}}
+{{- with .Other}}
+<div class="missing">{{.}}</div>
+{{- end}}
+{{- end}}
 {{- with .Reactions}}
 <div class="reactions">{{.}}</div>
 {{- end}}

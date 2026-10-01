@@ -123,3 +123,14 @@ func TestSearchTexts(t *testing.T) {
 		t.Fatalf("texts = %+v", got)
 	}
 }
+
+func TestNames(t *testing.T) {
+	s := renderFixture(t)
+	got, err := s.Names(context.Background(), []int64{5, -1000000000008, -1001, 404})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[5] != "Ann Lee" || got[-1000000000008] != "News" || got[-1001] != "Family" || got[404] != "" {
+		t.Fatalf("names = %v", got)
+	}
+}

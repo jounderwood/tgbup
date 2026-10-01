@@ -115,3 +115,84 @@ func TestMonthMarkdown(t *testing.T) {
 		t.Log(got)
 	}
 }
+
+func metaPage(t *testing.T) Page {
+	t.Helper()
+	msgs := []store.RenderMessage{
+		{Message: store.Message{ID: 1, Date: at("2026-03-01", "09:00"), Text: "look https://example.com/a",
+			MetaJSON: `{"webpage":{"url":"https://example.com/a","site_name":"Example","title":"A <title>","description":"Some text","photo_key":"photo:7"}}`},
+			SenderName: "Ann", Media: &store.RenderMedia{Key: "photo:7", Kind: "photo", Status: "done", LocalPath: "media/photo/7.jpg"}},
+		{Message: store.Message{ID: 2, Date: at("2026-03-01", "09:01"),
+			MetaJSON: `{"geo":{"lat":44.8125,"long":20.4612},"venue":{"title":"Kafana","address":"Knez Mihailova 1"}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 3, Date: at("2026-03-01", "09:02"), MetaJSON: `{"geo":{"lat":1,"long":2},"live":{"period":900}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 4, Date: at("2026-03-01", "09:03"),
+			MetaJSON: `{"contact":{"first_name":"Bob","last_name":"Lee","phone":"+381601234567"}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 5, Date: at("2026-03-01", "09:04"),
+			MetaJSON: `{"poll":{"question":"Dacha?","answers":[{"text":"Yes","voters":3},{"text":"No","voters":1,"correct":true}],"total_voters":4,"closed":true,"quiz":true}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 6, Date: at("2026-03-01", "09:05"),
+			MetaJSON: `{"todo":{"title":"Packing","items":[{"id":1,"title":"Passports","done_by":7,"done_at":1772355600},{"id":2,"title":"Chargers"}]}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 7, Date: at("2026-03-01", "09:06"), MetaJSON: `{"dice":{"emoji":"🎲","value":4}}`}, SenderName: "Ann"},
+		{Message: store.Message{ID: 8, Date: at("2026-03-01", "09:07"), MetaJSON: `{"other":{"type":"messageMediaStory"}}`}, SenderName: "Ann"},
+	}
+	return buildPage(pageInput{Key: store.PageKey{ChatID: 10, Month: "2026-03"}, Dir: "Mom", Messages: msgs,
+		Names: map[int64]string{7: "Bob"}, Loc: time.UTC, Crumbs: []string{"Mom"}})
+}
+
+func TestMetaHTML(t *testing.T) {
+	var b bytes.Buffer
+	if err := writeMonthHTML(&b, metaPage(t)); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	for _, want := range []string{
+		`<a class="card link" href="https://example.com/a" rel="noopener">`, `src="../../media/photo/7.jpg"`, "Example", "A &lt;title&gt;", "Some text",
+		"📍 Kafana, Knez Mihailova 1", `href="https://www.google.com/maps/search/?api=1&amp;query=44.8125,20.4612"`,
+		"live location (last point)",
+		"👤 Bob Lee", `href="tel:&#43;381601234567"`,
+		"📊 Dacha?", "Yes — 75% (3)", "No — 25% (1) ✓", "4 votes · quiz · closed",
+		"☑ Passports", "Bob · 2026-03-01", "☐ Chargers",
+		"🎲 4", "messageMediaStory",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	// The preview's picture belongs to the card, not shown again as a bare photo.
+	if n := strings.Count(got, "media/photo/7.jpg"); n != 1 {
+		t.Errorf("preview picture shown %d times", n)
+	}
+	if t.Failed() {
+		t.Log(got)
+	}
+}
+
+func TestMetaMarkdown(t *testing.T) {
+	var b bytes.Buffer
+	if err := writeMonthMD(&b, metaPage(t)); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	for _, want := range []string{
+		"> [**A \\<title\\>**](<https://example.com/a>) · Example", "> Some text", "> ![](../../media/photo/7.jpg)",
+		"📍 Kafana, Knez Mihailova 1 — [44.8125, 20.4612](<https://www.google.com/maps/search/?api=1&query=44.8125,20.4612>)",
+		"👤 Bob Lee · +381601234567",
+		"**📊 Dacha?**", "- No — 25% (1) ✓", "_4 votes · quiz · closed_",
+		"- [x] Passports — Bob · 2026-03-01", "- [ ] Chargers",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown lacks %q", want)
+		}
+	}
+	if t.Failed() {
+		t.Log(got)
+	}
+}
+
+func TestMetaSearchText(t *testing.T) {
+	got := metaText(`{"venue":{"title":"Kafana","address":"Knez Mihailova 1"},"poll":{"question":"Dacha?","answers":[{"text":"Yes"}]},"todo":{"title":"Packing","items":[{"title":"Passports"}]},"webpage":{"title":"A","description":"B"}}`)
+	for _, want := range []string{"Kafana", "Knez Mihailova 1", "Dacha?", "Yes", "Packing", "Passports", "A", "B"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("search text %q lacks %q", got, want)
+		}
+	}
+}

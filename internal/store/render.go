@@ -299,3 +299,24 @@ ORDER BY msg.date, msg.id`, chatID)
 	}
 	return out, rows.Err()
 }
+
+// Names resolves user and chat ids to display names; unknown ids are left out.
+func (s *Store) Names(ctx context.Context, ids []int64) (map[int64]string, error) {
+	out := map[int64]string{}
+	for _, id := range ids {
+		if _, done := out[id]; done {
+			continue
+		}
+		var name string
+		err := s.db.QueryRowContext(ctx, `
+SELECT `+senderName+`
+FROM (SELECT ? AS from_id) msg`+senderJoins, id).Scan(&name)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			out[id] = name
+		}
+	}
+	return out, nil
+}

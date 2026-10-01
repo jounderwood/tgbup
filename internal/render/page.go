@@ -34,12 +34,12 @@ type PageMessage struct {
 	Sender    string
 	HTML      template.HTML
 	Markdown  string
-	Plain     string
 	Edited    bool
 	Pinned    bool
 	Reply     *Reply
 	Forward   string
 	Media     *PageMedia
+	Meta      *PageMeta
 	Service   string
 	Reactions string
 }
@@ -73,7 +73,9 @@ type pageInput struct {
 	// DirOf gives the folder of another page of the same chat.
 	DirOf func(chat int64, topic int) string
 	// InScope reports whether a page exists in this render (an export may leave pages out).
-	InScope    func(store.PageKey) bool
+	InScope func(store.PageKey) bool
+	// Names resolves ids met in meta (who completed a checklist item).
+	Names      map[int64]string
 	Loc        *time.Location
 	Crumbs     []string
 	Prev, Next string
@@ -98,7 +100,6 @@ func buildPage(in pageInput) Page {
 			Sender:   orDefault(m.SenderName, "Deleted account"),
 			HTML:     HTMLText(m.Text, m.EntitiesJSON),
 			Markdown: MarkdownText(m.Text, m.EntitiesJSON),
-			Plain:    m.Text,
 			Edited:   m.EditDate != 0,
 			Pinned:   m.Pinned,
 			Forward:  forward(m, in.Loc),
@@ -110,9 +111,14 @@ func buildPage(in pageInput) Page {
 		}
 		if m.Media != nil {
 			pm.Media = media(m.Media, p.Archive)
-			if pm.Plain == "" {
-				pm.Plain = pm.Media.Name
+		}
+		if meta, ok := parseMeta(m.MetaJSON); ok {
+			photo := ""
+			// A link preview's picture is shown in its card, not as a separate photo.
+			if pm.Media != nil && meta.WebPage != nil && meta.WebPage.PhotoKey == m.Media.Key {
+				photo, pm.Media = pm.Media.Href, nil
 			}
+			pm.Meta = buildMeta(meta, photo, in.Names, in.Loc)
 		}
 		day := t.Format("2006-01-02")
 		if len(p.Days) == 0 || p.Days[len(p.Days)-1].Date != day {

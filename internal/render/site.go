@@ -150,9 +150,17 @@ func renderMonth(ctx context.Context, db *store.Store, l *layout, opts Options, 
 	if err != nil {
 		return 0, nil, err
 	}
+	var userIDs []int64
+	for _, msg := range msgs {
+		userIDs = append(userIDs, todoUsers(msg.MetaJSON)...)
+	}
+	names, err := db.Names(ctx, userIDs)
+	if err != nil {
+		return 0, nil, err
+	}
 	dir := l.dir(m.ChatID, m.TopicID)
 	page := buildPage(pageInput{
-		Key: m.Page(), Dir: dir, Messages: msgs, Refs: refs, DirOf: l.dir, InScope: inScope,
+		Key: m.Page(), Dir: dir, Messages: msgs, Refs: refs, DirOf: l.dir, InScope: inScope, Names: names,
 		Loc: opts.Loc, Crumbs: l.crumbs(m.ChatID, m.TopicID), Prev: prev, Next: next,
 	})
 	if err := writeFile(filepath.Join(opts.OutDir, "html", filepath.FromSlash(dir), m.Month+".html"), func(w io.Writer) error {
@@ -425,7 +433,8 @@ func writeSearch(ctx context.Context, db *store.Store, l *layout, opts Options, 
 			continue
 		}
 		page := escapePath(l.dir(chat, t.TopicID)) + "/" + k.Month + ".html#m" + strconv.Itoa(t.ID)
-		entries = append(entries, [4]any{t.ID, when.Format("2006-01-02 15:04"), page, t.Text})
+		text := strings.TrimSpace(t.Text + " " + metaText(t.MetaJSON))
+		entries = append(entries, [4]any{t.ID, when.Format("2006-01-02 15:04"), page, text})
 	}
 	crumbs := l.crumbs(chat, 0)
 	if l.chats[chat].Type == store.ChatForum {

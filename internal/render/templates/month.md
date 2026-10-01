@@ -26,6 +26,31 @@ _{{md .Service}}_ · {{md .Sender}} · {{.Time}} ^m{{.ID}}
 {{- end}}
 {{- with .Markdown}}{{.}}
 {{end}}
+{{- with .Meta}}
+{{- with .Link}}
+> {{if .Href}}[**{{md .Title}}**](<{{.Href}}>){{else}}**{{md .Title}}**{{end}}{{with .Site}} · {{md .}}{{end}}
+{{- with .Description}}
+> {{md .}}{{end}}
+{{- with .Photo}}
+> ![]({{.}}){{end}}
+{{end}}
+{{- with .Place}}📍 {{with .Name}}{{md .}} — {{end}}[{{.Coords}}](<{{.MapURL}}>){{if .Live}} · live location (last point){{end}}
+{{end}}
+{{- with .Contact}}👤 {{md .Name}}{{with .Phone}} · {{.}}{{end}}
+{{end}}
+{{- with .Poll}}**📊 {{md .Question}}**
+{{range .Answers}}- {{md .Text}} — {{.Percent}}% ({{.Voters}}){{if .Correct}} ✓{{end}}
+{{end}}_{{.Total}} votes{{with .Flags}} · {{.}}{{end}}_
+{{end}}
+{{- with .Todo}}**☑ {{md .Title}}**
+{{range .Items}}- [{{if .Done}}x{{else}} {{end}}] {{md .Title}}{{with .By}} — {{md .}}{{end}}
+{{end}}
+{{- end}}
+{{- with .Dice}}{{.}}
+{{end}}
+{{- with .Other}}_{{md .}}_
+{{end}}
+{{- end}}
 {{- with .Reactions}}{{.}}
 {{end}}
 {{- end}}

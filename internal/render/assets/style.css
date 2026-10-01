@@ -43,3 +43,13 @@ ul.months-list { columns: 4 120px; list-style: none; padding: 0; }
 #results .hit { padding: 6px 0; border-bottom: 1px solid var(--line); }
 #results .meta { color: var(--muted); font-size: 12px; }
 #results mark { background: #ffe58a; color: #000; }
+.card { display: block; border-left: 3px solid var(--accent); background: var(--bg); border-radius: 8px; padding: 6px 10px; margin: 6px 0; color: var(--fg); }
+a.card:hover { text-decoration: none; background: var(--line); }
+.card.link img { max-width: 100%; max-height: 240px; border-radius: 6px; display: block; margin-bottom: 4px; }
+.card.link .site { display: block; color: var(--accent); font-size: 13px; font-weight: 600; }
+.card.link b { display: block; }
+.card.link .desc { display: block; color: var(--muted); font-size: 13px; white-space: pre-wrap; }
+.card.poll .answer { position: relative; padding: 2px 6px; margin: 3px 0; font-size: 14px; z-index: 0; }
+.card.poll .bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--card); border-radius: 4px; z-index: -1; }
+.card.poll .meta, .card.todo .by { color: var(--muted); font-size: 12px; }
+.card.todo ul { list-style: none; margin: 4px 0 0; padding: 0; }
