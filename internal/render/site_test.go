@@ -273,3 +273,19 @@ func TestRenderMediaIndex(t *testing.T) {
 		t.Error("chat index does not link its media")
 	}
 }
+
+// A new tgbup with changed templates redraws pages whose messages did not change.
+func TestTemplateChangeRedraws(t *testing.T) {
+	db, dir := siteFixture(t)
+	ctx := context.Background()
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC}
+	if _, err := Render(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	saved := templatesHash
+	templatesHash = "changed"
+	defer func() { templatesHash = saved }()
+	if res, _ := Render(ctx, db, opts); res.Pages != 4 {
+		t.Fatalf("changed templates redrew %d pages, want 4", res.Pages)
+	}
+}

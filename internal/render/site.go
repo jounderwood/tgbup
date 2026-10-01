@@ -112,8 +112,8 @@ func Render(ctx context.Context, db *store.Store, opts Options) (Result, error) 
 		}
 		dir := l.dir(p.ChatID, p.TopicID)
 		// What a page shows also depends on where it lives, how many pages its
-		// thread has (the pager) and the time zone, so those redraw it too.
-		fp := strings.Join([]string{p.Fingerprint, dir, strconv.Itoa(p.Total), zoneAt(p.First, opts.Loc)}, "|")
+		// thread has (the pager), the time zone and the templates, so those redraw it too.
+		fp := strings.Join([]string{p.Fingerprint, dir, strconv.Itoa(p.Total), zoneAt(p.First, opts.Loc), templatesHash}, "|")
 		if done[p.PageKey] == fp {
 			res.Skipped++
 			continue
