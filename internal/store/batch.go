@@ -45,12 +45,12 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, username = excluded.userna
 	for _, m := range b.Messages {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO messages (chat_id, id, topic_id, date, from_id, text, entities_json, reply_to_id, fwd_from_json,
-  grouped_id, reactions_json, service_action_json, pinned, edit_date, raw, tl_layer)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  grouped_id, reactions_json, service_action_json, pinned, edit_date, raw, tl_layer, meta_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, id) DO NOTHING`,
 			m.ChatID, m.ID, nullInt(int64(m.TopicID)), m.Date, nullInt(m.FromID), m.Text, nullStr(m.EntitiesJSON),
 			nullInt(int64(m.ReplyToID)), nullStr(m.FwdFromJSON), nullInt(m.GroupedID), nullStr(m.ReactionsJSON),
-			nullStr(m.ServiceActionJSON), m.Pinned, nullInt(m.EditDate), m.Raw, m.TLLayer); err != nil {
+			nullStr(m.ServiceActionJSON), m.Pinned, nullInt(m.EditDate), m.Raw, m.TLLayer, nullStr(m.MetaJSON)); err != nil {
 			return fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
 		}
 		for _, k := range m.MediaKeys {

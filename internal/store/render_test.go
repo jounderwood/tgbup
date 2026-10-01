@@ -27,7 +27,8 @@ func renderFixture(t *testing.T) *Store {
 		Media:  []Media{{Key: "document:9", Kind: "document", FileName: "lease.pdf", Mime: "application/pdf", Size: 2048}},
 		Messages: []Message{
 			{ChatID: forum, ID: 10, TopicID: 1, Date: feb, FromID: 5, Text: "hello", Raw: []byte{1}},
-			{ChatID: forum, ID: 11, TopicID: 160, Date: mar, FromID: 5, Text: "rent", Raw: []byte{1}, MediaKeys: []string{"document:9"}},
+			{ChatID: forum, ID: 11, TopicID: 160, Date: mar, FromID: 5, Text: "rent", Raw: []byte{1}, MediaKeys: []string{"document:9"},
+				MetaJSON: `{"geo":{"lat":1,"long":2}}`},
 			{ChatID: forum, ID: 12, TopicID: 160, Date: mar + 60, FromID: -1000000000008, Text: "news", ReplyToID: 10, Raw: []byte{1},
 				FwdFromJSON: `{"from_id":5,"date":1}`},
 		},
@@ -83,7 +84,10 @@ func TestMonthMessagesAndRefs(t *testing.T) {
 	if len(msgs) != 2 || msgs[0].ID != 11 || msgs[0].SenderName != "Ann Lee" || msgs[1].SenderName != "News" || msgs[1].FwdName != "Ann Lee" {
 		t.Fatalf("messages = %+v", msgs)
 	}
-	if m := msgs[0].Media; m == nil || m.FileName != "lease.pdf" || m.Status != "pending" || m.Size != 2048 {
+	if msgs[0].MetaJSON != `{"geo":{"lat":1,"long":2}}` {
+		t.Errorf("meta = %q", msgs[0].MetaJSON)
+	}
+	if m := msgs[0].Media; m == nil || m.Key != "document:9" || m.FileName != "lease.pdf" || m.Status != "pending" || m.Size != 2048 {
 		t.Fatalf("media = %+v", msgs[0].Media)
 	}
 	refs, err := s.MessageRefs(ctx, -1001, []int{10, 99}, time.UTC)
@@ -115,7 +119,7 @@ func TestSearchTexts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 || got[0].Text != "hello" || got[1].Text != "rent lease.pdf" || got[1].TopicID != 160 {
+	if len(got) != 3 || got[0].Text != "hello" || got[1].Text != "rent lease.pdf" || got[1].TopicID != 160 || got[1].MetaJSON == "" {
 		t.Fatalf("texts = %+v", got)
 	}
 }

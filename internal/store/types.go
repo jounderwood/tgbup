@@ -54,13 +54,15 @@ type Message struct {
 	FwdFromJSON       string
 	ReactionsJSON     string
 	ServiceActionJSON string
-	ReplyToID         int
-	GroupedID         int64
-	Pinned            bool
-	EditDate          int64
-	Raw               []byte
-	TLLayer           int
-	MediaKeys         []string
+	// MetaJSON holds non-file media (link preview, location, poll, …); see convert.Meta.
+	MetaJSON  string
+	ReplyToID int
+	GroupedID int64
+	Pinned    bool
+	EditDate  int64
+	Raw       []byte
+	TLLayer   int
+	MediaKeys []string
 }
 
 type Media struct {

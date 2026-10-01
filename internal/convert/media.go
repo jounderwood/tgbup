@@ -24,7 +24,22 @@ func ExtractMedia(m *tg.Message) (store.Media, bool) {
 		if !ok {
 			return store.Media{}, false
 		}
-		return store.Media{Key: fmt.Sprintf("photo:%d", p.ID), Kind: "photo", Mime: "image/jpeg", Size: size}, true
+		return store.Media{Key: photoKey(p), Kind: "photo", Mime: "image/jpeg", Size: size}, true
+	case *tg.MessageMediaWebPage:
+		// A link preview's picture is kept like any photo.
+		w, ok := v.Webpage.(*tg.WebPage)
+		if !ok {
+			return store.Media{}, false
+		}
+		p, ok := webPagePhoto(w)
+		if !ok {
+			return store.Media{}, false
+		}
+		_, size, ok := largestPhotoSize(p)
+		if !ok {
+			return store.Media{}, false
+		}
+		return store.Media{Key: photoKey(p), Kind: "photo", Mime: "image/jpeg", Size: size}, true
 	case *tg.MessageMediaDocument:
 		d, ok := documentOf(v)
 		if !ok {
@@ -56,11 +71,17 @@ func FileLocation(mc tg.MessageClass) (tg.InputFileLocationClass, error) {
 		if !ok {
 			return nil, errors.New("photo is empty")
 		}
-		thumb, _, ok := largestPhotoSize(p)
+		return photoLocation(p)
+	case *tg.MessageMediaWebPage:
+		w, ok := v.Webpage.(*tg.WebPage)
 		if !ok {
-			return nil, errors.New("photo has no downloadable size")
+			return nil, errors.New("link preview is not loaded")
 		}
-		return &tg.InputPhotoFileLocation{ID: p.ID, AccessHash: p.AccessHash, FileReference: p.FileReference, ThumbSize: thumb}, nil
+		p, ok := webPagePhoto(w)
+		if !ok {
+			return nil, errors.New("link preview has no picture")
+		}
+		return photoLocation(p)
 	case *tg.MessageMediaDocument:
 		d, ok := documentOf(v)
 		if !ok {
@@ -70,6 +91,16 @@ func FileLocation(mc tg.MessageClass) (tg.InputFileLocationClass, error) {
 	}
 	return nil, fmt.Errorf("media %T has no file", media)
 }
+
+func photoLocation(p *tg.Photo) (tg.InputFileLocationClass, error) {
+	thumb, _, ok := largestPhotoSize(p)
+	if !ok {
+		return nil, errors.New("photo has no downloadable size")
+	}
+	return &tg.InputPhotoFileLocation{ID: p.ID, AccessHash: p.AccessHash, FileReference: p.FileReference, ThumbSize: thumb}, nil
+}
+
+func photoKey(p *tg.Photo) string { return fmt.Sprintf("photo:%d", p.ID) }
 
 func photoOf(v *tg.MessageMediaPhoto) (*tg.Photo, bool) {
 	pc, ok := v.GetPhoto()

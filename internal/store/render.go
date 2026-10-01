@@ -32,7 +32,7 @@ func (m MonthKey) Page() PageKey { return PageKey{m.ChatID, m.TopicID, m.Month} 
 func (s *Store) Months(ctx context.Context, chatIDs []int64, loc *time.Location) ([]MonthKey, error) {
 	q := `
 SELECT msg.chat_id, COALESCE(msg.topic_id, 0), msg.id, msg.date, COALESCE(msg.edit_date, 0), msg.pinned,
-       length(COALESCE(msg.reactions_json, '')), COALESCE(m.status, ''), COALESCE(m.local_path, '')
+       length(COALESCE(msg.reactions_json, '')) + length(COALESCE(msg.meta_json, '')), COALESCE(m.status, ''), COALESCE(m.local_path, '')
 FROM messages msg
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key`
@@ -153,6 +153,7 @@ func (s *Store) RenderChats(ctx context.Context) ([]RenderChat, error) {
 }
 
 type RenderMedia struct {
+	Key       string
 	Kind      string
 	FileName  string
 	Mime      string
@@ -188,9 +189,9 @@ func (s *Store) MonthMessages(ctx context.Context, chatID int64, topicID int, mo
 SELECT msg.chat_id, msg.id, COALESCE(msg.topic_id, 0), msg.date, COALESCE(msg.from_id, 0), msg.text,
        COALESCE(msg.entities_json, ''), COALESCE(msg.reply_to_id, 0), COALESCE(msg.fwd_from_json, ''),
        COALESCE(msg.reactions_json, ''), COALESCE(msg.service_action_json, ''), msg.pinned, COALESCE(msg.edit_date, 0),
-       `+senderName+`,
+       COALESCE(msg.meta_json, ''), `+senderName+`,
        COALESCE(NULLIF(trim(COALESCE(fu.first_name, '') || ' ' || COALESCE(fu.last_name, '')), ''), fp.title, fc.title, ''),
-       m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
+       m.key, m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
 FROM messages msg`+senderJoins+`
 LEFT JOIN users fu ON fu.id = json_extract(msg.fwd_from_json, '$.from_id')
 LEFT JOIN peers fp ON fp.id = json_extract(msg.fwd_from_json, '$.from_id')
@@ -206,17 +207,17 @@ ORDER BY msg.date, msg.id`, chatID, topicID, start.Unix(), start.AddDate(0, 1, 0
 	var out []RenderMessage
 	for rows.Next() {
 		var (
-			m                                   RenderMessage
-			kind, name, mime, status, path, mer sql.NullString
-			size                                sql.NullInt64
+			m                                        RenderMessage
+			key, kind, name, mime, status, path, mer sql.NullString
+			size                                     sql.NullInt64
 		)
 		if err := rows.Scan(&m.ChatID, &m.ID, &m.TopicID, &m.Date, &m.FromID, &m.Text, &m.EntitiesJSON, &m.ReplyToID,
-			&m.FwdFromJSON, &m.ReactionsJSON, &m.ServiceActionJSON, &m.Pinned, &m.EditDate, &m.SenderName, &m.FwdName,
-			&kind, &name, &mime, &size, &status, &path, &mer); err != nil {
+			&m.FwdFromJSON, &m.ReactionsJSON, &m.ServiceActionJSON, &m.Pinned, &m.EditDate, &m.MetaJSON, &m.SenderName, &m.FwdName,
+			&key, &kind, &name, &mime, &size, &status, &path, &mer); err != nil {
 			return nil, err
 		}
 		if kind.Valid {
-			m.Media = &RenderMedia{Kind: kind.String, FileName: name.String, Mime: mime.String, Size: size.Int64,
+			m.Media = &RenderMedia{Key: key.String, Kind: kind.String, FileName: name.String, Mime: mime.String, Size: size.Int64,
 				Status: status.String, LocalPath: path.String, Error: mer.String}
 		}
 		out = append(out, m)
@@ -269,19 +270,20 @@ WHERE msg.chat_id = ? AND msg.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)`, ar
 // SearchText is what the search index holds for one message: its text and,
 // for media, the file name.
 type SearchText struct {
-	ID      int
-	TopicID int
-	Date    int64
-	Text    string
+	ID       int
+	TopicID  int
+	Date     int64
+	Text     string
+	MetaJSON string
 }
 
 func (s *Store) SearchTexts(ctx context.Context, chatID int64) ([]SearchText, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, trim(msg.text || ' ' || COALESCE(m.file_name, ''))
+SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, trim(msg.text || ' ' || COALESCE(m.file_name, '')), COALESCE(msg.meta_json, '')
 FROM messages msg
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
-WHERE msg.chat_id = ? AND (msg.text != '' OR COALESCE(m.file_name, '') != '')
+WHERE msg.chat_id = ? AND (msg.text != '' OR COALESCE(m.file_name, '') != '' OR msg.meta_json IS NOT NULL)
 ORDER BY msg.date, msg.id`, chatID)
 	if err != nil {
 		return nil, err
@@ -290,7 +292,7 @@ ORDER BY msg.date, msg.id`, chatID)
 	var out []SearchText
 	for rows.Next() {
 		var t SearchText
-		if err := rows.Scan(&t.ID, &t.TopicID, &t.Date, &t.Text); err != nil {
+		if err := rows.Scan(&t.ID, &t.TopicID, &t.Date, &t.Text, &t.MetaJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

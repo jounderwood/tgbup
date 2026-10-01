@@ -75,6 +75,9 @@ func regular(m *tg.Message, opts Options) (Result, bool, error) {
 			return Result{}, false, err
 		}
 	}
+	if out.MetaJSON, err = metaJSON(m); err != nil {
+		return Result{}, false, err
+	}
 	res := Result{Message: out}
 	if md, ok := ExtractMedia(m); ok {
 		res.Media = []store.Media{md}
