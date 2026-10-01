@@ -59,6 +59,12 @@ type Fixture struct {
 
 	GroupID  int64 `json:"group_id"` // basic group, raw id
 	GroupMsg int   `json:"group_msg"`
+
+	// Non-file media kept as message meta.
+	GeoMsg     int `json:"geo_msg"`
+	VenueMsg   int `json:"venue_msg"`
+	ContactMsg int `json:"contact_msg"`
+	PollMsg    int `json:"poll_msg"`
 }
 
 func (f Fixture) GroupChatID() int64 { return convert.ChatID(f.GroupID) }
@@ -272,6 +278,10 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 		return f, err
 	}
 
+	if err := seedMeta(ctx, raw, peer, &f); err != nil {
+		return f, err
+	}
+
 	if _, err := raw.MessagesUpdatePinnedMessage(ctx, &tg.MessagesUpdatePinnedMessageRequest{Peer: peer, ID: f.ReplyMsg, Silent: true}); err != nil {
 		return f, fmt.Errorf("pin: %w", err)
 	}
@@ -309,6 +319,32 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 	}
 	f.FolderID = folderID
 	return f, nil
+}
+
+// seedMeta sends a location, a place, a contact and a poll into the forum's General topic.
+func seedMeta(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, f *Fixture) error {
+	var err error
+	point := &tg.InputGeoPoint{Lat: 44.8125, Long: 20.4612}
+	if f.GeoMsg, err = sendMedia(ctx, raw, peer, &tg.InputMediaGeoPoint{GeoPoint: point}); err != nil {
+		return fmt.Errorf("send location: %w", err)
+	}
+	venue := &tg.InputMediaVenue{GeoPoint: point, Title: "Kafana Question Mark", Address: "Kralja Petra 6", Provider: "foursquare", VenueType: "food"}
+	if f.VenueMsg, err = sendMedia(ctx, raw, peer, venue); err != nil {
+		return fmt.Errorf("send venue: %w", err)
+	}
+	contact := &tg.InputMediaContact{PhoneNumber: "+99966612345", FirstName: "Test", LastName: "Contact"}
+	if f.ContactMsg, err = sendMedia(ctx, raw, peer, contact); err != nil {
+		return fmt.Errorf("send contact: %w", err)
+	}
+	poll := &tg.InputMediaPoll{Poll: tg.Poll{ID: randomID(), Question: tg.TextWithEntities{Text: "Dacha on Saturday?"},
+		Answers: []tg.PollAnswerClass{
+			&tg.PollAnswer{Text: tg.TextWithEntities{Text: "Yes"}, Option: []byte("1")},
+			&tg.PollAnswer{Text: tg.TextWithEntities{Text: "No"}, Option: []byte("2")},
+		}}}
+	if f.PollMsg, err = sendMedia(ctx, raw, peer, poll); err != nil {
+		return fmt.Errorf("send poll: %w", err)
+	}
+	return nil
 }
 
 // seedSaved writes run-tagged messages into Saved Messages; they are the only

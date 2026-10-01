@@ -205,6 +205,20 @@ func checkFilesView(t *testing.T, archive string) {
 	}
 }
 
+// checkMeta finds the seeded location, place, contact and poll in meta_json.
+func checkMeta(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for id, want := range map[int]string{
+		fx.GeoMsg: `"lat":44.8125`, fx.VenueMsg: `"title":"Kafana Question Mark"`,
+		fx.ContactMsg: `"phone":"+99966612345"`, fx.PollMsg: `"question":"Dacha on Saturday?"`,
+	} {
+		got := scalar[sql.NullString](t, db, `SELECT meta_json FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id)
+		if !strings.Contains(got.String, want) {
+			t.Errorf("message %d meta = %q, want %s", id, got.String, want)
+		}
+	}
+}
+
 // checkRendered finds the seeded document on a forum page and follows its link.
 func checkRendered(t *testing.T, archive string) {
 	t.Helper()
@@ -232,6 +246,17 @@ func checkRendered(t *testing.T, archive string) {
 	}
 	if !linked {
 		t.Errorf("no forum page links the seeded document (pages: %v)", pages)
+	}
+	var all strings.Builder
+	for _, p := range pages {
+		b, _ := os.ReadFile(p)
+		all.Write(b)
+	}
+	for _, want := range []string{"📍 Kafana Question Mark, Kralja Petra 6", "google.com/maps/search/?api=1&amp;query=44.81",
+		"👤 Test Contact", "📊 Dacha on Saturday?"} {
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("forum pages lack %q", want)
+		}
 	}
 	if md, _ := filepath.Glob(filepath.Join(archive, "md", fx.Title, "*", "*.md")); len(md) == 0 {
 		t.Error("no Markdown pages for the forum")
@@ -295,6 +320,7 @@ func TestSyncArchivesForum(t *testing.T) {
 	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
 	checkFilesView(t, archive)
+	checkMeta(t, db)
 	checkRendered(t, archive)
 	checkExport(t, cfgPath)
 
