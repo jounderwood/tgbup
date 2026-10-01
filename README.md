@@ -6,8 +6,13 @@
 
 ```bash
 brew install go   # нужен Go 1.25+
-make build        # → bin/tgbup
+make install      # → ~/.local/bin/tgbup (добавьте ~/.local/bin в PATH)
+tgbup deps        # скачает restic и rclone закреплённых версий с проверкой SHA-256
 ```
+
+restic и rclone ставить отдельно не нужно: `tgbup deps` (и первый бэкап) скачивают официальные выпуски
+в `~/.local/state/tgbup/bin`. Свои бинарники можно указать в конфиге (`deps.restic`, `deps.rclone`) или
+положить рядом с `tgbup`.
 
 ## Настройка
 
@@ -53,7 +58,41 @@ make build        # → bin/tgbup
    Исключённый топик выкачивается как текст форума, но не сохраняется; если вернуть топик, следующий
    `sync` один раз перечитывает историю форума и дописывает пропущенное.
 5. Первая полная выгрузка: `bin/tgbup sync --takeout` (Telegram попросит подтвердить экспорт в клиенте — подтвердите и запустите снова).
-6. Дальше: `bin/tgbup sync` (по расписанию — см. план 3).
+6. Бэкап и расписание — раздел ниже.
+
+## Бэкап и расписание
+
+`tgbup run` — то, что запускает расписание: `sync` → снимок restic во все репозитории (даже если `sync`
+упал) → запись в историю → бот: ошибки сразу, сводка раз в `notify.summary_every` (7 дней).
+
+1. Пароль репозиториев в `secrets.env`: `RESTIC_PASSWORD=…`. **Сохраните его ещё и в менеджере паролей** —
+   без него бэкапы не прочитать.
+2. Репозитории в конфиге:
+   ```yaml
+   backup:
+     repositories:
+       - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbup-restic"   # iCloud Drive
+       - "rclone:gdrive:tgbup-restic"                                     # Google Drive
+   ```
+   Папку iCloud в Finder пометьте «Всегда хранить на этом Mac». Для Google Drive: `tgbup deps` печатает
+   путь к rclone → `<путь> config` → New remote → имя `gdrive`, тип Google Drive, вход через браузер.
+3. `tgbup backup --init` — создать репозитории; `tgbup backup` — снимок вручную.
+4. Бот: создать у @BotFather, написать ему любое сообщение, chat_id — из
+   `https://api.telegram.org/bot<TOKEN>/getUpdates`. В `secrets.env`: `BOT_TOKEN=…`, `BOT_CHAT_ID=…`.
+   Проверка: `tgbup notify test`.
+5. `tgbup schedule install` — запуск `tgbup run` в 00:30, 06:30, 12:30, 18:30 (пропущенный во сне —
+   после пробуждения). `tgbup schedule status`, `tgbup schedule uninstall`. Лог: `~/.local/state/tgbup/logs/run.log`.
+
+В снимке: копия `archive.sqlite` (через `VACUUM INTO`, после `integrity_check`), `config.yaml`, `media/`.
+Не входят: `html/`, `md/`, `files/` (пересобираются), сессия Telegram, `secrets.env`. Хранение: 4 последних,
+7 дневных, 4 недельных, 12 месячных; `prune` — раз в сутки, `check` (5% данных) — раз в 30 дней.
+
+Восстановление (без tgbup):
+```bash
+RESTIC_PASSWORD=… ~/.local/state/tgbup/bin/restic-0.19.1/restic -r "<репозиторий>" restore latest --target ~/restore
+```
+В `~/restore` будут `…/state/tgbup/backup/archive.sqlite`, `config.yaml` и `…/TelegramArchive/media/`: положите
+`archive.sqlite` и `media/` в `archive_dir`, затем `tgbup render` и `tgbup files` пересоберут просмотр.
 
 ## Чтение архива
 
