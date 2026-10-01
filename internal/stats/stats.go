@@ -25,6 +25,9 @@ type Item struct {
 	Title          string
 	Peer           tg.InputPeerClass
 	ExcludedTopics []int
+	// UpgradedTo is the supergroup this basic group was upgraded to, if any:
+	// such a group holds the history from before the upgrade.
+	UpgradedTo int64
 }
 
 type TopicStats struct {

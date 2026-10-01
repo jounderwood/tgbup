@@ -30,8 +30,15 @@ func printReport(w io.Writer, chats []stats.ChatStats) {
 		}
 	}
 	fmt.Fprintf(w, "would archive %d chats, ~%s messages:\n", len(chats), groupDigits(saved))
+	block := map[int64]int{}
+	for i, c := range chats {
+		block[c.Item.ID] = i + 1
+	}
 	for i, c := range chats {
 		header := fmt.Sprintf("── %d. %s · %s · %d ", i+1, cleanTitle(c.Item.Title, titleWidth), c.Item.Type, c.Item.ID)
+		if n, ok := block[c.Item.UpgradedTo]; ok && c.Item.UpgradedTo != 0 {
+			header += fmt.Sprintf("· history before the upgrade, see %d. ", n)
+		}
 		fmt.Fprintln(w, header+strings.Repeat("─", max(headerWidth-displayWidth(header), 2)))
 		if c.Err != nil {
 			fmt.Fprintf(w, "   ? could not count: %v\n", c.Err)
@@ -173,9 +180,18 @@ func isTerminal(w io.Writer) bool {
 }
 
 func statItems(targets []tgclient.Target) []stats.Item {
+	upgradedTo := map[int64]int64{}
+	for _, t := range targets {
+		if t.Chat.MigratedFromID != 0 {
+			upgradedTo[t.Chat.MigratedFromID] = t.Chat.ID
+		}
+	}
 	items := make([]stats.Item, 0, len(targets))
 	for _, t := range targets {
-		items = append(items, stats.Item{ID: t.Chat.ID, Type: t.Chat.Type, Title: t.Chat.Title, Peer: t.Peer, ExcludedTopics: t.ExcludedTopics})
+		items = append(items, stats.Item{
+			ID: t.Chat.ID, Type: t.Chat.Type, Title: t.Chat.Title, Peer: t.Peer,
+			ExcludedTopics: t.ExcludedTopics, UpgradedTo: upgradedTo[t.Chat.ID],
+		})
 	}
 	return items
 }

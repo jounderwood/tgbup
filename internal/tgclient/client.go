@@ -155,10 +155,26 @@ func runTakeout(ctx context.Context, invoker tg.Invoker, maxFileSize int64, fn f
 }
 
 func WithTakeout(ctx context.Context, c *telegram.Client, maxFileSize int64, fn func(ctx context.Context, raw *tg.Client) error) error {
-	err := runTakeout(ctx, c, maxFileSize, fn)
+	return takeoutError(runTakeout(ctx, c, maxFileSize, fn))
+}
+
+// TakeoutNotConfirmed means Telegram is waiting for the user to allow the
+// data export in an app; it is an expected first-run step, not a failure.
+type TakeoutNotConfirmed struct {
+	Wait time.Duration
+	err  error
+}
+
+func (e *TakeoutNotConfirmed) Error() string {
+	return fmt.Sprintf("Telegram asks to confirm the data export: open Telegram, allow the request in the "+
+		"\"Telegram\" service chat, then run the same command again (without confirming it is allowed in %s)", e.Wait)
+}
+
+func (e *TakeoutNotConfirmed) Unwrap() error { return e.err }
+
+func takeoutError(err error) error {
 	if rpc, ok := tgerr.As(err); ok && rpc.Type == "TAKEOUT_INIT_DELAY" {
-		return fmt.Errorf("telegram wants you to confirm the data export: open Telegram, allow the request "+
-			"in the service notifications (or wait %s), then rerun: %w", time.Duration(rpc.Argument)*time.Second, err)
+		return &TakeoutNotConfirmed{Wait: time.Duration(rpc.Argument) * time.Second, err: err}
 	}
 	return err
 }

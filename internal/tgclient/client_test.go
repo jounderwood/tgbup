@@ -2,7 +2,9 @@ package tgclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,5 +98,22 @@ func TestTelegramOptionsSelectDCList(t *testing.T) {
 	test := telegramOptions(Options{SessionPath: "/s", TestDC: true})
 	if test.DC != 2 || len(test.DCList.Options) != len(dcs.Test().Options) {
 		t.Fatalf("test DC options = DC %d, %d addrs", test.DC, len(test.DCList.Options))
+	}
+}
+
+func TestTakeoutNotConfirmedIsOneClearLine(t *testing.T) {
+	raw := fmt.Errorf("init takeout session: flood wait argument is too big (24h0m0s > 5m0s): %w", tgerr.New(420, "TAKEOUT_INIT_DELAY_86400"))
+	err := takeoutError(raw)
+	var nc *TakeoutNotConfirmed
+	if !errors.As(err, &nc) || nc.Wait != 24*time.Hour {
+		t.Fatalf("err = %v, want TakeoutNotConfirmed with 24h", err)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "\n") || strings.Contains(msg, "flood wait") || !strings.Contains(msg, "confirm the data export") {
+		t.Fatalf("message = %q", msg)
+	}
+	other := errors.New("boom")
+	if takeoutError(other) != other {
+		t.Fatal("unrelated errors must pass through")
 	}
 }

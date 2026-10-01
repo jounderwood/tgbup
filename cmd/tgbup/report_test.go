@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
 )
 
@@ -103,5 +104,23 @@ func TestTopicLabelNeverTouchesList(t *testing.T) {
 	printReport(&out, []stats.ChatStats{{Item: stats.Item{ID: 1, Type: "forum", Title: "F"}, Total: 24, Topics: topics}})
 	if !strings.Contains(out.String(), "topics 24 of 24:  T #1 ~1") {
 		t.Fatalf("label glued to the list:\n%s", out.String())
+	}
+}
+
+// The basic group a forum was upgraded from holds its early history; without a
+// note it reads like a duplicate of the forum.
+func TestReportMarksPreUpgradeGroup(t *testing.T) {
+	targets := []tgclient.Target{
+		{Chat: store.Chat{ID: -1002263466511, Type: store.ChatForum, Title: "Family", MigratedFromID: -4510946492}},
+		{Chat: store.Chat{ID: -4510946492, Type: store.ChatGroup, Title: "Family"}},
+	}
+	var chats []stats.ChatStats
+	for _, it := range statItems(targets) {
+		chats = append(chats, stats.ChatStats{Item: it, Total: 3})
+	}
+	var out bytes.Buffer
+	printReport(&out, chats)
+	if !strings.Contains(out.String(), "── 2. Family · group · -4510946492 · history before the upgrade, see 1. ─") {
+		t.Fatalf("pre-upgrade group not marked:\n%s", out.String())
 	}
 }

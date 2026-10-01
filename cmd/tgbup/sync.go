@@ -114,9 +114,18 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 		}
 		return body(ctx, c.API())
 	})
-	sum.print(env.Stdout)
+	return finishSync(env.Stdout, log, sum, err)
+}
+
+func finishSync(w io.Writer, log *slog.Logger, sum syncSummary, err error) int {
+	var unconfirmed *tgclient.TakeoutNotConfirmed
+	if errors.As(err, &unconfirmed) {
+		log.Info(unconfirmed.Error())
+		return 1
+	}
+	sum.print(w)
 	if err != nil {
-		log.Error("sync failed", "err", err)
+		log.Error("sync failed", "err", err.Error())
 		return 1
 	}
 	if !sum.ok() {
@@ -184,7 +193,7 @@ func dryRun(ctx context.Context, st setup, env Env, log *slog.Logger) int {
 		fmt.Fprintf(env.Stdout, "warning: %s\n", w)
 	}
 	if err != nil {
-		log.Error("dry run failed", "err", err)
+		log.Error("dry run failed", "err", err.Error())
 		return 1
 	}
 	return dryRunExit(chats, warnings)
