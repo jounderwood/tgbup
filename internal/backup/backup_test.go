@@ -157,3 +157,68 @@ func TestDamagedArchiveIsNotBackedUp(t *testing.T) {
 		t.Fatalf("a damaged archive was snapshotted: %s", snaps)
 	}
 }
+
+// A restic killed mid-run (Mac shut down, launchd stopped the job) leaves a
+// lock behind; the next run must not fail on it.
+func TestStaleLockIsCleared(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	e := newEnv(t, repo)
+	ctx := context.Background()
+	Init(ctx, e.o)
+	cmd := exec.Command(e.o.Restic, "-r", repo, "--no-cache", "backup", "--stdin", "--stdin-filename", "x")
+	cmd.Env = append(os.Environ(), "RESTIC_PASSWORD="+e.o.Password)
+	stdin, _ := cmd.StdinPipe() // kept open: restic holds its lock waiting for data
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if locks, _ := os.ReadDir(filepath.Join(repo, "locks")); len(locks) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restic took no lock")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	stdin.Close()
+	if r := Run(ctx, e.db, e.o); !r.OK() {
+		t.Fatalf("run after a killed restic: %+v", r.Repos)
+	}
+}
+
+// One unreadable file makes restic exit 3 but still write a snapshot: that is
+// a warning, and retention must keep working.
+func TestUnreadableFileIsAWarning(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	e := newEnv(t, repo)
+	ctx := context.Background()
+	Init(ctx, e.o)
+	locked := filepath.Join(e.o.ArchiveDir, "media", "photo", "locked.jpg")
+	if err := os.WriteFile(locked, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	r := Run(ctx, e.db, e.o)
+	if !r.OK() || r.Repos[0].Snapshot == "" || !strings.Contains(r.Repos[0].Warning, "locked.jpg") {
+		t.Fatalf("report = %+v", r.Repos[0])
+	}
+}
+
+// The host a snapshot is tagged with must stay the same when the Mac's network
+// name changes, or retention and parent lookup stop matching old snapshots.
+func TestHostIsKeptFromTheFirstBackup(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	e := newEnv(t, repo)
+	ctx := context.Background()
+	Init(ctx, e.o)
+	Run(ctx, e.db, e.o)
+	e.o.Host = "renamed-by-dhcp"
+	if r := Run(ctx, e.db, e.o); !r.OK() {
+		t.Fatal(r)
+	}
+	if snaps := e.restic(t, repo, "snapshots", "--host", "renamed-by-dhcp", "--json"); strings.TrimSpace(snaps) != "[]" {
+		t.Fatalf("snapshot taken under a new host: %s", snaps)
+	}
+}

@@ -48,7 +48,9 @@ type RepoResult struct {
 	Snapshot string
 	Pruned   bool
 	Checked  bool
-	Err      error
+	// Warning: the snapshot was made but some files could not be read.
+	Warning string
+	Err     error
 }
 
 type Report struct {
@@ -99,8 +101,7 @@ func Init(ctx context.Context, o Options) []RepoResult {
 	for _, repo := range o.Repos {
 		res := RepoResult{Repo: repo}
 		_, err := o.restic(ctx, repo, "cat", "config")
-		var exit *exec.ExitError
-		if errors.As(errors.Unwrap(err), &exit) && exit.ExitCode() == 10 { // 10: repository does not exist
+		if exitCode(err) == 10 { // the repository does not exist
 			_, err = o.restic(ctx, repo, "init")
 		}
 		res.Err = err
@@ -119,10 +120,26 @@ func Run(ctx context.Context, a Archive, o Options) Report {
 		r.Integrity = fmt.Errorf("prepare the snapshot: %w", err)
 		return r
 	}
+	host, err := o.host(ctx, a)
+	if err != nil {
+		r.Integrity = err
+		return r
+	}
 	for _, repo := range o.Repos {
-		r.Repos = append(r.Repos, o.backupRepo(ctx, a, repo))
+		r.Repos = append(r.Repos, o.backupRepo(ctx, a, repo, host))
 	}
 	return r
+}
+
+// host is the name snapshots are tagged with. It is fixed at the first backup:
+// a Mac's network name can change, and retention and the parent snapshot
+// lookup only match snapshots of the same host.
+func (o Options) host(ctx context.Context, a Archive) (string, error) {
+	v, ok, err := a.Meta(ctx, "backup:host")
+	if err != nil || ok {
+		return v, err
+	}
+	return o.Host, a.SetMeta(ctx, "backup:host", o.Host)
 }
 
 // prepare puts a consistent database copy and the config into WorkDir.
@@ -137,25 +154,32 @@ func (o Options) prepare(ctx context.Context, a Archive) error {
 	return os.WriteFile(filepath.Join(o.WorkDir, "config.yaml"), cfg, 0o600)
 }
 
-func (o Options) backupRepo(ctx context.Context, a Archive, repo string) RepoResult {
+func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) RepoResult {
 	res := RepoResult{Repo: repo}
 	now := o.Now()
 	paths := []string{o.WorkDir}
 	if st, err := os.Stat(filepath.Join(o.ArchiveDir, "media")); err == nil && st.IsDir() {
 		paths = append(paths, filepath.Join(o.ArchiveDir, "media"))
 	}
-	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", o.Host}, paths...)...)
-	if err != nil {
+	// A run killed earlier may have left its lock; unlock removes only locks of
+	// processes that are gone. If the repository is unreachable, backup says so.
+	_, _ = o.restic(ctx, repo, "unlock")
+	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host}, paths...)...)
+	res.Snapshot = snapshotID(out)
+	switch {
+	case err != nil && exitCode(err) == 3 && res.Snapshot != "":
+		// Some files could not be read, but the snapshot exists: keep going so retention still runs.
+		res.Warning = err.(*resticError).msg
+	case err != nil:
 		res.Err = err
 		return res
 	}
-	res.Snapshot = snapshotID(out)
 	if err := RecordSuccess(ctx, a, repo, now); err != nil {
 		res.Err = err
 		return res
 	}
 	k := o.Retention
-	if _, err := o.restic(ctx, repo, "forget", "--tag", "tgbup", "--host", o.Host,
+	if _, err := o.restic(ctx, repo, "forget", "--tag", "tgbup", "--host", host,
 		"--keep-last", strconv.Itoa(k.Last), "--keep-daily", strconv.Itoa(k.Daily),
 		"--keep-weekly", strconv.Itoa(k.Weekly), "--keep-monthly", strconv.Itoa(k.Monthly)); err != nil {
 		res.Err = err
@@ -211,25 +235,82 @@ func snapshotID(jsonLines []byte) string {
 	return ""
 }
 
-// restic runs one restic command against repo; the error carries the last
-// lines restic printed, which name the problem.
+// restic runs one restic command against repo; the error carries what restic
+// reported, which names the problem.
 func (o Options) restic(ctx context.Context, repo string, args ...string) ([]byte, error) {
-	full := []string{"-r", repo}
-	if strings.HasPrefix(repo, "rclone:") && o.Rclone != "" {
-		full = append(full, "-o", "rclone.program="+o.Rclone)
-	}
-	cmd := exec.CommandContext(ctx, o.Restic, append(full, args...)...)
-	cmd.Env = append(os.Environ(), "RESTIC_PASSWORD="+o.Password)
-	if o.RcloneConfigPass != "" {
-		cmd.Env = append(cmd.Env, "RCLONE_CONFIG_PASS="+o.RcloneConfigPass)
-	}
+	cmd := exec.CommandContext(ctx, o.Restic, append([]string{"-r", repo}, args...)...)
+	cmd.Env = o.env()
+	// On cancel (SIGTERM from launchd, Ctrl+C) ask restic to stop so it removes
+	// its repository lock; a killed restic would leave the lock behind.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = 2 * time.Minute
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return out, fmt.Errorf("restic %s %s: %s: %w", args[0], repo, lastLines(stderr.Bytes(), 3), err)
+		return out, &resticError{op: args[0], repo: repo, msg: resticMessages(stderr.Bytes()), err: err}
 	}
 	return out, nil
+}
+
+// env is the environment restic runs in: the user's own RESTIC_* settings are
+// dropped (RESTIC_PASSWORD_FILE would win over tgbup's password), and rclone's
+// folder goes first on PATH, since restic splits -o rclone.program on spaces.
+func (o Options) env() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "RESTIC_") || (o.Rclone != "" && strings.HasPrefix(kv, "PATH=")) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "RESTIC_PASSWORD="+o.Password)
+	if o.RcloneConfigPass != "" {
+		env = append(env, "RCLONE_CONFIG_PASS="+o.RcloneConfigPass)
+	}
+	if o.Rclone != "" {
+		env = append(env, "PATH="+filepath.Dir(o.Rclone)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return env
+}
+
+type resticError struct {
+	op, repo, msg string
+	err           error
+}
+
+func (e *resticError) Error() string { return fmt.Sprintf("restic %s %s: %s", e.op, e.repo, e.msg) }
+func (e *resticError) Unwrap() error { return e.err }
+
+func exitCode(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
+}
+
+// resticMessages turns restic's stderr (JSON lines with --json, plain text
+// otherwise) into its last few messages.
+func resticMessages(b []byte) string {
+	var msgs []string
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var m struct {
+			Message string `json:"message"`
+			Error   struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		switch {
+		case json.Unmarshal([]byte(line), &m) != nil:
+			msgs = append(msgs, line)
+		case m.Error.Message != "":
+			msgs = append(msgs, m.Error.Message)
+		case m.Message != "":
+			msgs = append(msgs, m.Message)
+		}
+	}
+	return lastLines([]byte(strings.Join(msgs, "\n")), 3)
 }
 
 func lastLines(b []byte, n int) string {
