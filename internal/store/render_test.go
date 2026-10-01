@@ -28,7 +28,8 @@ func renderFixture(t *testing.T) *Store {
 		Messages: []Message{
 			{ChatID: forum, ID: 10, TopicID: 1, Date: feb, FromID: 5, Text: "hello", Raw: []byte{1}},
 			{ChatID: forum, ID: 11, TopicID: 160, Date: mar, FromID: 5, Text: "rent", Raw: []byte{1}, MediaKeys: []string{"document:9"}},
-			{ChatID: forum, ID: 12, TopicID: 160, Date: mar + 60, FromID: -1000000000008, Text: "news", ReplyToID: 10, Raw: []byte{1}},
+			{ChatID: forum, ID: 12, TopicID: 160, Date: mar + 60, FromID: -1000000000008, Text: "news", ReplyToID: 10, Raw: []byte{1},
+				FwdFromJSON: `{"from_id":5,"date":1}`},
 		},
 	})
 	if err != nil {
@@ -79,7 +80,7 @@ func TestMonthMessagesAndRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 2 || msgs[0].ID != 11 || msgs[0].SenderName != "Ann Lee" || msgs[1].SenderName != "News" {
+	if len(msgs) != 2 || msgs[0].ID != 11 || msgs[0].SenderName != "Ann Lee" || msgs[1].SenderName != "News" || msgs[1].FwdName != "Ann Lee" {
 		t.Fatalf("messages = %+v", msgs)
 	}
 	if m := msgs[0].Media; m == nil || m.FileName != "lease.pdf" || m.Status != "pending" || m.Size != 2048 {

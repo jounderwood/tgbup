@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{.Root}}assets/style.css">
+<script src="{{.Root}}assets/page.js" defer></script>
+</head>
+<body>
+<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} › {{.Month}}</nav>
+<nav class="months">{{if .Prev}}<a href="{{.Prev}}.html">← {{.Prev}}</a>{{end}}<span>{{.Month}}</span>{{if .Next}}<a href="{{.Next}}.html">{{.Next}} →</a>{{end}}</nav>
+<main>
+{{- range .Days}}
+<h2 class="day">{{.Date}}</h2>
+{{- range .Messages}}
+{{- if .Service}}
+<div class="service" id="m{{.ID}}">{{.Sender}} {{.Service}} · {{.Time}}</div>
+{{- else}}
+<article class="msg" id="m{{.ID}}">
+<header><span class="from">{{.Sender}}</span> <a class="time" href="#m{{.ID}}">{{.Time}}</a>{{if .Edited}} <span class="tag">edited</span>{{end}}{{if .Pinned}} <span class="tag">pinned</span>{{end}}</header>
+{{- with .Forward}}
+<div class="fwd">{{.}}</div>
+{{- end}}
+{{- with .Reply}}
+{{- if .Missing}}
+<div class="reply missing">reply to a message not in the archive</div>
+{{- else if .NoLink}}
+<div class="reply"><b>{{.Sender}}</b> {{.Text}}</div>
+{{- else}}
+<a class="reply" href="{{if .Page}}{{.Page}}.html{{end}}#m{{.ID}}"><b>{{.Sender}}</b> {{.Text}}</a>
+{{- end}}
+{{- end}}
+{{- with .Media}}
+{{- if not .Href}}
+<div class="missing">{{.Note}}</div>
+{{- else if or (eq .Kind "photo") (eq .Kind "sticker")}}
+<a class="media" href="{{.Href}}"><img loading="lazy" src="{{.Href}}" alt="{{.Name}}"></a>
+{{- else if or (eq .Kind "video") (eq .Kind "video_note") (eq .Kind "animation")}}
+<video controls preload="none" src="{{.Href}}"></video>
+{{- else if or (eq .Kind "voice") (eq .Kind "audio")}}
+<audio controls preload="none" src="{{.Href}}"></audio>{{if eq .Kind "audio"}} <a class="file" href="{{.Href}}">{{.Name}}</a>{{end}}
+{{- else}}
+<a class="file" href="{{.Href}}">📄 {{.Name}}</a> <span class="size">{{.Size}}</span>
+{{- end}}
+{{- end}}
+{{- if .HTML}}
+<div class="text">{{.HTML}}</div>
+{{- end}}
+{{- with .Reactions}}
+<div class="reactions">{{.}}</div>
+{{- end}}
+</article>
+{{- end}}
+{{- end}}
+{{- end}}
+</main>
+<nav class="months">{{if .Prev}}<a href="{{.Prev}}.html">← {{.Prev}}</a>{{end}}<span>{{.Month}}</span>{{if .Next}}<a href="{{.Next}}.html">{{.Next}} →</a>{{end}}</nav>
+</body>
+</html>

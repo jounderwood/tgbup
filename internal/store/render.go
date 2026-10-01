@@ -165,7 +165,9 @@ type RenderMedia struct {
 type RenderMessage struct {
 	Message
 	SenderName string
-	Media      *RenderMedia
+	// FwdName is the name of the forward source when it is a known user or chat.
+	FwdName string
+	Media   *RenderMedia
 }
 
 // senderName resolves from_id against users, then forward-source peers, then archived chats.
@@ -187,8 +189,12 @@ SELECT msg.chat_id, msg.id, COALESCE(msg.topic_id, 0), msg.date, COALESCE(msg.fr
        COALESCE(msg.entities_json, ''), COALESCE(msg.reply_to_id, 0), COALESCE(msg.fwd_from_json, ''),
        COALESCE(msg.reactions_json, ''), COALESCE(msg.service_action_json, ''), msg.pinned, COALESCE(msg.edit_date, 0),
        `+senderName+`,
+       COALESCE(NULLIF(trim(COALESCE(fu.first_name, '') || ' ' || COALESCE(fu.last_name, '')), ''), fp.title, fc.title, ''),
        m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
 FROM messages msg`+senderJoins+`
+LEFT JOIN users fu ON fu.id = json_extract(msg.fwd_from_json, '$.from_id')
+LEFT JOIN peers fp ON fp.id = json_extract(msg.fwd_from_json, '$.from_id')
+LEFT JOIN chats fc ON fc.id = json_extract(msg.fwd_from_json, '$.from_id')
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
 WHERE msg.chat_id = ? AND COALESCE(msg.topic_id, 0) = ? AND msg.date >= ? AND msg.date < ?
@@ -205,7 +211,7 @@ ORDER BY msg.date, msg.id`, chatID, topicID, start.Unix(), start.AddDate(0, 1, 0
 			size                                sql.NullInt64
 		)
 		if err := rows.Scan(&m.ChatID, &m.ID, &m.TopicID, &m.Date, &m.FromID, &m.Text, &m.EntitiesJSON, &m.ReplyToID,
-			&m.FwdFromJSON, &m.ReactionsJSON, &m.ServiceActionJSON, &m.Pinned, &m.EditDate, &m.SenderName,
+			&m.FwdFromJSON, &m.ReactionsJSON, &m.ServiceActionJSON, &m.Pinned, &m.EditDate, &m.SenderName, &m.FwdName,
 			&kind, &name, &mime, &size, &status, &path, &mer); err != nil {
 			return nil, err
 		}
