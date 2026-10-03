@@ -1,5 +1,7 @@
 # tgbup — ядро выгрузки: план реализации (1 из 3)
 
+> **Выполнен.** Актуальное устройство — `docs/PROJECT.md`, решения — в спеках (раздел «Расхождения с реализацией»). План не поддерживается.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** бинарник `tgbup` с командами `login` и `sync`, который инкрементально выкачивает выбранные чаты Telegram (включая форумы, служебные сообщения и медиа) в SQLite + `media/`.

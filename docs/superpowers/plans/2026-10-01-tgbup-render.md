@@ -1,5 +1,7 @@
 # tgbup: рендеринг и экспорт — план
 
+> **Выполнен.** Актуальное устройство — `docs/PROJECT.md`, решения — в спеках (раздел «Расхождения с реализацией»). План не поддерживается.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** реализовать `docs/superpowers/specs/2026-10-01-tgbup-render-design.md`.
