@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -23,36 +24,112 @@ type Bot struct {
 func (b Bot) Enabled() bool { return b.Token != "" && b.ChatID != "" }
 
 func (b Bot) Send(ctx context.Context, text string) error {
+	err := b.call(ctx, "sendMessage", map[string]any{"chat_id": b.ChatID, "text": text, "disable_web_page_preview": true}, nil)
+	if err != nil {
+		return fmt.Errorf("send to the bot: %w", err)
+	}
+	return nil
+}
+
+// Me checks the token and returns the bot's @username.
+func (b Bot) Me(ctx context.Context) (string, error) {
+	var me struct {
+		Username string `json:"username"`
+	}
+	if err := b.call(ctx, "getMe", map[string]any{}, &me); err != nil {
+		return "", fmt.Errorf("check the bot token: %w", err)
+	}
+	return me.Username, nil
+}
+
+// Chat is a private chat someone opened with the bot.
+type Chat struct {
+	ID   int64
+	Name string // first and last name, and @username when set
+}
+
+// PrivateChat returns the latest private chat that wrote to the bot, waiting
+// for one until ctx ends; poll is the long-poll timeout of each request.
+func (b Bot) PrivateChat(ctx context.Context, poll time.Duration) (Chat, error) {
+	offset := 0
+	for {
+		var updates []struct {
+			UpdateID int `json:"update_id"`
+			Message  *struct {
+				Chat struct {
+					ID        int64  `json:"id"`
+					Type      string `json:"type"`
+					FirstName string `json:"first_name"`
+					LastName  string `json:"last_name"`
+					Username  string `json:"username"`
+				} `json:"chat"`
+			} `json:"message"`
+		}
+		err := b.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": int(poll.Seconds()), "allowed_updates": []string{"message"}}, &updates)
+		if err != nil {
+			if ctx.Err() != nil {
+				return Chat{}, ctx.Err()
+			}
+			return Chat{}, fmt.Errorf("read the bot's messages: %w", err)
+		}
+		var found *Chat
+		for _, u := range updates {
+			offset = u.UpdateID + 1
+			if u.Message == nil || u.Message.Chat.Type != "private" {
+				continue
+			}
+			c := u.Message.Chat
+			name := strings.TrimSpace(c.FirstName + " " + c.LastName)
+			if c.Username != "" {
+				name = strings.TrimSpace(name + " @" + c.Username)
+			}
+			found = &Chat{ID: c.ID, Name: name}
+		}
+		if found != nil {
+			return *found, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return Chat{}, err
+		}
+	}
+}
+
+// call invokes a Bot API method; out receives the result field.
+func (b Bot) call(ctx context.Context, method string, params map[string]any, out any) error {
 	base := b.BaseURL
 	if base == "" {
 		base = "https://api.telegram.org"
 	}
-	body, err := json.Marshal(map[string]any{"chat_id": b.ChatID, "text": text, "disable_web_page_preview": true})
+	body, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/bot"+b.Token+"/sendMessage", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/bot"+b.Token+"/"+method, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := b.HTTP
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: 90 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		// The URL holds the token: report the failure without it.
-		return fmt.Errorf("send to the bot: request failed")
+		return errors.New("request failed")
 	}
 	defer resp.Body.Close()
 	var res struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
+		OK          bool            `json:"ok"`
+		Description string          `json:"description"`
+		Result      json.RawMessage `json:"result"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&res)
 	if !res.OK {
-		return fmt.Errorf("send to the bot: %s (HTTP %d)", res.Description, resp.StatusCode)
+		return fmt.Errorf("%s (HTTP %d)", res.Description, resp.StatusCode)
+	}
+	if out != nil {
+		return json.Unmarshal(res.Result, out)
 	}
 	return nil
 }

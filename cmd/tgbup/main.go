@@ -14,6 +14,7 @@ var version = "dev"
 const usage = `usage: tgbup <command> [flags]
 
 commands:
+  init      set everything up step by step (run again any time to continue or change)
   login     interactive Telegram login, stores the session
   setup     choose which chats to archive (writes the config)
   sync      download new messages and media
@@ -50,6 +51,8 @@ func run(ctx context.Context, args []string, env Env) int {
 	case "version":
 		fmt.Fprintln(env.Stdout, version)
 		return 0
+	case "init":
+		return cmdInit(ctx, env)
 	case "login":
 		return cmdLogin(ctx, env)
 	case "setup":

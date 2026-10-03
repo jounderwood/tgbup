@@ -134,6 +134,13 @@ func (s *Store) PeerName(ctx context.Context, id int64) (Peer, bool, error) {
 	return p, true, nil
 }
 
+// MessageTotal counts the messages of every chat.
+func (s *Store) MessageTotal(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) CountMessages(ctx context.Context, chatID int64) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE chat_id = ?`, chatID).Scan(&n)

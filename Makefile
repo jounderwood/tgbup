@@ -1,13 +1,17 @@
-.PHONY: build install test test-backup lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
+.PHONY: build install setup test test-backup lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
 
 build:
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbup ./cmd/tgbup
 
-# Installs tgbup into ~/.local/bin; then: tgbup deps, tgbup backup --init, tgbup schedule install.
+# Installs tgbup into ~/.local/bin.
 install: build
 	mkdir -p $$HOME/.local/bin
 	install -m 0755 bin/tgbup $$HOME/.local/bin/tgbup
 	@echo "installed $$HOME/.local/bin/tgbup"
+
+# Installs and walks through the whole setup; run again any time to continue or change it.
+setup: install
+	$$HOME/.local/bin/tgbup init
 
 test:
 	gotestsum -- -race ./...

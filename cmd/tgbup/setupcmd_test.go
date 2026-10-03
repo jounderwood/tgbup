@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"gitlab.com/joeunderwood/tgbup/internal/config"
@@ -66,7 +68,7 @@ func newDialogOver(input string, st *selector.State, dialogs []tgclient.Dialog, 
 	var out bytes.Buffer
 	f := &fakeSetup{}
 	return &setupDialog{
-		ctx: context.Background(), in: readLines(strings.NewReader(input), nil), out: &out,
+		ctx: context.Background(), in: newLineReader(strings.NewReader(input), nil), out: &out,
 		groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: st, cfgPath: "/c.yaml",
 		rowStats: f.rowStats, details: f.details,
 		preview: func(sel config.Selected) (string, error) {
@@ -210,7 +212,8 @@ func TestSetupEOFExitsWithoutSaving(t *testing.T) {
 func TestSetupInterruptExitsWithoutSaving(t *testing.T) {
 	d, _ := newDialog("", state())
 	ctx, cancel := context.WithCancel(context.Background())
-	d.ctx, d.in = ctx, make(chan string)
+	pr, _ := io.Pipe()
+	d.ctx, d.in = ctx, newLineReader(pr, nil)
 	done := make(chan bool)
 	go func() { done <- d.run() }()
 	cancel()
@@ -224,13 +227,23 @@ func TestSetupInterruptExitsWithoutSaving(t *testing.T) {
 	}
 }
 
-func TestReadLinesReportsReadErrors(t *testing.T) {
-	var got error
-	lines := readLines(strings.NewReader(strings.Repeat("x", 70*1024)+"\n"), func(err error) { got = err })
-	for range lines {
+func TestLineReaderLongLinesAndErrors(t *testing.T) {
+	long := strings.Repeat("x", 70*1024)
+	l := newLineReader(strings.NewReader(long+"\nlast"), nil)
+	if got, ok := l.next(context.Background()); !ok || got != long {
+		t.Fatalf("long line: ok=%v len=%d", ok, len(got))
 	}
-	if got == nil {
-		t.Fatal("a line over the scanner limit ended input silently")
+	if got, ok := l.next(context.Background()); !ok || got != "last" {
+		t.Fatalf("line without a newline at EOF = %q, %v", got, ok)
+	}
+	if _, ok := l.next(context.Background()); ok {
+		t.Fatal("read past EOF")
+	}
+
+	var got error
+	l = newLineReader(iotest.ErrReader(errors.New("boom")), func(err error) { got = err })
+	if _, ok := l.next(context.Background()); ok || got == nil {
+		t.Fatalf("read error: ok=%v reported=%v", ok, got)
 	}
 }
 

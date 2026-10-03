@@ -198,3 +198,46 @@ func TestRenderTargetsMatchesWhatIsWritten(t *testing.T) {
 		t.Fatalf("written config differs from the preview:\n%s\n---\n%s", raw, preview)
 	}
 }
+
+func TestSetValueCreatesAndKeepsTheRest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := config.SetValue(path, []string{"archive_dir"}, "~/Arch"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadWithoutTargets(path, "/home/u")
+	if err != nil || cfg.ArchiveDir != "/home/u/Arch" {
+		t.Fatalf("archive_dir = %q, %v", cfg.ArchiveDir, err)
+	}
+	if err := config.WriteTargets(path, config.Selected{Chats: []int64{10}, ChatTitles: map[int64]string{10: "Мама"}}); err != nil {
+		t.Fatal(err)
+	}
+	repos := []string{"~/iCloud/tgbup-restic", "rclone:gdrive:tgbup-restic"}
+	if err := config.SetValue(path, []string{"backup", "repositories"}, repos); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.Load(path, "/home/u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Backup.Repositories, []string{"/home/u/iCloud/tgbup-restic", "rclone:gdrive:tgbup-restic"}) {
+		t.Errorf("repositories = %v", cfg.Backup.Repositories)
+	}
+	if got := includeIDs(t, cfg); !slices.Equal(got, []int64{10}) || cfg.Backup.Retention.Daily != 7 {
+		t.Errorf("other settings lost: %v %+v", got, cfg.Backup)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), "# Мама") || strings.Count(string(raw), config.OptionsMarker) != 1 {
+		t.Errorf("comments not kept once:\n%s", raw)
+	}
+}
+
+func TestSetValueRefusesInvalidConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.SetValue(path, []string{"media", "workers"}, 99); err == nil {
+		t.Fatal("invalid workers written")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("file created for an invalid config")
+	}
+}

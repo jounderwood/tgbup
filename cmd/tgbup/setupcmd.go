@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -28,7 +29,7 @@ type rowInfo struct {
 
 type setupDialog struct {
 	ctx      context.Context
-	in       <-chan string
+	in       *lineReader
 	out      io.Writer
 	groups   []selector.Group
 	dialogs  []tgclient.Dialog
@@ -44,37 +45,65 @@ type setupDialog struct {
 	last []stats.ChatStats
 }
 
-// readLines feeds input lines through a channel, closed at EOF or a read error.
-func readLines(r io.Reader, onErr func(error)) <-chan string {
-	lines := make(chan string)
-	go func() {
-		defer close(lines)
-		sc := bufio.NewScanner(r)
-		for sc.Scan() {
-			lines <- sc.Text()
-		}
-		if err := sc.Err(); err != nil && onErr != nil {
-			onErr(err)
-		}
-	}()
-	return lines
+// lineReader reads input a line at a time, only when asked: a reader running
+// ahead would take the lines, and the hidden 2FA password, meant for the next
+// prompt or the Telegram login.
+type lineReader struct {
+	r     *bufio.Reader
+	onErr func(error)
+	// stopped is set once a read is abandoned; that read may still complete, so
+	// no other read may start.
+	stopped bool
 }
+
+func newLineReader(r io.Reader, onErr func(error)) *lineReader {
+	return &lineReader{r: bufio.NewReader(r), onErr: onErr}
+}
+
+// next returns false at EOF, on a read error and when ctx ends (Ctrl+C).
+func (l *lineReader) next(ctx context.Context) (string, bool) {
+	if l.stopped || ctx.Err() != nil {
+		return "", false
+	}
+	type result struct {
+		s   string
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		s, err := l.r.ReadString('\n')
+		ch <- result{s, err}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			if !errors.Is(res.err, io.EOF) && l.onErr != nil {
+				l.onErr(res.err)
+			}
+			if res.s == "" || !errors.Is(res.err, io.EOF) {
+				l.stopped = true
+				return "", false
+			}
+		}
+		return strings.TrimRight(res.s, "\r\n"), true
+	case <-ctx.Done():
+		l.stopped = true
+		return "", false
+	}
+}
+
+// Read lets the Telegram login read through the same buffer.
+func (l *lineReader) Read(p []byte) (int, error) { return l.r.Read(p) }
 
 // ask returns false on EOF (Ctrl+D) or interrupt (Ctrl+C cancels ctx), which
 // always means "leave without saving".
 func (s *setupDialog) ask(prompt string) (string, bool) {
 	fmt.Fprint(s.out, prompt)
-	select {
-	case line, ok := <-s.in:
-		if !ok {
-			fmt.Fprintln(s.out)
-			return "", false
-		}
-		return strings.TrimSpace(line), true
-	case <-s.ctx.Done():
+	line, ok := s.in.next(s.ctx)
+	if !ok {
 		fmt.Fprintln(s.out)
-		return "", false
 	}
+	return strings.TrimSpace(line), ok
 }
 
 // russianLayout maps keys typed in the Russian layout to the commands on the
@@ -383,10 +412,20 @@ func (s *setupDialog) selected() config.Selected {
 
 func cmdSetup(ctx context.Context, env Env) int {
 	st, err := loadSetup(env, false)
+	if err == nil {
+		in := newLineReader(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) })
+		_, err = chooseChats(ctx, st, in, env.Stdout, env.Stderr)
+	}
 	if err != nil {
 		fmt.Fprintln(env.Stderr, "tgbup setup:", err)
 		return 1
 	}
+	return 0
+}
+
+// chooseChats runs the chat selection dialog; saved is false when the person
+// left without writing the config.
+func chooseChats(ctx context.Context, st setup, in *lineReader, out, errOut io.Writer) (saved bool, err error) {
 	err = tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
 			return err
@@ -408,12 +447,11 @@ func cmdSetup(ctx context.Context, env Env) int {
 		}
 		state, warnings := selector.Initial(dialogs, folders, st.cfg.Targets)
 		for _, w := range warnings {
-			fmt.Fprintf(env.Stdout, "current config: %s\n", w)
+			fmt.Fprintf(out, "current config: %s\n", w)
 		}
-		progress := progressPrinter(env.Stderr, isTerminal(env.Stderr), "counting")
+		progress := progressPrinter(errOut, isTerminal(errOut), "counting")
 		d := &setupDialog{
-			ctx: ctx, out: env.Stdout,
-			in:     readLines(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) }),
+			ctx: ctx, out: out, in: in,
 			groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: state, cfgPath: st.paths.Config,
 			rowStats: func(ds []tgclient.Dialog) map[int64]rowInfo { return listRowStats(ctx, api, ds, progress) },
 			details:  func(items []stats.Item) []stats.ChatStats { return stats.Collect(ctx, api, items, progress) },
@@ -423,21 +461,18 @@ func cmdSetup(ctx context.Context, env Env) int {
 			},
 		}
 		if !d.run() {
-			fmt.Fprintln(env.Stdout, "config not changed")
+			fmt.Fprintln(out, "config not changed")
 			return nil
 		}
 		sel := d.selected()
 		if err := config.WriteTargets(st.paths.Config, sel); err != nil {
 			return err
 		}
-		fmt.Fprintf(env.Stdout, "wrote %d chats to %s\n", len(sel.Chats), st.paths.Config)
+		fmt.Fprintf(out, "wrote %d chats to %s\n", len(sel.Chats), st.paths.Config)
+		saved = true
 		return nil
 	})
-	if err != nil {
-		fmt.Fprintln(env.Stderr, "tgbup setup:", err)
-		return 1
-	}
-	return 0
+	return saved, err
 }
 
 func listRowStats(ctx context.Context, api *tgclient.API, ds []tgclient.Dialog, progress func(done, total int)) map[int64]rowInfo {

@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 )
 
 const launchdLabel = "com.gitlab.joeunderwood.tgbup"
@@ -67,6 +69,9 @@ func (j launchdJob) plist() []byte {
 }
 
 func (j launchdJob) install() error {
+	if strings.Contains(j.Exe, string(filepath.Separator)+"go-build") {
+		return errors.New("run an installed tgbup (make install), not go run")
+	}
 	if err := os.MkdirAll(filepath.Dir(j.LogPath), 0o700); err != nil {
 		return err
 	}
@@ -132,6 +137,65 @@ func jobEnv(getenv func(string) string) map[string]string {
 	return out
 }
 
+// newLaunchdJob describes the job for this tgbup binary.
+func newLaunchdJob(p config.Paths, env Env) (launchdJob, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return launchdJob{}, err
+	}
+	return launchdJob{
+		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.Home, "Library", "LaunchAgents"),
+		LogPath: filepath.Join(p.StateDir, "logs", "run.log"), UID: os.Getuid(), Env: jobEnv(env.Getenv),
+		retryDelay: time.Second,
+		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
+	}, nil
+}
+
+// jobState is what launchd reports about the job.
+type jobState struct {
+	Loaded  bool
+	Running bool
+	// LastExit is "" before the first run ends.
+	LastExit string
+}
+
+func (j launchdJob) state() jobState {
+	out, err := j.launchctl("print", j.target())
+	if err != nil {
+		return jobState{}
+	}
+	s := jobState{Loaded: true}
+	seenState := false
+	for _, line := range strings.Split(string(out), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), " = ")
+		switch {
+		case !ok:
+		case k == "state" && !seenState:
+			// Later "state = active" lines belong to nested sections (sockets, endpoints).
+			s.Running, seenState = v == "running", true
+		case k == "last exit code" && !strings.HasPrefix(v, "("):
+			s.LastExit = v
+		}
+	}
+	return s
+}
+
+// installedHere reports whether the job file starts this same binary.
+func (j launchdJob) installedHere() bool {
+	b, err := os.ReadFile(j.path())
+	return err == nil && bytes.Contains(b, []byte("<string>"+html.EscapeString(j.Exe)+"</string>"))
+}
+
+func (j launchdJob) kickstart() error {
+	if out, err := j.launchctl("kickstart", j.target()); err != nil {
+		return fmt.Errorf("launchctl kickstart: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func cmdSchedule(args []string, env Env) int {
 	if len(args) != 1 || !slices.Contains([]string{"install", "uninstall", "status"}, args[0]) {
 		fmt.Fprintln(env.Stderr, "usage: tgbup schedule install|uninstall|status")
@@ -146,27 +210,13 @@ func cmdSchedule(args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
 		return 1
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	j, err := newLaunchdJob(p.paths, env)
 	if err != nil {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
 		return 1
 	}
-
-	j := launchdJob{
-		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.paths.Home, "Library", "LaunchAgents"),
-		LogPath: filepath.Join(p.paths.StateDir, "logs", "run.log"), UID: os.Getuid(), Env: jobEnv(env.Getenv),
-		retryDelay: time.Second,
-		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
-	}
 	switch args[0] {
 	case "install":
-		if strings.Contains(exe, string(filepath.Separator)+"go-build") {
-			fmt.Fprintln(env.Stderr, "tgbup schedule: run an installed tgbup (make install), not go run")
-			return 1
-		}
 		err = j.install()
 	case "uninstall":
 		err = j.uninstall()

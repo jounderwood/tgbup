@@ -94,3 +94,59 @@ func TestErrorTextFitsTelegram(t *testing.T) {
 		}
 	}
 }
+
+func TestMe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bot1:good/getMe" {
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":7,"is_bot":true,"username":"family_backup_bot"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"ok":false,"description":"Unauthorized"}`))
+	}))
+	defer srv.Close()
+	name, err := Bot{Token: "1:good", BaseURL: srv.URL}.Me(context.Background())
+	if err != nil || name != "family_backup_bot" {
+		t.Fatalf("Me = %q, %v", name, err)
+	}
+	if _, err := (Bot{Token: "1:bad", BaseURL: srv.URL}).Me(context.Background()); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatalf("bad token: %v", err)
+	}
+}
+
+func TestPrivateChatSkipsGroupsAndWaits(t *testing.T) {
+	var offsets []float64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		offsets = append(offsets, req["offset"].(float64))
+		switch len(offsets) {
+		case 1: // a group message only
+			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":10,"message":{"chat":{"id":-5,"type":"group","title":"g"}}}]}`))
+		case 2: // nothing yet
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":11,"message":{"chat":{"id":99,"type":"private","first_name":"Andrey","username":"andrey"}}}]}`))
+		}
+	}))
+	defer srv.Close()
+	c, err := Bot{Token: "1:a", BaseURL: srv.URL}.PrivateChat(context.Background(), 0)
+	if err != nil || c.ID != 99 || c.Name != "Andrey @andrey" {
+		t.Fatalf("chat = %+v, %v", c, err)
+	}
+	if offsets[0] != 0 || offsets[1] != 11 {
+		t.Errorf("offsets = %v: seen updates must not come back", offsets)
+	}
+}
+
+func TestPrivateChatStopsWithContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := (Bot{Token: "1:a", BaseURL: srv.URL}).PrivateChat(ctx, 0); err == nil {
+		t.Fatal("no error after the context ended")
+	}
+}

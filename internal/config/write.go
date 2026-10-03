@@ -34,7 +34,7 @@ func WriteTargets(path string, sel Selected) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
 	}
-	return replaceFile(path, data)
+	return writePrivate(path, data)
 }
 
 // RenderTargets returns the config WriteTargets would write, already
@@ -44,6 +44,44 @@ func RenderTargets(path string, sel Selected) ([]byte, error) {
 	if len(sel.Chats) == 0 {
 		return nil, errors.New("no chats selected")
 	}
+	return editConfig(path, true, func(root *yaml.Node) error {
+		setKey(root, "targets", targetsNode(sel))
+		return nil
+	})
+}
+
+// SetValue sets one setting, such as []string{"backup", "repositories"},
+// creating the config and the sections on the way when they are missing; the
+// rest of the file and its comments stay as they are.
+func SetValue(path string, keys []string, value any) error {
+	data, err := editConfig(path, false, func(root *yaml.Node) error {
+		var n yaml.Node
+		if err := n.Encode(value); err != nil {
+			return err
+		}
+		for _, k := range keys[:len(keys)-1] {
+			child := getKey(root, k)
+			if child == nil || child.Kind != yaml.MappingNode {
+				child = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+				setKey(root, k, child)
+			}
+			root = child
+		}
+		setKey(root, keys[len(keys)-1], &n)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	return writePrivate(path, data)
+}
+
+// editConfig applies edit to the parsed config (or a new one) and returns the
+// result, refusing one that would not load.
+func editConfig(path string, requireTargets bool, edit func(root *yaml.Node) error) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -62,16 +100,8 @@ func RenderTargets(path string, sel Selected) ([]byte, error) {
 	if root.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("%s: top level is not a mapping", path)
 	}
-	targets := targetsNode(sel)
-	replaced := false
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "targets" {
-			root.Content[i+1] = targets
-			replaced = true
-		}
-	}
-	if !replaced {
-		root.Content = append(root.Content, strNode("targets"), targets)
+	if err := edit(root); err != nil {
+		return nil, err
 	}
 
 	var buf bytes.Buffer
@@ -86,10 +116,29 @@ func RenderTargets(path string, sel Selected) ([]byte, error) {
 	if !bytes.Contains(buf.Bytes(), []byte(OptionsMarker)) {
 		buf.WriteString("\n" + optionsReference())
 	}
-	if _, err := parse(path, buf.Bytes(), "/", true); err != nil {
+	if _, err := parse(path, buf.Bytes(), "/", requireTargets); err != nil {
 		return nil, fmt.Errorf("refusing to write an invalid config: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func getKey(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func setKey(m *yaml.Node, key string, v *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = v
+			return
+		}
+	}
+	m.Content = append(m.Content, strNode(key), v)
 }
 
 func targetsNode(sel Selected) *yaml.Node {
@@ -149,14 +198,14 @@ func commentText(title string) string {
 	return strings.Join(strings.Fields(title), " ")
 }
 
-// replaceFile writes a temp file next to path and renames it over path, so a
-// half-written config never replaces a good one.
-func replaceFile(path string, data []byte) error {
+// writePrivate writes a temp file next to path and renames it over path, so a
+// half-written config or secrets file never replaces a good one; the result is 0600.
+func writePrivate(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}

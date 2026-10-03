@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -91,4 +94,44 @@ func readEnvFile(path string) (map[string]string, error) {
 		out[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
 	}
 	return out, nil
+}
+
+// SetSecrets writes the given keys into the secrets file, replacing their
+// lines or appending them, and keeps every other line and comment. The file
+// stays private (0600).
+func SetSecrets(path string, values map[string]string) error {
+	for k, v := range values {
+		if strings.ContainsAny(k+v, "\r\n") || strings.Contains(k, "=") || k == "" {
+			return fmt.Errorf("secret %s: invalid key or value", k)
+		}
+	}
+	if _, err := readEnvFile(path); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(data) == 0 {
+		lines = nil
+	}
+	done := map[string]bool{}
+	for i, line := range lines {
+		k, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+		k = strings.TrimSpace(k)
+		if v, set := values[k]; ok && set {
+			lines[i] = k + "=" + v
+			done[k] = true
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(values)) {
+		if !done[k] {
+			lines = append(lines, k+"="+values[k])
+		}
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	return writePrivate(path, []byte(strings.Join(lines, "\n")+"\n"))
 }
