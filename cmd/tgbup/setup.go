@@ -27,6 +27,16 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 // loadLocalSetup is loadSetup for commands that work on the archive alone
 // (backup, deps) and need no Telegram credentials.
 func loadLocalSetup(env Env, requireConfig bool) (setup, error) {
+	// Only the session file differs on the test servers: with the default
+	// config, test chats would go into the real archive and its backups.
+	if env.Getenv("TGBUP_TEST_DC") == "1" && env.Getenv("TGBUP_CONFIG") == "" {
+		return setup{}, errors.New("TGBUP_TEST_DC=1 needs its own TGBUP_CONFIG (with its own archive_dir): the default config is the real archive")
+	}
+	return resolveSetup(env, requireConfig)
+}
+
+// resolveSetup loads paths, config and secrets.
+func resolveSetup(env Env, requireConfig bool) (setup, error) {
 	p, err := config.ResolvePaths(env.Getenv)
 	if err != nil {
 		return setup{}, err

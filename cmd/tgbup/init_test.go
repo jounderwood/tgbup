@@ -295,8 +295,11 @@ func TestTestServersLeaveScheduleAndPathAlone(t *testing.T) {
 	w, _, _ := testWizard(t, "")
 	getenv := w.env.Getenv
 	w.env.Getenv = func(k string) string {
-		if k == "TGBUP_TEST_DC" {
+		switch k {
+		case "TGBUP_TEST_DC":
 			return "1"
+		case "TGBUP_CONFIG":
+			return filepath.Join(getenv("HOME"), "test.yaml")
 		}
 		return getenv(k)
 	}
@@ -508,7 +511,7 @@ func TestBackupChangeKeepsThePasswordAndAddsPlaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, sec := backupConfig(t, p)
-	w.in = newLineReader(strings.NewReader("y\n\n1\n\n"), nil) // change settings, keep folder, add Google Drive, keep password
+	w.in = newLineReader(strings.NewReader("y\n\n\n1\n\n"), nil) // change, keep backing up, keep folder, add Google Drive, keep password
 	if err := runStep(context.Background(), w, initStep{name: "Backups", check: w.checkStorage, change: "Change?", run: w.setBackup}); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -529,5 +532,19 @@ func TestBackupCanBeDeclinedAndRejectsFoldersInTheArchive(t *testing.T) {
 	w, out, _ := testWizard(t, "\n~/TelegramArchive/backup\nnone\n0\n")
 	if err := w.setBackup(context.Background()); err == nil || !strings.Contains(out.String(), "apart from the archive") {
 		t.Fatalf("err = %v\n%s", err, out)
+	}
+}
+
+func TestBackupsCanBeTurnedOff(t *testing.T) {
+	w, _, p := testWizard(t, "\n\n\n\nsaved\n")
+	if err := w.setBackup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w.in = newLineReader(strings.NewReader("n\n"), nil)
+	if err := w.setBackup(context.Background()); !errors.Is(err, errDeclined) {
+		t.Fatalf("err = %v", err)
+	}
+	if repos, _ := backupConfig(t, p); len(repos) != 0 {
+		t.Fatalf("repos = %q", repos)
 	}
 }

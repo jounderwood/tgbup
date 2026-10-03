@@ -224,9 +224,10 @@ func (s *Server) guard(next http.Handler, wantPort string, ui bool) http.Handler
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		// Other sites, the archive's origin included, may link to the
-		// interface but not load anything from it.
-		if ui && r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin" &&
+		// Other sites may link here but not load anything: the archive's search
+		// indexes are scripts any page could include to read the messages, and
+		// the archive's origin may not load the interface either.
+		if r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin" &&
 			r.Header.Get("Sec-Fetch-Site") != "none" && r.Header.Get("Sec-Fetch-Mode") != "navigate" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return

@@ -64,6 +64,9 @@ func runOnce(ctx context.Context, p runParts) int {
 			rec.BackupErrors = append(rec.BackupErrors, r.Err.Error())
 			continue
 		}
+		if r.Warning != "" {
+			rec.BackupErrors = append(rec.BackupErrors, backupWarning(r))
+		}
 		rec.Snapshots = append(rec.Snapshots, r.Repo+": "+r.Snapshot)
 	}
 	printBackup(p.out, rep)
@@ -194,7 +197,16 @@ func printBackup(w io.Writer, r backup.Report) {
 			extra += " · repository checked"
 		}
 		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", rr.Repo, shortID(rr.Snapshot), extra)
+		if rr.Warning != "" {
+			fmt.Fprintf(w, "  warning: %s\n", backupWarning(rr))
+		}
 	}
+}
+
+// backupWarning reports a snapshot that misses files restic could not read
+// (on macOS often a denied folder access): the backup is not complete.
+func backupWarning(r backup.RepoResult) string {
+	return r.Repo + ": snapshot made, but some files could not be read: " + r.Warning
 }
 
 func shortID(id string) string {

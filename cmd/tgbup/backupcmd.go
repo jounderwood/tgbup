@@ -133,6 +133,11 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintln(env.Stdout, "hint: a new repository needs tgbup backup --init first")
 		return 1
 	}
+	for _, r := range rep.Repos {
+		if r.Warning != "" {
+			return 1
+		}
+	}
 	return 0
 }
 

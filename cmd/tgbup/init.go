@@ -168,7 +168,8 @@ func (w *wizard) steps() []initStep {
 			run: w.setBackup, after: w.initRepos, optional: true},
 		{name: "Alerts bot (optional)", check: w.checkBot, run: w.setBot, optional: true},
 		{name: "First download", check: w.checkArchive, run: w.firstSync},
-		{name: "Schedule", check: w.checkSchedule, run: w.schedule},
+		// Optional so that a failed check run reports and still lets init finish.
+		{name: "Schedule", check: w.checkSchedule, run: w.schedule, optional: true},
 		{name: "Command in PATH", check: w.checkPath, run: w.addPath, optional: true},
 	}
 }
@@ -342,7 +343,8 @@ func (w *wizard) setPassword(ctx context.Context) error {
 	}
 	fmt.Fprintln(w.out, `  Backups are encrypted with a password. Without it they cannot be read back,
   so it must also be kept outside this Mac, in a password manager.`)
-	gen, err := w.yes(ctx, "  Generate a strong password?", true)
+	fmt.Fprintln(w.out, "  Restoring, or the repositories already exist? Answer n and type the password they were made with.")
+	gen, err := w.yes(ctx, "  Generate a new strong password?", true)
 	if err != nil {
 		return err
 	}
@@ -514,6 +516,17 @@ func (w *wizard) setBackup(ctx context.Context) error {
 		if ok, err := w.yes(ctx, "  Back up the archive?", true); err != nil {
 			return err
 		} else if !ok {
+			return errDeclined
+		}
+	}
+	if len(current) > 0 {
+		if keep, err := w.yes(ctx, "  Keep backing up?", true); err != nil {
+			return err
+		} else if !keep {
+			if err := config.SetValue(st.paths.Config, []string{"backup", "repositories"}, []string{}); err != nil {
+				return err
+			}
+			fmt.Fprintln(w.out, "  backups are off; the snapshots made so far stay where they are")
 			return errDeclined
 		}
 	}
@@ -1068,11 +1081,19 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 	if !j.installedHere() || !j.state().Loaded {
 		return "", false, nil
 	}
+	status := "runs at " + strings.Join(runTimes(), ", ")
 	// launchd forgets exit codes on reboot; the archive keeps every run.
-	if r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); err != nil || !ok || !r.OK {
+	switch r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); {
+	case err != nil:
 		return "", false, err
+	case !ok:
+		status += "; no run yet"
+	case r.OK:
+		status += "; the last run worked"
+	default:
+		status += "; the last run had errors (tgbup serve or the alerts show them)"
 	}
-	return "runs at " + strings.Join(runTimes(), ", ") + "; the last run worked", true, nil
+	return status, true, nil
 }
 
 // lastRun returns the latest tgbup run recorded in the archive.

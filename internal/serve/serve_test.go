@@ -295,6 +295,29 @@ func TestOtherOriginsCannotLoadTheInterface(t *testing.T) {
 	}
 }
 
+// A page on another site could include the search index as a script and
+// read the messages.
+func TestOtherSitesCannotIncludeArchiveScripts(t *testing.T) {
+	s, _, dir := testServer(t)
+	if err := os.MkdirAll(filepath.Join(dir, "html", "search"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "html", "search", "1.js"), []byte("tgbupSearch.add({})"), 0o644)
+	for site, want := range map[string]int{"cross-site": 403, "same-site": 403, "same-origin": 200, "": 200} {
+		r := httptest.NewRequest("GET", "/html/search/1.js", nil)
+		r.Host = archiveHost
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+			r.Header.Set("Sec-Fetch-Mode", "no-cors")
+		}
+		w := httptest.NewRecorder()
+		s.ArchiveHandler().ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("%q: %d, want %d", site, w.Code, want)
+		}
+	}
+}
+
 func TestSymlinkOutOfTheArchiveIsRefused(t *testing.T) {
 	s, _, dir := testServer(t)
 	if err := os.Symlink(filepath.Join(dir, "archive.sqlite"), filepath.Join(dir, "html", "db.html")); err != nil {

@@ -36,6 +36,8 @@ type syncSummary struct {
 	filesErr  error
 	render    render.Result
 	renderErr error
+	// viewsDone is set once files/ and the pages were rebuilt.
+	viewsDone bool
 }
 
 func (s syncSummary) ok() bool {
@@ -148,6 +150,14 @@ func syncArchive(ctx context.Context, st setup, db *store.Store, log *slog.Logge
 		}
 		return body(ctx, c.API())
 	})
+	if err != nil && !sum.viewsDone && ctx.Err() == nil {
+		// Telegram failed before the views were rebuilt; they need no Telegram.
+		sum.files, sum.filesErr = rebuildFiles(ctx, db, st.cfg.ArchiveDir)
+		sum.render, sum.renderErr = renderArchive(ctx, db, st.cfg.ArchiveDir, false)
+	}
+	if err != nil && tgclient.Classify(err) == tgclient.KindAuth && !errors.Is(err, tgclient.ErrNotLoggedIn) {
+		err = fmt.Errorf("%w: the Telegram session is no longer valid: run tgbup init (or tgbup login)", err)
+	}
 	return sum, err
 }
 
@@ -306,6 +316,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	views := func() {
 		sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
 		sum.render, sum.renderErr = renderArchive(ctx, db, cfg.ArchiveDir, false)
+		sum.viewsDone = true
 	}
 	if sum.sync.AuthErr != nil {
 		views()

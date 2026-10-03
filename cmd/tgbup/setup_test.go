@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,14 @@ func TestTestDCUsesSeparateSession(t *testing.T) {
 	}
 
 	env["TGBUP_TEST_DC"] = "1"
+	// The default config is the real archive: test servers need their own.
+	if _, err := loadSetup(e, false); err == nil || !strings.Contains(err.Error(), "TGBUP_CONFIG") {
+		t.Fatalf("test servers with the real config: %v", err)
+	}
+	if _, err := resolveSetup(e, false); err != nil {
+		t.Fatalf("login (session only) on test servers: %v", err)
+	}
+	env["TGBUP_CONFIG"] = filepath.Join(home, "test.yaml")
 	test, err := loadSetup(e, false)
 	if err != nil {
 		t.Fatal(err)

@@ -164,7 +164,8 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 	// A run killed earlier may have left its lock; unlock removes only locks of
 	// processes that are gone. If the repository is unreachable, backup says so.
 	_, _ = o.restic(ctx, repo, "unlock")
-	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host}, paths...)...)
+	// .part files are downloads in progress; the finished file comes in a later snapshot.
+	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host, "--exclude", "*.part"}, paths...)...)
 	res.Snapshot = snapshotID(out)
 	switch {
 	case err != nil && exitCode(err) == 3 && res.Snapshot != "":

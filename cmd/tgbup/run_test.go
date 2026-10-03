@@ -187,3 +187,17 @@ func TestHalfConfiguredBotIsNamed(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 }
+
+func TestPartialSnapshotIsReported(t *testing.T) {
+	bot := newFakeBot(t)
+	e := newRunEnv(t, bot.bot())
+	e.parts.backup = func(context.Context) (backup.Report, bool) {
+		return backup.Report{Repos: []backup.RepoResult{{Repo: "/b", Snapshot: "abcdef12", Warning: "open media/x: permission denied"}}}, true
+	}
+	if code := runOnce(context.Background(), e.parts); code != 1 {
+		t.Fatalf("code = %d: a snapshot missing files is not a clean run", code)
+	}
+	if len(bot.sent) != 1 || !strings.Contains(bot.sent[0], "some files could not be read") {
+		t.Fatalf("sent = %q", bot.sent)
+	}
+}

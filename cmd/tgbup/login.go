@@ -13,7 +13,12 @@ import (
 )
 
 func cmdLogin(ctx context.Context, env Env) int {
-	st, err := loadSetup(env, false)
+	// Login touches only the session, which is separate on the test servers,
+	// so it needs no test config of its own.
+	st, err := resolveSetup(env, false)
+	if err == nil {
+		err = st.secrets.RequireTelegram()
+	}
 	if err == nil {
 		err = loginTelegram(ctx, st, env.Stdin, env.Stdout)
 	}
