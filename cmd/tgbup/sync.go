@@ -158,6 +158,10 @@ func (s syncSummary) problems(err error) []string {
 		out = append(out, err.Error())
 	}
 	out = append(out, s.unresolved...)
+	// Reported once: a chat is "newly" inaccessible only on the run that finds it so.
+	for _, id := range s.sync.NewlyInaccessible {
+		out = append(out, fmt.Sprintf("chat %d is no longer accessible (left, removed or banned); its archive stays", id))
+	}
 	for id, e := range s.sync.Failed {
 		out = append(out, fmt.Sprintf("chat %d: %v", id, e))
 	}
@@ -297,7 +301,14 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		Progress: chatProgress(progressOut, tty),
 	}
 	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings, notes: sel.notes}
+	// files/ and the pages need no Telegram: messages saved before a lost
+	// session or a failed media phase still show up in them.
+	views := func() {
+		sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
+		sum.render, sum.renderErr = renderArchive(ctx, db, cfg.ArchiveDir, false)
+	}
 	if sum.sync.AuthErr != nil {
+		views()
 		return sum, sum.sync.AuthErr
 	}
 
@@ -307,13 +318,12 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		Progress: progressPrinter(progressOut, tty, "media"),
 	}
 	sum.media, err = d.Run(ctx)
+	views()
 	if err != nil {
 		return sum, err
 	}
 	if sum.media.AuthErr != nil {
 		return sum, sum.media.AuthErr
 	}
-	sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
-	sum.render, sum.renderErr = renderArchive(ctx, db, cfg.ArchiveDir, false)
 	return sum, nil
 }

@@ -79,7 +79,11 @@ func runOnce(ctx context.Context, p runParts) int {
 		code = 1
 	}
 	if !p.bot.Enabled() {
-		fmt.Fprintln(p.out, "alerts: no bot set up (tgbup init)")
+		if p.bot.Token != "" || p.bot.ChatID != "" {
+			fmt.Fprintln(p.out, "alerts: off: BOT_TOKEN and BOT_CHAT_ID must both be set (tgbup init sets them)")
+		} else {
+			fmt.Fprintln(p.out, "alerts: no bot set up (tgbup init)")
+		}
 		return code
 	}
 	if !ok {

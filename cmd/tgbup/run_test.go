@@ -163,3 +163,27 @@ func TestEarlyFailureIsNotified(t *testing.T) {
 		t.Fatalf("bot got %q", bot.sent)
 	}
 }
+
+func TestNewlyInaccessibleChatIsReported(t *testing.T) {
+	bot := newFakeBot(t)
+	e := newRunEnv(t, bot.bot())
+	e.parts.sync = func(context.Context) (syncSummary, error) {
+		return syncSummary{sync: syncer.Report{Chats: 1, NewlyInaccessible: []int64{-1001}}}, nil
+	}
+	if code := runOnce(context.Background(), e.parts); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(bot.sent) != 1 || !strings.Contains(bot.sent[0], "-1001 is no longer accessible") {
+		t.Fatalf("sent = %q", bot.sent)
+	}
+}
+
+func TestHalfConfiguredBotIsNamed(t *testing.T) {
+	e := newRunEnv(t, notify.Bot{Token: "1:a"})
+	var out bytes.Buffer
+	e.parts.out = &out
+	runOnce(context.Background(), e.parts)
+	if !strings.Contains(out.String(), "must both be set") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}
