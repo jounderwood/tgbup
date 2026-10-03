@@ -32,11 +32,22 @@ type Options struct {
 
 var ErrNotLoggedIn = errors.New("not logged in to Telegram: run tgbup init (or tgbup login)")
 
+// Run connects and calls fn. Every call goes through the read-only guard
+// (ReadOnlyMethods): tgbup cannot change anything in the account.
 func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegram.Client) error) error {
+	return run(ctx, o, true, fn)
+}
+
+func run(ctx context.Context, o Options, readOnlyGuard bool, fn func(ctx context.Context, c *telegram.Client) error) error {
 	if err := os.MkdirAll(filepath.Dir(o.SessionPath), 0o700); err != nil {
 		return err
 	}
-	client := telegram.NewClient(o.APIID, o.APIHash, telegramOptions(o))
+	opts := telegramOptions(o)
+	if readOnlyGuard {
+		// First in the chain: nothing else sees a refused call.
+		opts.Middlewares = append([]telegram.Middleware{readOnly{}}, opts.Middlewares...)
+	}
+	client := telegram.NewClient(o.APIID, o.APIHash, opts)
 	return client.Run(ctx, func(ctx context.Context) error { return fn(ctx, client) })
 }
 

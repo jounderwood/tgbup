@@ -144,6 +144,29 @@ targets:
 Запуск со страницы — отдельный процесс: закрытие страницы или остановка `serve` его не прерывают, а с плановым
 запуском он не пересекается (`run.lock`).
 
+## Что tgbup делает в Telegram
+
+Только читает. Каждый вызов Telegram API проходит через белый список (`internal/tgclient/readonly.go`); всё, чего
+в нём нет, — отправка, правка, удаление, пересылка, отметка «прочитано», реакции, вступление и выход из чатов,
+изменение профиля и настроек — отклоняется до отправки, так что ошибка в коде не может ничего поменять в аккаунте.
+
+| Методы | Зачем |
+|---|---|
+| `messages.getDialogs`, `messages.getDialogFilters` | список чатов и папок |
+| `messages.getHistory`, `messages.getReplies`, `messages.search`, `messages.getSearchCounters` | сообщения, их число, закрепы, счётчики по типам |
+| `messages.getForumTopics` | топики форумов |
+| `messages.getMessages`, `channels.getMessages` | перечитать сообщение для свежей ссылки на файл |
+| `channels.getFullChannel` | из какой группы выросла супергруппа |
+| `users.getUsers` | свой id, проверка входа |
+| `upload.getFile` | скачивание медиа |
+| `auth.sendCode`, `auth.signIn`, `account.getPassword`, `auth.checkPassword` | вход (создаёт сессию этого компьютера, как любое приложение Telegram) |
+| `account.initTakeoutSession`, `account.finishTakeoutSession` | экспорт для полной выгрузки (`--takeout`; Telegram просит разрешить его в приложении) |
+| `help.getConfig`, `help.getNearestDc`, `help.getCdnConfig`, `auth.exportAuthorization`, `auth.importAuthorization` | служебное соединение gotd: список дата-центров, сессия на дата-центре файла |
+
+История читается без отметки «прочитано»: собеседники не видят, что архив что-то открывал. Писать умеет только
+e2e-фикстура (создаёт и удаляет тестовый форум): её функция компилируется только с тегом `e2e`, работает только на
+тестовых серверах и в бинарник `tgbup` не попадает.
+
 ## Чтение архива
 
 После каждого `sync` архив отрисовывается в `~/TelegramArchive/html/` и `~/TelegramArchive/md/`:

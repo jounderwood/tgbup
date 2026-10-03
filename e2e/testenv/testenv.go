@@ -151,7 +151,8 @@ func WithTelegram(fn func(ctx context.Context, raw *tg.Client) error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	return tgclient.Run(ctx, opts, func(ctx context.Context, c *telegram.Client) error {
+	// The fixture creates and removes test chats: the only place that writes.
+	return tgclient.RunTestServerWritable(ctx, opts, func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
 			return err
 		}
