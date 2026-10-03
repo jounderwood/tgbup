@@ -1,5 +1,10 @@
 "use strict";
+// The chat picker, a step of the Setup page. Its markup is in setup.html;
+// it reads the chats from Telegram only once the step is opened.
+window.tgbupChats = (() => {
 const $ = (id) => document.getElementById(id);
+let started = false;
+let onSaved = () => {};
 const PAGE = 50;
 let data = { groups: [], chats: [] };
 const byId = new Map();
@@ -150,10 +155,21 @@ $("save").addEventListener("click", async () => {
     await api("POST", "/api/chats", selection());
     $("confirm").close();
     toast("Saved " + plural(selected.size, "chat") + ". The next run archives them.");
+    onSaved();
   } catch (e) {
     toast("Not saved: " + e.message);
   }
   $("save").disabled = false;
 });
 
-load();
+return {
+  // start shows the picker in place of node's content and loads the chats once.
+  start(saved) {
+    onSaved = saved;
+    if (!started) { started = true; load(); }
+    const picker = $("chatpicker");
+    picker.hidden = false;
+    return picker;
+  },
+};
+})();

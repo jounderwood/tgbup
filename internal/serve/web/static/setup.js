@@ -5,6 +5,7 @@ let state = null;
 const open = new Set(); // done steps the person chose to change
 const draft = {};       // per-step values typed but not saved yet
 let refreshTimer;       // one pending reload while a download runs
+if (location.hash === "#chats") open.add("chats"); // the old Chats page and "Change the chats" links
 
 // forgetLogin drops what was typed for a sign-in once it is over.
 function forgetLogin() { delete draft.phone; delete draft.loginCode; delete draft.twoFA; }
@@ -150,8 +151,8 @@ const forms = {
   },
 
   chats() {
-    return el("div", { class: "form" }, el("p", { class: "hint" }, "Tick the chats and forum topics to archive."),
-      el("div", {}, el("a", { href: "/chats" }, el("button", { type: "button" }, "Choose chats"))));
+    // The same element every time: what was ticked survives re-renders.
+    return tgbupChats.start(() => { open.delete("chats"); load(); });
   },
 
   backup() {

@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <b class="logo">tgbup</b>
-  <nav><a href="/setup">Setup</a><a href="/" class="on">Overview</a><a href="/chats">Chats</a><a href="{{.Archive}}" id="archive-link">Archive</a></nav>
+  <nav><a href="/" class="on">Overview</a><a href="/setup">Setup</a></nav>
   <span class="host" id="host"></span>
 </header>
 <main>
@@ -30,6 +30,7 @@
       <h2>Archive</h2>
       <div id="archive" class="big">…</div>
       <div id="archive-detail" class="muted"></div>
+      <button id="open-archive" type="button" class="secondary" hidden>Open the archive</button>
     </div>
     <div class="box">
       <h2>Backups</h2>
@@ -49,6 +50,7 @@
     <h2>Recent runs</h2>
     <table class="runs">
       <thead><tr><th>Started</th><th>Took</th><th>Result</th><th class="num">New messages</th><th class="num">New files</th></tr></thead>
+      <!-- a row with errors opens its details below it -->
       <tbody id="runs"></tbody>
     </table>
   </section>

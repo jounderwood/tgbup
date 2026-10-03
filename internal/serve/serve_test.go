@@ -16,7 +16,14 @@ import (
 	"testing"
 )
 
+func (f *fakeBackend) OpenArchive() error { f.opened++; return nil }
+
+func (f *fakeBackend) Snapshots(_ context.Context, place int) ([]Snapshot, error) {
+	return []Snapshot{{ID: "abcd1234", Host: "mac"}}, nil
+}
+
 type fakeBackend struct {
+	opened  int
 	actions []string
 	busy    bool
 	runs    int
@@ -99,7 +106,7 @@ func testServer(t *testing.T) (*Server, *fakeBackend, string) {
 		}
 	}
 	f := &fakeBackend{}
-	s, err := New(f, func() string { return dir }, "8640", "8641")
+	s, err := New(f, "8640")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,15 +121,9 @@ func do(t *testing.T, s *Server, method, path, host, token, body string) *httpte
 		r.Header.Set("X-Tgbup-Token", token)
 	}
 	w := httptest.NewRecorder()
-	if strings.HasSuffix(host, ":8641") {
-		s.ArchiveHandler().ServeHTTP(w, r)
-	} else {
-		s.Handler().ServeHTTP(w, r)
-	}
+	s.Handler().ServeHTTP(w, r)
 	return w
 }
-
-const archiveHost = "localhost:8641"
 
 const host = "localhost:8640"
 
@@ -175,41 +176,6 @@ func TestChangesNeedTheToken(t *testing.T) {
 	}
 }
 
-func TestArchiveServesOnlyTheSiteAndMedia(t *testing.T) {
-	s, _, _ := testServer(t)
-	for path, want := range map[string]int{
-		"/html/":                      200,
-		"/html/index.html":            200,
-		"/html/Family/p1.html":        200,
-		"/media/photo/1.jpg":          200,
-		"/archive.sqlite":             404,
-		"/files/a.txt":                404,
-		"/html/../archive.sqlite":     404,
-		"/html/%2e%2e/archive.sqlite": 404,
-		"/media/../files/a.txt":       404,
-		"/html/missing.html":          404,
-	} {
-		w := do(t, s, "GET", path, archiveHost, "", "")
-		// The mux answers paths with .. by redirecting to the cleaned path, which is then a 404.
-		if w.Code != want && (want == 200 || w.Code == 200) {
-			t.Errorf("%s: %d, want %d", path, w.Code, want)
-		}
-		if strings.Contains(w.Body.String(), "secret db") || strings.Contains(w.Body.String(), "file view") {
-			t.Errorf("%s leaked a file outside html/ and media/", path)
-		}
-	}
-	// The archive is not on the interface's origin, and the API is not on the archive's.
-	if w := do(t, s, "GET", "/html/", host, "", ""); w.Code != 404 {
-		t.Errorf("archive on the interface origin: %d", w.Code)
-	}
-	if w := do(t, s, "GET", "/api/status", archiveHost, "", ""); w.Code == 200 {
-		t.Errorf("API on the archive origin: %d", w.Code)
-	}
-	if w := do(t, s, "GET", "/", archiveHost, "", ""); w.Code != http.StatusFound {
-		t.Errorf("archive root: %d", w.Code)
-	}
-}
-
 func TestAPI(t *testing.T) {
 	s, f, _ := testServer(t)
 	tok := token(t, s)
@@ -249,7 +215,7 @@ func TestAPI(t *testing.T) {
 
 func TestStaticAndPages(t *testing.T) {
 	s, _, _ := testServer(t)
-	for _, p := range []string{"/", "/chats", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
+	for _, p := range []string{"/", "/setup", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
 		w := do(t, s, "GET", p, host, "", "")
 		body, _ := io.ReadAll(w.Body)
 		if w.Code != 200 || len(body) == 0 {
@@ -259,6 +225,35 @@ func TestStaticAndPages(t *testing.T) {
 	if csp := do(t, s, "GET", "/", host, "", "").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP = %q", csp)
 	}
+	// The chat list is a step of Setup now.
+	if w := do(t, s, "GET", "/chats", host, "", ""); w.Code != http.StatusFound || w.Header().Get("Location") != "/setup#chats" {
+		t.Errorf("/chats: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	// The archive is not served: its pages are opened from the disk.
+	for _, p := range []string{"/html/index.html", "/media/photo/1.jpg", "/archive.sqlite"} {
+		if w := do(t, s, "GET", p, host, "", ""); w.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", p, w.Code)
+		}
+	}
+}
+
+func TestArchiveAndSnapshots(t *testing.T) {
+	s, f, _ := testServer(t)
+	tok := token(t, s)
+	if w := do(t, s, "POST", "/api/archive/open", host, tok, ""); w.Code != 200 || f.opened != 1 {
+		t.Errorf("open: %d, opened %d", w.Code, f.opened)
+	}
+	w := do(t, s, "GET", "/api/backups/0/snapshots", host, tok, "")
+	var snaps []Snapshot
+	if err := json.NewDecoder(w.Body).Decode(&snaps); err != nil || len(snaps) != 1 || snaps[0].ID != "abcd1234" {
+		t.Errorf("snapshots: %d %+v %v", w.Code, snaps, err)
+	}
+	if w := do(t, s, "GET", "/api/backups/x/snapshots", host, tok, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("bad place: %d", w.Code)
+	}
+	if w := do(t, s, "POST", "/api/archive/open", host, "", ""); w.Code != http.StatusForbidden {
+		t.Errorf("open without the token: %d", w.Code)
+	}
 }
 
 func TestCheckListen(t *testing.T) {
@@ -267,26 +262,6 @@ func TestCheckListen(t *testing.T) {
 		if err := CheckListen(addr); (err == nil) != ok {
 			t.Errorf("%s: %v", addr, err)
 		}
-	}
-}
-
-// Files come from other people: one opened as a page must not run scripts,
-// and anything but pictures, video and sound is downloaded.
-func TestArchiveIsSandboxed(t *testing.T) {
-	s, _, _ := testServer(t)
-	w := do(t, s, "GET", "/media/document/1.html", archiveHost, "", "")
-	if csp := w.Header().Get("Content-Security-Policy"); !strings.HasPrefix(csp, "sandbox;") {
-		t.Errorf("media CSP = %q", csp)
-	}
-	if cd := w.Header().Get("Content-Disposition"); cd != "attachment" {
-		t.Errorf("html from a chat is shown inline: %q", cd)
-	}
-	if cd := do(t, s, "GET", "/media/photo/1.jpg", archiveHost, "", "").Header().Get("Content-Disposition"); cd != "" {
-		t.Errorf("photo: %q, want inline", cd)
-	}
-	page := do(t, s, "GET", "/", host, "", "").Body.String()
-	if !strings.Contains(page, `href="http://localhost:8641/html/"`) {
-		t.Errorf("the Archive link does not point at the archive origin")
 	}
 }
 
@@ -307,39 +282,6 @@ func TestOtherOriginsCannotLoadTheInterface(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Errorf("navigating from another site (a link): %d", w.Code)
-	}
-}
-
-// A page on another site could include the search index as a script and
-// read the messages.
-func TestOtherSitesCannotIncludeArchiveScripts(t *testing.T) {
-	s, _, dir := testServer(t)
-	if err := os.MkdirAll(filepath.Join(dir, "html", "search"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "html", "search", "1.js"), []byte("tgbupSearch.add({})"), 0o644)
-	for site, want := range map[string]int{"cross-site": 403, "same-site": 403, "same-origin": 200, "": 200} {
-		r := httptest.NewRequest("GET", "/html/search/1.js", nil)
-		r.Host = archiveHost
-		if site != "" {
-			r.Header.Set("Sec-Fetch-Site", site)
-			r.Header.Set("Sec-Fetch-Mode", "no-cors")
-		}
-		w := httptest.NewRecorder()
-		s.ArchiveHandler().ServeHTTP(w, r)
-		if w.Code != want {
-			t.Errorf("%q: %d, want %d", site, w.Code, want)
-		}
-	}
-}
-
-func TestSymlinkOutOfTheArchiveIsRefused(t *testing.T) {
-	s, _, dir := testServer(t)
-	if err := os.Symlink(filepath.Join(dir, "archive.sqlite"), filepath.Join(dir, "html", "db.html")); err != nil {
-		t.Skip(err)
-	}
-	if w := do(t, s, "GET", "/html/db.html", archiveHost, "", ""); w.Code == http.StatusOK {
-		t.Error("followed a symlink out of html/")
 	}
 }
 

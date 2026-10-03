@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,8 +47,7 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	if err := serve.CheckListen(*listen); err != nil {
 		return fail(err)
 	}
-	st, err := loadLocalSetup(env, false)
-	if err != nil {
+	if _, err := loadLocalSetup(env, false); err != nil {
 		return fail(err)
 	}
 	exe, err := os.Executable()
@@ -61,26 +59,10 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 		return fail(err)
 	}
 	defer ln.Close()
-	host, port, _ := net.SplitHostPort(ln.Addr().String())
-	// The archive's own origin: the next port when free, any port otherwise.
-	archiveLn, err := net.Listen("tcp", net.JoinHostPort(host, nextPort(port)))
-	if err != nil {
-		archiveLn, err = net.Listen("tcp", net.JoinHostPort(host, "0"))
-	}
-	if err != nil {
-		return fail(err)
-	}
-	defer archiveLn.Close()
-	_, archivePort, _ := net.SplitHostPort(archiveLn.Addr().String())
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	b := &serveBackend{env: env, exe: exe, tg: newTGSession(ctx, 5*time.Minute), log: newLogger(env.Stderr)}
 	defer b.dropLogin(nil)
-	archiveDir := func() string {
-		if st, err := b.load(); err == nil {
-			return st.cfg.ArchiveDir
-		}
-		return st.cfg.ArchiveDir
-	}
-	srv, err := serve.New(b, archiveDir, port, archivePort)
+	srv, err := serve.New(b, port)
 	if err != nil {
 		return fail(err)
 	}
@@ -95,18 +77,10 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 		}
 		openURL(url)
 	}
-	if err := srv.Serve(ctx, ln, archiveLn); err != nil {
+	if err := srv.Serve(ctx, ln); err != nil {
 		return fail(err)
 	}
 	return 0
-}
-
-func nextPort(p string) string {
-	n, err := strconv.Atoi(p)
-	if err != nil || n >= 65535 {
-		return "0"
-	}
-	return strconv.Itoa(n + 1)
 }
 
 // serveBackend gives the web interface the real archive, schedule and Telegram.
@@ -210,7 +184,7 @@ func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Sta
 		var rec runRecord
 		_ = json.Unmarshal([]byte(r.Summary), &rec)
 		s.Runs = append(s.Runs, serve.Run{Started: r.Started, Finished: r.Finished, OK: r.OK,
-			NewMessages: rec.NewMessages, NewMedia: rec.NewMedia, Errors: append(rec.SyncErrors, rec.BackupErrors...)})
+			NewMessages: rec.NewMessages, NewMedia: rec.NewMedia, Errors: append(rec.SyncErrors, rec.BackupErrors...), Log: rec.Log})
 	}
 	return nil
 }
@@ -712,4 +686,47 @@ func (b *serveBackend) logger() *slog.Logger {
 		return slog.New(slog.DiscardHandler)
 	}
 	return b.log
+}
+
+// OpenArchive shows html/index.html in the default browser: the pages work
+// straight from the disk.
+func (b *serveBackend) OpenArchive() error {
+	st, err := b.load()
+	if err != nil {
+		return err
+	}
+	index := filepath.Join(st.cfg.ArchiveDir, "html", "index.html")
+	if !isFile(index) {
+		return fmt.Errorf("%w: the archive has no pages yet: they are drawn after the first download", serve.ErrBadRequest)
+	}
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, index)
+	}
+	return exec.Command("open", index).Run()
+}
+
+// Snapshots lists the snapshots in a backup place, by its position in the
+// config (the page never sends a place itself).
+func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapshot, error) {
+	st, err := b.load()
+	if err != nil {
+		return nil, err
+	}
+	repos := st.cfg.Backup.Repositories
+	if place < 0 || place >= len(repos) {
+		return nil, fmt.Errorf("%w: no backup place %d", serve.ErrBadRequest, place)
+	}
+	o, err := backupOptions(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	snaps, err := backup.Snapshots(ctx, o, repos[place])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]serve.Snapshot, len(snaps))
+	for i, sn := range snaps {
+		out[i] = serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host}
+	}
+	return out, nil
 }

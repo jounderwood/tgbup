@@ -79,3 +79,7 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 10px; margin-to
 .choices { display: grid; gap: 4px; }
 code { font: 12px ui-monospace, Menlo, monospace; }
 section.step { margin: 0; }
+.chatpicker { margin-top: 12px; }
+.runs tr.details td { background: var(--bg); }
+.runs tr.details pre.log { max-height: 320px; }
+ul.snapshots { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
