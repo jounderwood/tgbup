@@ -28,6 +28,7 @@ commands:
   files     rebuild files/, the readable view of downloaded media
   render    redraw html/ and md/ from the archive (--full: every page)
   export    pack a chat, topic or period with its media into a zip
+  serve     web page on this computer: status, update now, chat list, the archive (--open)
   version   print version
 `
 
@@ -80,6 +81,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return cmdRender(ctx, args[1:], env)
 	case "export":
 		return cmdExport(ctx, args[1:], env)
+	case "serve":
+		return cmdServe(ctx, args[1:], env)
 	default:
 		fmt.Fprintf(env.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2

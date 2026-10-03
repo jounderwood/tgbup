@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="tgbup-token" content="{{.Token}}">
+<title>tgbup</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/common.js" defer></script>
+<script src="/static/overview.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <b class="logo">tgbup</b>
+  <nav><a href="/" class="on">Overview</a><a href="/chats">Chats</a><a href="/archive/html/" id="archive-link">Archive</a></nav>
+  <span class="host" id="host"></span>
+</header>
+<main>
+  <ul class="problems" id="problems" hidden></ul>
+  <section class="cards">
+    <div class="box" id="run-box">
+      <h2>Last run</h2>
+      <div id="last-run" class="big">…</div>
+      <div id="last-run-detail" class="muted"></div>
+      <ul id="last-run-errors" class="errors"></ul>
+      <button id="run-now" type="button">Update now</button>
+      <span id="run-state" class="muted"></span>
+    </div>
+    <div class="box">
+      <h2>Archive</h2>
+      <div id="archive" class="big">…</div>
+      <div id="archive-detail" class="muted"></div>
+    </div>
+    <div class="box">
+      <h2>Backups</h2>
+      <ul id="backups" class="plain"></ul>
+    </div>
+    <div class="box">
+      <h2>Schedule</h2>
+      <div id="schedule"></div>
+      <div id="alerts" class="muted"></div>
+    </div>
+  </section>
+  <section id="log-box" hidden>
+    <h2>Run log <span class="muted" id="log-note"></span></h2>
+    <pre id="log" class="log"></pre>
+  </section>
+  <section>
+    <h2>Recent runs</h2>
+    <table class="runs">
+      <thead><tr><th>Started</th><th>Took</th><th>Result</th><th class="num">New messages</th><th class="num">New files</th></tr></thead>
+      <tbody id="runs"></tbody>
+    </table>
+  </section>
+  <div id="toast" class="toast" hidden></div>
+</main>
+</body>
+</html>

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -45,4 +46,10 @@ func TestRunVersion(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "dev" {
 		t.Fatalf("got %q", out.String())
 	}
+}
+
+func TestMain(m *testing.M) {
+	// Tests take locks for real; nothing else holds them for an instant.
+	lockPatience = 0
+	os.Exit(m.Run())
 }

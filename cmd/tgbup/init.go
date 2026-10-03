@@ -1119,6 +1119,7 @@ func (w *wizard) finish(ctx context.Context, skipped []string) {
 		fmt.Fprintf(w.out, "  read it:   open %s\n", tildePath(index, st.paths.Home))
 	}
 	fmt.Fprintf(w.out, "  schedule:  tgbup schedule status · log %s\n", tildePath(filepath.Join(st.paths.StateDir, "logs", "run.log"), st.paths.Home))
+	fmt.Fprintln(w.out, "  web page:  tgbup serve --open (status, update now, chat list)")
 	fmt.Fprintln(w.out, "  settings:  tgbup init again, or tgbup setup for the chat list")
 	if _, err := os.Stat(index); err == nil && w.canOpen() {
 		if ok, _ := w.yes(ctx, "Open the archive in the browser?", true); ok {
