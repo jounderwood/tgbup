@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -23,10 +22,10 @@ func rebuildFiles(ctx context.Context, db *store.Store, archiveDir string) (brow
 
 // cmdFiles rebuilds files/ from the archive alone, without Telegram.
 func cmdFiles(ctx context.Context, env Env) int {
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
-	st, err := loadSetup(env, true)
+	log := newLogger(env.Stderr)
+	st, err := loadLocalSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
+		fmt.Fprintln(env.Stderr, "tgbup files:", err)
 		return 1
 	}
 	release, err := acquireLock(st.paths.Lock())
@@ -50,6 +49,6 @@ func cmdFiles(ctx context.Context, env Env) int {
 		log.Error("build files view", "err", err)
 		return 1
 	}
-	fmt.Fprintf(env.Stdout, "files_linked=%d files_missing=%d in %s\n", res.Linked, res.Missing, filepath.Join(st.cfg.ArchiveDir, browse.Dir))
+	printFiles(env.Stdout, res, filepath.Join(st.cfg.ArchiveDir, browse.Dir))
 	return 0
 }

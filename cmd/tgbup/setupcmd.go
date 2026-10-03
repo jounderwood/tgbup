@@ -145,7 +145,7 @@ func (s *setupDialog) run() bool {
 		width = max(width, displayWidth(g.Title))
 	}
 	for {
-		fmt.Fprintf(s.out, "\nSelected: %d chats\n", len(s.st.Chats))
+		fmt.Fprintf(s.out, "\nSelected: %s\n", plural(len(s.st.Chats), "chat"))
 		for i, g := range s.groups {
 			fmt.Fprintf(s.out, "  %d) %s  (%d, selected %d)\n", i+1, padRight(g.Title, width), len(g.Chats), s.st.Chats.Count(g.Chats))
 		}
@@ -248,7 +248,7 @@ func (s *setupDialog) editList(title string, chats []tgclient.Dialog) bool {
 
 func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pages int, visible []tgclient.Dialog) {
 	s.loadRows(visible)
-	fmt.Fprintf(s.out, "\n%s · page %d/%d · %d chats · %d selected\n", title, page+1, pages, len(chats), s.st.Chats.Count(chats))
+	fmt.Fprintf(s.out, "\n%s · page %d/%d · %s · %d selected\n", title, page+1, pages, plural(len(chats), "chat"), s.st.Chats.Count(chats))
 	if len(chats) == 0 {
 		fmt.Fprintln(s.out, "  (empty)")
 		return
@@ -371,7 +371,7 @@ func (s *setupDialog) confirm() (save, ok bool) {
 	}
 	rule := strings.Repeat("─", headerWidth)
 	fmt.Fprintf(s.out, "\nConfig to write to %s:\n%s\n%s%s\n", s.cfgPath, rule, text, rule)
-	ans, ok := s.ask(fmt.Sprintf("Write to %s (%d chats)? [y/N]: ", s.cfgPath, len(items)))
+	ans, ok := s.ask(fmt.Sprintf("Write to %s (%s)? [y/N]: ", s.cfgPath, plural(len(items), "chat")))
 	if !ok {
 		return false, false
 	}
@@ -468,7 +468,7 @@ func chooseChats(ctx context.Context, st setup, in *lineReader, out, errOut io.W
 		if err := config.WriteTargets(st.paths.Config, sel); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "wrote %d chats to %s\n", len(sel.Chats), st.paths.Config)
+		fmt.Fprintf(out, "wrote %s to %s\n", plural(len(sel.Chats), "chat"), st.paths.Config)
 		saved = true
 		return nil
 	})

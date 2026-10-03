@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
@@ -751,7 +750,7 @@ func (w *wizard) firstSync(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
-	log := slog.New(slog.NewTextHandler(w.env.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	log := newLogger(w.env.Stderr)
 	// Takeout gets higher limits for a full export; Telegram asks to allow it in the app first.
 	takeout := true
 	for {
@@ -826,14 +825,6 @@ func lastRunOK(ctx context.Context, archiveDir string) (bool, error) {
 		return false, err
 	}
 	return runs[len(runs)-1].OK, nil
-}
-
-// plural writes "1 chat", "2 chats", "1 234 messages".
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return groupDigits(n) + " " + noun + "s"
 }
 
 func runTimes() []string {

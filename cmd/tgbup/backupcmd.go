@@ -84,14 +84,14 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
+	log := newLogger(env.Stderr)
 	st, err := loadLocalSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
+		fmt.Fprintln(env.Stderr, "tgbup backup:", err)
 		return 1
 	}
 	if len(st.cfg.Backup.Repositories) == 0 {
-		fmt.Fprintln(env.Stderr, "tgbup backup: backup.repositories is empty in the config")
+		fmt.Fprintln(env.Stderr, "tgbup backup: no backup storage set up yet: run tgbup init")
 		return 1
 	}
 	o, err := backupOptions(ctx, st)
@@ -138,7 +138,7 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 
 // cmdRun is what the schedule starts: sync, backup, record, notify.
 func cmdRun(ctx context.Context, env Env) int {
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
+	log := newLogger(env.Stderr)
 	st, err := loadSetup(env, true)
 	if err != nil {
 		return failEarly(ctx, log, botFromSecrets(env), "load the setup", err)
@@ -191,7 +191,7 @@ func cmdNotify(ctx context.Context, args []string, env Env) int {
 	}
 	bot := notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID}
 	if !bot.Enabled() {
-		fmt.Fprintln(env.Stderr, "tgbup notify: set BOT_TOKEN and BOT_CHAT_ID in secrets.env")
+		fmt.Fprintln(env.Stderr, "tgbup notify: the alerts bot is not set up: run tgbup init")
 		return 1
 	}
 	if err := bot.Send(ctx, "✅ tgbup on "+hostname()+": notifications work"); err != nil {

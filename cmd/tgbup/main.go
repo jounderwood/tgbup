@@ -13,6 +13,8 @@ var version = "dev"
 
 const usage = `usage: tgbup <command> [flags]
 
+Start with tgbup init: it sets everything up step by step.
+
 commands:
   init      set everything up step by step (run again any time to continue or change)
   login     interactive Telegram login, stores the session
@@ -21,7 +23,7 @@ commands:
   run       sync, back up and notify: what the schedule starts
   backup    snapshot the archive into the restic repositories (--init: create them)
   deps      find or download restic and rclone
-  notify    notify test: send a test message through the bot
+  notify    notify test: send a test message through the alerts bot
   schedule  install|uninstall|status: start tgbup run 4 times a day (launchd)
   files     rebuild files/, the readable view of downloaded media
   render    redraw html/ and md/ from the archive (--full: every page)
@@ -48,6 +50,9 @@ func run(ctx context.Context, args []string, env Env) int {
 		return 2
 	}
 	switch args[0] {
+	case "help", "-h", "--help":
+		fmt.Fprint(env.Stdout, usage)
+		return 0
 	case "version":
 		fmt.Fprintln(env.Stdout, version)
 		return 0

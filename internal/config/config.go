@@ -120,7 +120,7 @@ func (c Config) validate(requireTargets bool) error {
 		errs = append(errs, errors.New("archive_dir is empty"))
 	}
 	if requireTargets && len(c.Targets.Folders) == 0 && len(c.Targets.Include) == 0 {
-		errs = append(errs, errors.New("targets: set at least one of folders or include"))
+		errs = append(errs, errors.New("no chats chosen yet: run tgbup init (or tgbup setup)"))
 	}
 	for _, r := range append(slices.Clone(c.Targets.Include), c.Targets.Exclude...) {
 		_, isUser := r.Username()

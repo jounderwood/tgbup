@@ -61,7 +61,7 @@ func LoadSecrets(path string, getenv func(string) string) (Secrets, error) {
 
 func (s Secrets) RequireTelegram() error {
 	if s.APIID == 0 || s.APIHash == "" {
-		return errors.New("TG_API_ID and TG_API_HASH are required (create an app at https://my.telegram.org)")
+		return errors.New("no Telegram API keys yet: run tgbup init (or put TG_API_ID and TG_API_HASH from https://my.telegram.org into secrets.env)")
 	}
 	return nil
 }

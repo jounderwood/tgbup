@@ -68,7 +68,7 @@ func TestFilesCommandBuildsTheView(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("files/ view not built:\n%s", out)
 	}
-	if !strings.Contains(out.String(), "files_linked=1") {
+	if !strings.Contains(out.String(), "files/: 1 linked") {
 		t.Errorf("output = %q", out.String())
 	}
 }
@@ -95,11 +95,11 @@ func TestRenderCommandBuildsTheSite(t *testing.T) {
 			t.Errorf("missing %s:\n%s", p, out)
 		}
 	}
-	if !strings.Contains(out.String(), "rendered=1 unchanged=0") {
+	if !strings.Contains(out.String(), "pages: 1 redrawn · 0 unchanged") {
 		t.Errorf("output = %q", out.String())
 	}
 	out.Reset()
-	if code := run(context.Background(), []string{"render", "--full"}, env); code != 0 || !strings.Contains(out.String(), "rendered=1") {
+	if code := run(context.Background(), []string{"render", "--full"}, env); code != 0 || !strings.Contains(out.String(), "pages: 1 redrawn") {
 		t.Fatalf("--full: code %d, output %q", code, out.String())
 	}
 }

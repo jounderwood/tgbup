@@ -112,7 +112,7 @@ func TestExportChatWithMedia(t *testing.T) {
 	if has(names, "Mom/p1.html") {
 		t.Errorf("another chat leaked into the export: %v", names)
 	}
-	if !strings.Contains(out.String(), "2 messages, 1 files") {
+	if !strings.Contains(out.String(), "2 messages, 1 file,") {
 		t.Errorf("summary = %q", out.String())
 	}
 }
@@ -120,7 +120,7 @@ func TestExportChatWithMedia(t *testing.T) {
 func TestExportTopicPeriodWithoutMedia(t *testing.T) {
 	env, home, out := exportEnv(t)
 	zipPath := filepath.Join(home, "x.zip")
-	args := []string{"export", "family", "--topic", "expenses", "--from", "2026-03", "--to", "2026-03", "--no-media", "-o", zipPath}
+	args := []string{"export", "fam", "--topic", "expenses", "--from", "2026-03", "--to", "2026-03", "--no-media", "-o", zipPath}
 	if code := run(context.Background(), args, env); code != 0 {
 		t.Fatalf("exit code = %d:\n%s", code, out)
 	}
@@ -156,7 +156,8 @@ func TestExportRejectsUnknownOrAmbiguousChat(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"export", "Twins", "-o", filepath.Join(home, "a.zip")}, "-21, -20"},
+		{[]string{"export", "Twins", "-o", filepath.Join(home, "a.zip")}, "twins (-21), Twins (-20)"},
+		{[]string{"export", "twi", "-o", filepath.Join(home, "a.zip")}, "matches several chats"},
 		{[]string{"export", "Nobody", "-o", filepath.Join(home, "a.zip")}, "no archived chat"},
 		{[]string{"export", "Family", "--topic", "Nope", "-o", filepath.Join(home, "a.zip")}, "no topic"},
 		{[]string{"export", "Family"}, "-o"},

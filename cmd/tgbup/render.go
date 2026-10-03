@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -19,7 +18,7 @@ func renderArchive(ctx context.Context, db *store.Store, archiveDir string, full
 }
 
 func printRender(w io.Writer, r render.Result, err error) {
-	fmt.Fprintf(w, "rendered=%d unchanged=%d\n", r.Pages, r.Skipped)
+	fmt.Fprintf(w, "pages: %s redrawn · %s unchanged\n", groupDigits(r.Pages), groupDigits(r.Skipped))
 	for _, e := range r.Errors {
 		fmt.Fprintf(w, "render: %v\n", e)
 	}
@@ -36,10 +35,10 @@ func cmdRender(ctx context.Context, args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
-	st, err := loadSetup(env, true)
+	log := newLogger(env.Stderr)
+	st, err := loadLocalSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
+		fmt.Fprintln(env.Stderr, "tgbup render:", err)
 		return 1
 	}
 	release, err := acquireLock(st.paths.Lock())

@@ -50,20 +50,37 @@ func (s syncSummary) print(w io.Writer) {
 	for _, n := range s.notes {
 		fmt.Fprintf(w, "warning: %s\n", n)
 	}
-	fmt.Fprintf(w, "chats_synced=%d new_messages=%d deferred=%d newly_inaccessible=%v chat_errors=%d\n",
-		s.sync.Chats, s.sync.NewMessages, len(s.sync.Deferred), s.sync.NewlyInaccessible, len(s.sync.Failed))
+	fmt.Fprintf(w, "messages: %s new in %s", groupDigits(s.sync.NewMessages), plural(s.sync.Chats, "chat"))
+	if n := len(s.sync.Deferred); n > 0 {
+		fmt.Fprintf(w, " · %d deferred to the next run", n)
+	}
+	if n := len(s.sync.Failed); n > 0 {
+		fmt.Fprintf(w, " · %d failed", n)
+	}
+	fmt.Fprintln(w)
+	if len(s.sync.NewlyInaccessible) > 0 {
+		fmt.Fprintf(w, "  no longer accessible (left or removed): %v\n", s.sync.NewlyInaccessible)
+	}
 	for id, err := range s.sync.Failed {
 		fmt.Fprintf(w, "  chat %d: %v\n", id, err)
 	}
-	fmt.Fprintf(w, "media_done=%d media_skipped=%d media_deferred=%d media_failed=%d\n",
-		s.media.Done, s.media.Skipped, s.media.Deferred, s.media.Failed)
+	fmt.Fprintf(w, "media: %s downloaded", groupDigits(s.media.Done))
+	for _, part := range []struct {
+		n    int
+		what string
+	}{{s.media.Skipped, "skipped by settings"}, {s.media.Deferred, "deferred"}, {s.media.Failed, "failed"}} {
+		if part.n > 0 {
+			fmt.Fprintf(w, " · %s %s", groupDigits(part.n), part.what)
+		}
+	}
+	fmt.Fprintln(w)
 	for _, err := range s.media.Errors {
 		fmt.Fprintf(w, "  %v\n", err)
 	}
 	if s.media.LocalErr != nil {
 		fmt.Fprintf(w, "media stopped by a local disk error: %v\n", s.media.LocalErr)
 	}
-	fmt.Fprintf(w, "files_linked=%d files_missing=%d\n", s.files.Linked, s.files.Missing)
+	printFiles(w, s.files, "")
 	if s.filesErr != nil {
 		fmt.Fprintf(w, "files view: %v\n", s.filesErr)
 	}
@@ -82,11 +99,11 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "--dry-run and --takeout cannot be combined")
 		return 2
 	}
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
+	log := newLogger(env.Stderr)
 
 	st, err := loadSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
+		fmt.Fprintln(env.Stderr, "tgbup sync:", err)
 		return 1
 	}
 	if *dry {
@@ -209,7 +226,7 @@ func selectChats(ctx context.Context, api *tgclient.API, raw *tg.Client, cfg con
 	for _, w := range migrationWarnings {
 		log.Warn(w)
 	}
-	log.Info("targets selected", "count", len(targets))
+	log.Info(fmt.Sprintf("archiving %s", plural(len(targets), "chat")))
 	notes := tgclient.TopicExclusionNotes(targets, cfg.Targets)
 	return chatSelection{self: self, dialogs: dialogs, targets: targets, warnings: warnings, notes: notes}, nil
 }

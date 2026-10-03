@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 
 	"gitlab.com/joeunderwood/tgbup/internal/config"
@@ -35,11 +36,13 @@ func loadLocalSetup(env Env, requireConfig bool) (setup, error) {
 		load = config.LoadWithoutTargets
 	}
 	cfg, err := load(p.Config, p.Home)
-	if err != nil {
-		if requireConfig || !errors.Is(err, fs.ErrNotExist) {
-			return setup{}, err
-		}
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && requireConfig:
+		return setup{}, fmt.Errorf("no config at %s yet: run tgbup init", p.Config)
+	case errors.Is(err, fs.ErrNotExist):
 		cfg = config.Default()
+	case err != nil:
+		return setup{}, err
 	}
 	sec, err := config.LoadSecrets(p.Secrets, env.Getenv)
 	if err != nil {

@@ -69,7 +69,7 @@ backup:
 
 func TestLoadRejectsInvalid(t *testing.T) {
 	cases := map[string]struct{ body, want string }{
-		"no targets":   {`archive_dir: /a`, "set at least one of folders or include"},
+		"no targets":   {`archive_dir: /a`, "no chats chosen yet"},
 		"unknown kind": {"targets: {folders: [x]}\nmedia: {skip_kinds: [gif]}", `unknown kind "gif"`},
 		"bad workers":  {"targets: {folders: [x]}\nmedia: {workers: 0}", "media.workers must be 1..16"},
 		"bad peer":     {"targets: {include: [abc]}", `targets: invalid peer "abc"`},

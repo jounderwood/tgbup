@@ -30,7 +30,7 @@ type Options struct {
 	TestDC bool
 }
 
-var ErrNotLoggedIn = errors.New("telegram session is not authorized: run `tgbup login`")
+var ErrNotLoggedIn = errors.New("not logged in to Telegram: run tgbup init (or tgbup login)")
 
 func Run(ctx context.Context, o Options, fn func(ctx context.Context, c *telegram.Client) error) error {
 	if err := os.MkdirAll(filepath.Dir(o.SessionPath), 0o700); err != nil {

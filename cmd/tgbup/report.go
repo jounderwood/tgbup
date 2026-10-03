@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"golang.org/x/term"
 
+	"gitlab.com/joeunderwood/tgbup/internal/browse"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
@@ -30,7 +35,7 @@ func printReport(w io.Writer, chats []stats.ChatStats) {
 			types = addTypes(types, c.Types)
 		}
 	}
-	fmt.Fprintf(w, "would archive %d chats, ~%s messages:\n", len(chats), groupDigits(saved))
+	fmt.Fprintf(w, "would archive %s, ~%s:\n", plural(len(chats), "chat"), plural(saved, "message"))
 	block := map[int64]int{}
 	for i, c := range chats {
 		block[c.Item.ID] = i + 1
@@ -55,7 +60,7 @@ func printReport(w io.Writer, chats []stats.ChatStats) {
 			fmt.Fprintf(w, "   warning: excluded topic #%d is not in the forum\n", id)
 		}
 	}
-	total := fmt.Sprintf("══ Total: %d chats, ~%s msgs saved", len(chats), groupDigits(saved))
+	total := fmt.Sprintf("══ Total: %s, ~%s msgs saved", plural(len(chats), "chat"), groupDigits(saved))
 	if t := typeList(types); t != "" {
 		total += " · " + t
 	}
@@ -148,6 +153,14 @@ func cleanTitle(s string, width int) string {
 	return truncateWidth(s, width)
 }
 
+// plural writes "1 chat", "2 chats", "1 234 messages".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return groupDigits(n) + " " + noun + "s"
+}
+
 func groupDigits(n int) string {
 	s := strconv.Itoa(n)
 	var out []byte
@@ -212,3 +225,66 @@ func statItems(targets []tgclient.Target) []stats.Item {
 	}
 	return items
 }
+
+// printFiles reports the files/ rebuild; dir is shown when given.
+func printFiles(w io.Writer, r browse.Result, dir string) {
+	fmt.Fprintf(w, "files/: %s linked", groupDigits(r.Linked))
+	if r.Missing > 0 {
+		fmt.Fprintf(w, " · %s not downloaded yet", groupDigits(r.Missing))
+	}
+	if dir != "" {
+		fmt.Fprintf(w, " → %s", dir)
+	}
+	fmt.Fprintln(w)
+}
+
+// newLogger writes plain lines for a person at a terminal and slog's text
+// format with timestamps elsewhere (the schedule's run.log).
+func newLogger(w io.Writer) *slog.Logger {
+	if isTerminal(w) {
+		return slog.New(&termHandler{w: w, mu: &sync.Mutex{}})
+	}
+	return slog.New(slog.NewTextHandler(w, nil))
+}
+
+type termHandler struct {
+	w     io.Writer
+	mu    *sync.Mutex
+	attrs []slog.Attr
+}
+
+func (h *termHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= slog.LevelInfo }
+
+func (h *termHandler) Handle(_ context.Context, r slog.Record) error {
+	var b strings.Builder
+	switch {
+	case r.Level >= slog.LevelError:
+		b.WriteString("error: ")
+	case r.Level >= slog.LevelWarn:
+		b.WriteString("warning: ")
+	}
+	b.WriteString(r.Message)
+	add := func(a slog.Attr) bool {
+		if a.Key == "err" {
+			b.WriteString(": " + a.Value.String())
+		} else {
+			fmt.Fprintf(&b, " %s=%v", a.Key, a.Value)
+		}
+		return true
+	}
+	for _, a := range h.attrs {
+		add(a)
+	}
+	r.Attrs(add)
+	b.WriteByte('\n')
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, err := io.WriteString(h.w, b.String())
+	return err
+}
+
+func (h *termHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return &termHandler{w: h.w, mu: h.mu, attrs: append(slices.Clone(h.attrs), as...)}
+}
+
+func (h *termHandler) WithGroup(string) slog.Handler { return h }

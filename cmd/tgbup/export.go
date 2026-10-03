@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,10 +62,10 @@ func cmdExport(ctx context.Context, args []string, env Env) int {
 		return usage("--from and --to take YYYY-MM")
 	}
 
-	log := slog.New(slog.NewTextHandler(env.Stderr, nil))
-	st, err := loadSetup(env, true)
+	log := newLogger(env.Stderr)
+	st, err := loadLocalSetup(env, true)
 	if err != nil {
-		log.Error("setup failed", "err", err)
+		fmt.Fprintln(env.Stderr, "tgbup export:", err)
 		return 1
 	}
 	db, err := store.Open(filepath.Join(st.cfg.ArchiveDir, "archive.sqlite"))
@@ -108,6 +107,13 @@ func resolveExport(ctx context.Context, db *store.Store, chat, topic string) ([]
 			found = append(found, c)
 		}
 	}
+	if len(found) == 0 && !strings.HasPrefix(chat, "@") && isID != nil {
+		for _, c := range chats {
+			if strings.Contains(strings.ToLower(c.Title), strings.ToLower(chat)) {
+				found = append(found, c)
+			}
+		}
+	}
 	// A forum and the group it was upgraded from usually share a title; the
 	// group's history comes with the forum anyway.
 	found = slices.DeleteFunc(found, func(c store.RenderChat) bool {
@@ -118,11 +124,11 @@ func resolveExport(ctx context.Context, db *store.Store, chat, topic string) ([]
 		return nil, nil, usageErr("no archived chat matches %q (use its title, @username or id)", chat)
 	case 1:
 	default:
-		ids := make([]string, len(found))
+		names := make([]string, len(found))
 		for i, c := range found {
-			ids[i] = strconv.FormatInt(c.ID, 10)
+			names[i] = fmt.Sprintf("%s (%d)", c.Title, c.ID)
 		}
-		return nil, nil, usageErr("%q matches several chats, pass one id: %s", chat, strings.Join(ids, ", "))
+		return nil, nil, usageErr("%q matches several chats, pass the full title or the id: %s", chat, strings.Join(names, ", "))
 	}
 	c := found[0]
 	ids := []int64{c.ID}
@@ -179,7 +185,7 @@ func export(ctx context.Context, db *store.Store, archiveDir string, opts render
 	if err := os.WriteFile(filepath.Join(tmp, "index.html"), []byte(redirect), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%d messages, %d files, ~%s\n", res.Messages, len(media), mib(size))
+	fmt.Fprintf(w, "%s, %s, ~%s\n", plural(res.Messages, "message"), plural(len(media), "file"), mib(size))
 	if missing > 0 {
 		fmt.Fprintf(w, "warning: %d files missing on disk, left out\n", missing)
 	}

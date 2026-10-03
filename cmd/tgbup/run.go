@@ -55,7 +55,7 @@ func runOnce(ctx context.Context, p runParts) int {
 	rep, configured := p.backup(ctx)
 	switch {
 	case !configured:
-		fmt.Fprintln(p.out, "backup: not configured")
+		fmt.Fprintln(p.out, "backup: no storage set up (tgbup init)")
 	case rep.Integrity != nil:
 		rec.BackupErrors = append(rec.BackupErrors, rep.Integrity.Error())
 	}
@@ -79,7 +79,7 @@ func runOnce(ctx context.Context, p runParts) int {
 		code = 1
 	}
 	if !p.bot.Enabled() {
-		fmt.Fprintln(p.out, "notify: not configured")
+		fmt.Fprintln(p.out, "alerts: no bot set up (tgbup init)")
 		return code
 	}
 	if !ok {
@@ -178,12 +178,18 @@ func printBackup(w io.Writer, r backup.Report) {
 		fmt.Fprintf(w, "backup: %v\n", r.Integrity)
 	}
 	for _, rr := range r.Repos {
-		switch {
-		case rr.Err != nil:
-			fmt.Fprintf(w, "backup %s: %v\n", rr.Repo, rr.Err)
-		default:
-			fmt.Fprintf(w, "backup %s: snapshot %s pruned=%v checked=%v\n", rr.Repo, shortID(rr.Snapshot), rr.Pruned, rr.Checked)
+		if rr.Err != nil {
+			fmt.Fprintf(w, "backup → %s: failed: %v\n", rr.Repo, rr.Err)
+			continue
 		}
+		extra := ""
+		if rr.Pruned {
+			extra += " · old snapshots pruned"
+		}
+		if rr.Checked {
+			extra += " · repository checked"
+		}
+		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", rr.Repo, shortID(rr.Snapshot), extra)
 	}
 }
 

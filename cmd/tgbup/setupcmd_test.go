@@ -129,7 +129,7 @@ func TestSetupStartsFromCurrentSelection(t *testing.T) {
 	if d.run() {
 		t.Fatal("q must not save")
 	}
-	wantOutput(t, out.String(), "Selected: 1 chats", "(2, selected 1)")
+	wantOutput(t, out.String(), "Selected: 1 chat", "(2, selected 1)")
 }
 
 func TestSetupDeclineAndSearch(t *testing.T) {
