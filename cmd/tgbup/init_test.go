@@ -105,38 +105,32 @@ func TestSetKeysValidatesAndSaves(t *testing.T) {
 	}
 }
 
-func TestSetPasswordGeneratesAndWaitsForSaved(t *testing.T) {
-	w, out, p := testWizard(t, "\nok\nsaved\n")
-	if err := w.setPassword(context.Background()); err != nil {
+func TestChoosePasswordGeneratesAndWaitsForSaved(t *testing.T) {
+	w, out, _ := testWizard(t, "\nok\nsaved\n")
+	pass, err := w.choosePassword(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	sec, _ := config.LoadSecrets(p.Secrets, func(string) string { return "" })
-	if !strings.Contains(out.String(), sec.ResticPassword) || len(sec.ResticPassword) != 35 {
-		t.Fatalf("password %q not shown or wrong length:\n%s", sec.ResticPassword, out.String())
+	if !strings.Contains(out.String(), pass) || len(pass) != 35 {
+		t.Fatalf("password %q not shown or wrong length:\n%s", pass, out.String())
 	}
 	if strings.Count(out.String(), "then type \"saved\"") != 2 {
 		t.Errorf("\"ok\" accepted as saved:\n%s", out.String())
 	}
 }
 
-func TestSetPasswordStopsWithoutSavingWhenUnconfirmed(t *testing.T) {
-	w, _, p := testWizard(t, "\n")
-	if err := w.setPassword(context.Background()); !errors.Is(err, errStopped) {
+func TestChoosePasswordStopsWhenUnconfirmed(t *testing.T) {
+	w, _, _ := testWizard(t, "\n")
+	if _, err := w.choosePassword(context.Background()); !errors.Is(err, errStopped) {
 		t.Fatalf("err = %v", err)
-	}
-	if _, err := os.Stat(p.Secrets); err == nil {
-		t.Fatal("a password nobody saved elsewhere was written")
 	}
 }
 
-func TestSetPasswordOwn(t *testing.T) {
-	w, out, p := testWizard(t, "n\nshort\nlong enough pass\nother one here\nlong enough pass\nlong enough pass\nsaved\n")
-	if err := w.setPassword(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	sec, _ := config.LoadSecrets(p.Secrets, func(string) string { return "" })
-	if sec.ResticPassword != "long enough pass" {
-		t.Fatalf("password = %q", sec.ResticPassword)
+func TestChoosePasswordOwn(t *testing.T) {
+	w, out, _ := testWizard(t, "n\nshort\nlong enough pass\nother one here\nlong enough pass\nlong enough pass\nsaved\n")
+	pass, err := w.choosePassword(context.Background())
+	if err != nil || pass != "long enough pass" {
+		t.Fatalf("password = %q, %v", pass, err)
 	}
 	for _, want := range []string{"too short", "do not match"} {
 		if !strings.Contains(out.String(), want) {
@@ -299,7 +293,11 @@ func TestTestServersLeaveScheduleAndPathAlone(t *testing.T) {
 		case "TGBUP_TEST_DC":
 			return "1"
 		case "TGBUP_CONFIG":
-			return filepath.Join(getenv("HOME"), "test.yaml")
+			return filepath.Join(getenv("HOME"), "test", "config.yaml")
+		case "TGBUP_SECRETS":
+			return filepath.Join(getenv("HOME"), "test", "secrets.env")
+		case "TGBUP_STATE_DIR":
+			return filepath.Join(getenv("HOME"), "test", "state")
 		}
 		return getenv(k)
 	}

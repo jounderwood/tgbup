@@ -30,6 +30,9 @@ import (
 var (
 	binPath string
 	fx      testenv.Fixture
+	// testSecrets and testState isolate the binary from the real secrets and
+	// state: a copy of the test-server session and of the API keys.
+	testSecrets, testState string
 )
 
 // The suite must never reach production Telegram: the Telegram client in
@@ -55,6 +58,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build tgbup: %v\n%s", err, out)
 		os.Exit(1)
 	}
+	if testSecrets, testState, err = testenv.IsolatedState(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -64,12 +71,13 @@ func TestMain(m *testing.M) {
 func testServerEnv(cfgPath string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "TGBUP_TEST_DC=") || strings.HasPrefix(kv, "TGBUP_CONFIG=") {
+		if strings.HasPrefix(kv, "TGBUP_TEST_DC=") || strings.HasPrefix(kv, "TGBUP_CONFIG=") ||
+			strings.HasPrefix(kv, "TGBUP_SECRETS=") || strings.HasPrefix(kv, "TGBUP_STATE_DIR=") {
 			continue
 		}
 		env = append(env, kv)
 	}
-	return append(env, "TGBUP_TEST_DC=1", "TGBUP_CONFIG="+cfgPath)
+	return append(env, "TGBUP_TEST_DC=1", "TGBUP_CONFIG="+cfgPath, "TGBUP_SECRETS="+testSecrets, "TGBUP_STATE_DIR="+testState)
 }
 
 func TestSyncEnvironmentIsPinnedToTestServers(t *testing.T) {

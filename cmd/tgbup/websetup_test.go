@@ -5,11 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/serve"
 )
 
@@ -87,4 +91,118 @@ func readSecrets(t *testing.T, home string) string {
 	t.Helper()
 	b, _ := os.ReadFile(filepath.Join(home, ".config", "tgbup", "secrets.env"))
 	return string(b)
+}
+
+// fakeAuth plays Telegram's side of a sign-in: code 12345, and with
+// twoFA, password "secret".
+type fakeAuth struct {
+	twoFA  bool
+	closed *int
+}
+
+func (f fakeAuth) SendCode(context.Context, string, auth.SendCodeOptions) (tg.AuthSentCodeClass, error) {
+	return &tg.AuthSentCode{PhoneCodeHash: "h"}, nil
+}
+
+func (f fakeAuth) SignIn(_ context.Context, _, code, hash string) (*tg.AuthAuthorization, error) {
+	switch {
+	case hash != "h" || code != "12345":
+		return nil, tgerr.New(400, "PHONE_CODE_INVALID")
+	case f.twoFA:
+		return nil, auth.ErrPasswordAuthNeeded
+	}
+	return &tg.AuthAuthorization{}, nil
+}
+
+func (f fakeAuth) Password(_ context.Context, pw string) (*tg.AuthAuthorization, error) {
+	if pw != "secret" {
+		return nil, tgerr.New(400, "PASSWORD_HASH_INVALID")
+	}
+	return &tg.AuthAuthorization{}, nil
+}
+
+func TestWebLoginStepByStep(t *testing.T) {
+	b, _ := webBackend(t)
+	b.loggedIn = false
+	closed := 0
+	b.dialLogin = func(context.Context, setup) (authFlow, func(), error) {
+		return fakeAuth{twoFA: true, closed: &closed}, func() { closed++ }, nil
+	}
+	ctx := context.Background()
+	act := func(name, body string) (any, error) { return b.SetupAction(ctx, name, []byte(body)) }
+
+	if _, err := act("login/signin", `{"code":"12345"}`); !errors.Is(err, serve.ErrBadRequest) {
+		t.Fatalf("sign in before a code was sent: %v", err)
+	}
+	if _, err := act("login/code", `{"phone":"79990001122"}`); !errors.Is(err, serve.ErrBadRequest) {
+		t.Fatalf("phone without +: %v", err)
+	}
+	if _, err := act("login/code", `{"phone":"+7 999 000 11 22"}`); err != nil {
+		t.Fatal(err)
+	}
+	// A second "Send code" closes the first connection instead of leaking it.
+	if _, err := act("login/code", `{"phone":"+79990001122"}`); err != nil || closed != 1 {
+		t.Fatalf("second code: %v, closed %d", err, closed)
+	}
+	if _, err := act("login/signin", `{"code":"00000"}`); err == nil || !strings.Contains(err.Error(), "wrong code") {
+		t.Fatalf("wrong code: %v", err)
+	}
+	if _, err := act("login/password", `{"password":"secret"}`); !errors.Is(err, serve.ErrBadRequest) {
+		t.Fatalf("password before the code: %v", err)
+	}
+	res, err := act("login/signin", `{"code":"12345"}`)
+	if err != nil || !res.(map[string]bool)["password_needed"] {
+		t.Fatalf("code: %v %v", res, err)
+	}
+	if status, done, _ := b.checkLoginCached(ctx); done || status != "signing in…" {
+		t.Fatalf("while signing in: %q %v (must not open a second client)", status, done)
+	}
+	if _, err := act("login/password", `{"password":"nope"}`); err == nil || !strings.Contains(err.Error(), "wrong password") {
+		t.Fatalf("wrong password: %v", err)
+	}
+	if res, err := act("login/password", `{"password":"secret"}`); err != nil || !res.(map[string]bool)["done"] {
+		t.Fatalf("password: %v %v", res, err)
+	}
+	if closed != 2 || b.login != nil || !b.loggedIn {
+		t.Fatalf("after sign-in: closed %d, login %v, loggedIn %v", closed, b.login, b.loggedIn)
+	}
+	// New keys may belong to another app: the session is not assumed to work.
+	if _, err := act("keys", `{"api_id":"12345","api_hash":"0123456789abcdef0123456789abcdef"}`); err != nil || b.loggedIn {
+		t.Fatalf("keys: %v, loggedIn %v", err, b.loggedIn)
+	}
+}
+
+func TestAdoptRestoredConfig(t *testing.T) {
+	w, _, p := testWizard(t, "")
+	snap := []byte("archive_dir: ~/Old\ntargets:\n  include: [10] # Mom\nbackup:\n  repositories: [~/TelegramBackup]\n")
+	// A config with backups set first and no chats: the snapshot's is taken, places from both.
+	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{"rclone:gdrive:TelegramBackup"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := w.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := adoptRestoredConfig(st, snap, filepath.Join(p.Home, "New"), filepath.Join(p.Home, "Ext"))
+	if err != nil || !adopted {
+		t.Fatalf("adopted %v, %v", adopted, err)
+	}
+	cfg, err := config.Load(p.Config, p.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ArchiveDir != filepath.Join(p.Home, "New") || len(cfg.Targets.Include) != 1 ||
+		!slices.Equal(cfg.Backup.Repositories, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup", filepath.Join(p.Home, "Ext")}) {
+		t.Fatalf("config = %+v", cfg)
+	}
+	// A config with chats keeps its archive folder: restoring elsewhere only to look must not move it.
+	if st, err = w.load(); err != nil {
+		t.Fatal(err)
+	}
+	if adopted, err := adoptRestoredConfig(st, snap, filepath.Join(p.Home, "look"), ""); err != nil || adopted {
+		t.Fatalf("second adopt %v, %v", adopted, err)
+	}
+	if cfg, _ := config.Load(p.Config, p.Home); cfg.ArchiveDir != filepath.Join(p.Home, "New") {
+		t.Fatalf("archive_dir moved to %s", cfg.ArchiveDir)
+	}
 }

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"time"
 )
 
@@ -74,6 +76,12 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 		return res, err
 	}
+	// Left by a restore that was killed; only tgbup writes these folders.
+	if stale, _ := filepath.Glob(filepath.Join(archiveDir, ".tgbup-restore-*")); len(stale) > 0 {
+		for _, d := range stale {
+			_ = os.RemoveAll(d)
+		}
+	}
 	tmp := filepath.Join(archiveDir, ".tgbup-restore-"+now.Format("20060102-150405"))
 	defer os.RemoveAll(tmp)
 	if _, err := o.restic(ctx, repo, "restore", res.Snapshot.ID, "--target", tmp); err != nil {
@@ -109,12 +117,17 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 			}
 		}
 	}
-	if err := os.Rename(filepath.Join(work, "archive.sqlite"), db); err != nil {
+	if err := moveFile(filepath.Join(work, "archive.sqlite"), db); err != nil {
 		return res, err
 	}
 	if media != "" {
 		if res.MediaAdded, res.MediaKept, err = mergeMedia(media, filepath.Join(archiveDir, "media")); err != nil {
-			return res, err
+			where := "there was none before"
+			if res.MovedAside != "" {
+				where = "the previous one is " + res.MovedAside
+			}
+			return res, fmt.Errorf("the restored database is in place (%s), but moving the media stopped after %d files: %w; run the restore again to add the rest",
+				where, res.MediaAdded, err)
 		}
 	}
 	return res, nil
@@ -122,10 +135,7 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 
 // mergeMedia moves the files of src missing in dst into it.
 func mergeMedia(src, dst string) (added, kept int, err error) {
-	if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) {
-		if err := os.Rename(src, dst); err != nil {
-			return 0, 0, err
-		}
+	if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) && os.Rename(src, dst) == nil {
 		err = filepath.WalkDir(dst, func(_ string, d fs.DirEntry, err error) error {
 			if err == nil && !d.IsDir() {
 				added++
@@ -150,10 +160,45 @@ func mergeMedia(src, dst string) (added, kept int, err error) {
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 			return err
 		}
+		if err := moveFile(p, to); err != nil {
+			return err
+		}
 		added++
-		return os.Rename(p, to)
+		return nil
 	})
 	return added, kept, err
+}
+
+// moveFile renames, or copies when the target is on another volume (media/
+// may be a link to an external disk).
+func moveFile(from, to string) error {
+	err := os.Rename(from, to)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	part := to + ".part"
+	dst, err := os.OpenFile(part, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		os.Remove(part)
+		return err
+	}
+	if err := errors.Join(dst.Sync(), dst.Close()); err != nil {
+		os.Remove(part)
+		return err
+	}
+	if err := os.Rename(part, to); err != nil {
+		return err
+	}
+	return os.Remove(from)
 }
 
 func isFile(p string) bool {

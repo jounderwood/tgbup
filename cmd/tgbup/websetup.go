@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gotd/td/telegram"
@@ -87,6 +88,8 @@ func (b *serveBackend) quietWizard(out io.Writer) *wizard {
 
 // SetupState reports every step; a step whose check fails shows the error as its status.
 func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
+	b.dbMu.RLock()
+	defer b.dbMu.RUnlock()
 	w := b.quietWizard(io.Discard)
 	var s setupState
 	add := func(id, title string, optional bool, check func(context.Context) (string, bool, error)) *setupStep {
@@ -128,7 +131,7 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 		s.Archive.HasMessages = n > 0
 	}
 	local, extras := splitRepos(st.cfg.Backup.Repositories, home)
-	s.Backup = backupForm{Local: tildePath(local, home), DefaultDir: defaultBackupDir, HasPassword: st.secrets.ResticPassword != "",
+	s.Backup = backupForm{Local: tildePath(local, home), DefaultDir: backupDirDefault(st), HasPassword: st.secrets.ResticPassword != "",
 		Choices: storageChoices(home, "/Volumes")}
 	for _, e := range extras {
 		s.Backup.Extras = append(s.Backup.Extras, tildePath(e, home))
@@ -136,8 +139,8 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 	for i := range s.Backup.Choices {
 		s.Backup.Choices[i].Repo = tildePath(s.Backup.Choices[i].Repo, home)
 	}
-	if def := expandTilde(defaultBackupDir, home); isDir(def) {
-		s.Backup.Places = append(s.Backup.Places, storageChoice{Label: defaultBackupDir + " (folder on this Mac)", Repo: defaultBackupDir})
+	if def := backupDirDefault(st); isDir(expandTilde(def, home)) {
+		s.Backup.Places = append(s.Backup.Places, storageChoice{Label: def + " (folder on this Mac)", Repo: def})
 	}
 	s.Backup.Places = append(s.Backup.Places, s.Backup.Choices...)
 	b.mu.Lock()
@@ -156,10 +159,14 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 // the page reads the state after every action.
 func (b *serveBackend) checkLoginCached(ctx context.Context) (string, bool, error) {
 	b.mu.Lock()
-	ok := b.loggedIn
+	ok, signingIn := b.loggedIn, b.login != nil
 	b.mu.Unlock()
 	if ok {
 		return "logged in", true, nil
+	}
+	if signingIn {
+		// A second client on the same session file would race the sign-in's.
+		return "signing in…", false, nil
 	}
 	status, done, err := b.quietWizard(io.Discard).checkLogin(ctx)
 	if done {
@@ -196,7 +203,19 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 	}
 	if name == "keys" {
 		_, err := saveKeys(b.env, req.APIID, req.APIHash)
+		if err == nil {
+			// Other keys: the session may not be valid any more.
+			b.dropLogin(nil)
+			b.mu.Lock()
+			b.loggedIn, b.dialogs = false, nil
+			b.mu.Unlock()
+		}
 		return nil, err
+	}
+	if strings.HasPrefix(name, "login/") {
+		// One sign-in step at a time: two "Send code" clicks must not open two connections.
+		b.loginMu.Lock()
+		defer b.loginMu.Unlock()
 	}
 	st, err := b.load()
 	if err != nil {
@@ -264,11 +283,15 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		if err := ensureRcloneFor(ctx, st, req.Repo, b.quietWizard(io.Discard)); err != nil {
 			return nil, err
 		}
-		res, err := restoreArchive(ctx, st, req.Repo, req.Password, req.Snapshot, req.Dir)
+		// Not tied to the page: closing the tab must not stop a restore half-way.
+		b.dbMu.Lock()
+		res, err := restoreArchive(context.WithoutCancel(ctx), st, req.Repo, req.Password, req.Snapshot, req.Dir)
+		b.dbMu.Unlock()
 		if err != nil {
 			return nil, err
 		}
-		return res, nil
+		return map[string]any{"snapshot": res.Snapshot.ShortID, "media_added": res.MediaAdded, "media_kept": res.MediaKept,
+			"moved_aside": res.MovedAside, "config_adopted": res.ConfigAdopted, "password_kept": res.PasswordKept}, nil
 	}
 	return nil, badInput("unknown setup action %q", name)
 }
@@ -307,7 +330,7 @@ func (b *serveBackend) saveBackupForm(ctx context.Context, st setup, enabled boo
 	if password != "" && !saved {
 		return nil, badInput("save the password in your password manager and tick the box first")
 	}
-	if err := saveBackup(st, repos, password); err != nil {
+	if err := saveBackup(ctx, st, repos, password); err != nil {
 		return nil, err
 	}
 	var log bytes.Buffer
@@ -326,49 +349,50 @@ activate
 set f to choose folder with prompt "Choose a folder for tgbup"
 end tell
 POSIX path of f`
-	out, err := exec.CommandContext(ctx, "osascript", "-e", script).Output()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		// Cancel in the dialog.
-		return map[string]string{"path": ""}, nil
+		if strings.Contains(stderr.String(), "-128") { // Cancel in the dialog
+			return map[string]string{"path": ""}, nil
+		}
+		return nil, fmt.Errorf("the folder dialog did not open (%s): allow tgbup to control System Events in System Settings → Privacy & Security → Automation, or type the path",
+			strings.TrimSpace(stderr.String()))
 	}
 	return map[string]string{"path": strings.TrimRight(strings.TrimSpace(string(out)), "/")}, nil
+}
+
+// authFlow is the part of gotd's auth client a web sign-in uses.
+type authFlow interface {
+	SendCode(ctx context.Context, phone string, options auth.SendCodeOptions) (tg.AuthSentCodeClass, error)
+	SignIn(ctx context.Context, phone, code, codeHash string) (*tg.AuthAuthorization, error)
+	Password(ctx context.Context, password string) (*tg.AuthAuthorization, error)
 }
 
 // webLogin is a Telegram sign-in in progress: the connection stays open
 // between the page's requests (phone, code, 2FA password).
 type webLogin struct {
-	client   *telegram.Client
-	stop     context.CancelFunc
-	done     chan struct{}
+	auth     authFlow
+	close    func()
 	phone    string
 	hash     string
 	password bool
 }
 
-func (l *webLogin) close() {
-	l.stop()
-	<-l.done
-}
+// loginIdle closes a sign-in the page left half-way.
+const loginIdle = 10 * time.Minute
 
-func (b *serveBackend) loginSendCode(ctx context.Context, st setup, phone string) error {
-	phone = strings.Join(strings.Fields(phone), "")
-	if !strings.HasPrefix(phone, "+") || len(phone) < 8 {
-		return badInput("enter the phone number in the international format, e.g. +79990001122")
-	}
-	b.mu.Lock()
-	old := b.login
-	b.login = nil
-	b.mu.Unlock()
-	if old != nil {
-		old.close()
-	}
+// dialTelegram opens a connection for a sign-in and returns its auth client.
+func dialTelegram(ctx context.Context, st setup) (authFlow, func(), error) {
 	runCtx, stop := context.WithCancel(context.Background())
 	ready := make(chan error, 1)
-	l := &webLogin{stop: stop, done: make(chan struct{}), phone: phone}
+	done := make(chan struct{})
+	var client *telegram.Client
 	go func() {
-		defer close(l.done)
+		defer close(done)
 		err := tgclient.Run(runCtx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
-			l.client = c
+			client = c
 			ready <- nil
 			<-ctx.Done()
 			return nil
@@ -378,31 +402,65 @@ func (b *serveBackend) loginSendCode(ctx context.Context, st setup, phone string
 		default:
 		}
 	}()
+	closeConn := sync.OnceFunc(func() { stop(); <-done })
 	select {
 	case err := <-ready:
 		if err != nil {
-			stop()
-			return err
+			closeConn()
+			return nil, nil, err
 		}
 	case <-ctx.Done():
-		stop()
-		return ctx.Err()
+		closeConn()
+		return nil, nil, ctx.Err()
 	}
-	sent, err := l.client.Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
+	return client.Auth(), closeConn, nil
+}
+
+func (b *serveBackend) loginSendCode(ctx context.Context, st setup, phone string) error {
+	phone = strings.Join(strings.Fields(phone), "")
+	if !strings.HasPrefix(phone, "+") || len(phone) < 8 {
+		return badInput("enter the phone number in the international format, e.g. +79990001122")
+	}
+	b.dropLogin(nil)
+	dial := b.dialLogin
+	if dial == nil {
+		dial = dialTelegram
+	}
+	flow, closeConn, err := dial(ctx, st)
 	if err != nil {
-		l.close()
+		return err
+	}
+	sent, err := flow.SendCode(ctx, phone, auth.SendCodeOptions{})
+	if err != nil {
+		closeConn()
 		return loginError(err)
 	}
 	code, ok := sent.(*tg.AuthSentCode)
 	if !ok {
-		l.close()
+		closeConn()
 		return fmt.Errorf("unexpected answer %T to the login code request", sent)
 	}
-	l.hash = code.PhoneCodeHash
+	l := &webLogin{auth: flow, close: closeConn, phone: phone, hash: code.PhoneCodeHash}
 	b.mu.Lock()
 	b.login = l
 	b.mu.Unlock()
+	time.AfterFunc(loginIdle, func() { b.dropLogin(l) })
 	return nil
+}
+
+// dropLogin closes the sign-in in progress (only l, when given).
+func (b *serveBackend) dropLogin(l *webLogin) {
+	b.mu.Lock()
+	cur := b.login
+	if cur != nil && (l == nil || cur == l) {
+		b.login = nil
+	} else {
+		cur = nil
+	}
+	b.mu.Unlock()
+	if cur != nil {
+		cur.close()
+	}
 }
 
 func (b *serveBackend) currentLogin() (*webLogin, error) {
@@ -419,7 +477,7 @@ func (b *serveBackend) loginSignIn(ctx context.Context, code string) (any, error
 	if err != nil {
 		return nil, err
 	}
-	_, err = l.client.Auth().SignIn(ctx, l.phone, strings.TrimSpace(code), l.hash)
+	_, err = l.auth.SignIn(ctx, l.phone, strings.TrimSpace(code), l.hash)
 	if errors.Is(err, auth.ErrPasswordAuthNeeded) {
 		b.mu.Lock()
 		l.password = true
@@ -438,7 +496,10 @@ func (b *serveBackend) loginPassword(ctx context.Context, password string) (any,
 	if err != nil {
 		return nil, err
 	}
-	if _, err := l.client.Auth().Password(ctx, password); err != nil {
+	if !l.password {
+		return nil, badInput("enter the login code first")
+	}
+	if _, err := l.auth.Password(ctx, password); err != nil {
 		return nil, loginError(err)
 	}
 	b.finishLogin(l)
@@ -449,13 +510,10 @@ func (b *serveBackend) loginPassword(ctx context.Context, password string) (any,
 // chat page then connects with it.
 func (b *serveBackend) finishLogin(l *webLogin) {
 	b.mu.Lock()
-	if b.login == l {
-		b.login = nil
-	}
 	b.loggedIn = true
 	b.dialogs = nil
 	b.mu.Unlock()
-	l.close()
+	b.dropLogin(l)
 }
 
 // loginError names what went wrong in words the person can act on.

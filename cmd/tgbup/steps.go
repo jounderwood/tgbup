@@ -55,6 +55,9 @@ func saveKeys(env Env, id, hash string) (string, error) {
 	if err := errors.Join(checkAPIID(id), checkAPIHash(hash)); err != nil {
 		return "", err
 	}
+	if err := checkTestIsolation(env); err != nil {
+		return "", err
+	}
 	paths, err := config.ResolvePaths(env.Getenv)
 	if err != nil {
 		return "", err
@@ -88,6 +91,9 @@ func checkBackupDir(st setup, dir string) (string, error) {
 	if within(p, archive) || within(archive, p) || within(p, st.paths.StateDir) {
 		return "", badInput("choose a folder apart from the archive and tgbup's own files")
 	}
+	if st.testDC && p == expandTilde(defaultBackupDir, st.paths.Home) {
+		return "", badInput("on Telegram's test servers use a test folder, not the real backup folder %s", defaultBackupDir)
+	}
 	return p, nil
 }
 
@@ -101,8 +107,10 @@ func checkPassword(p string) error {
 	return nil
 }
 
-// saveBackup writes the backup places and, when given, a new password.
-func saveBackup(st setup, repos []string, password string) error {
+// saveBackup writes the backup places and, when given, a new password. A
+// password replacing one in use must open the repositories that already
+// exist: a typo would otherwise replace the working password.
+func saveBackup(ctx context.Context, st setup, repos []string, password string) error {
 	if len(repos) == 0 {
 		return badInput("choose at least one backup place")
 	}
@@ -113,6 +121,11 @@ func saveBackup(st setup, repos []string, password string) error {
 		if err := checkPassword(password); err != nil {
 			return err
 		}
+		if st.secrets.ResticPassword != "" && password != st.secrets.ResticPassword {
+			if err := checkOpens(ctx, st, repos, password); err != nil {
+				return err
+			}
+		}
 		if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": password}); err != nil {
 			return err
 		}
@@ -122,6 +135,22 @@ func saveBackup(st setup, repos []string, password string) error {
 		shown[i] = tildePath(r, st.paths.Home)
 	}
 	return config.SetValue(st.paths.Config, []string{"backup", "repositories"}, shown)
+}
+
+// checkOpens checks that password opens each repository that exists.
+func checkOpens(ctx context.Context, st setup, repos []string, password string) error {
+	st.secrets.ResticPassword = password
+	st.cfg.Backup.Repositories = repos
+	o, err := backupOptions(ctx, st)
+	if err != nil {
+		return err
+	}
+	for _, r := range backup.Opens(ctx, o) {
+		if r.Err != nil {
+			return badInput("the new password does not open %s: keep the one the repositories were made with", tildePath(r.Repo, st.paths.Home))
+		}
+	}
+	return nil
 }
 
 // disableBackup forgets the places; the snapshots made so far stay.
@@ -160,81 +189,126 @@ func listSnapshots(ctx context.Context, st setup, repo, password string) ([]back
 	return snaps, err
 }
 
+// restoreOutcome is a restore and what it changed in the setup.
+type restoreOutcome struct {
+	backup.RestoreResult
+	// ConfigAdopted: the snapshot's config replaced an empty one (no chats yet).
+	ConfigAdopted bool
+	// PasswordKept: the password differs from the one in use, so the place was
+	// not added to the backups and the current password stays.
+	PasswordKept bool
+}
+
 // restoreArchive brings a snapshot back into archiveDir (or the configured
-// one), keeps the password that opened it, writes the snapshot's config if
-// there is none yet, and rebuilds the views. Nothing is deleted.
-func restoreArchive(ctx context.Context, st setup, repo, password, snapshot, archiveDir string) (backup.RestoreResult, error) {
+// one) and rebuilds the views. Nothing is deleted. The password that opened
+// the snapshot is saved only if none was set; a config with chats is left as
+// it is, an empty one is replaced by the snapshot's.
+func restoreArchive(ctx context.Context, st setup, repo, password, snapshot, archiveDir string) (restoreOutcome, error) {
+	var out restoreOutcome
 	repo = expandTilde(repo, st.paths.Home)
 	o, err := restoreOptions(ctx, st, repo, password)
 	if err != nil {
-		return backup.RestoreResult{}, err
+		return out, err
 	}
 	if archiveDir == "" {
 		archiveDir = st.cfg.ArchiveDir
 	}
 	if err := checkArchiveDir(archiveDir); err != nil {
-		return backup.RestoreResult{}, err
+		return out, err
 	}
 	archiveDir = expandTilde(archiveDir, st.paths.Home)
 	release, err := acquireLock(st.paths.Lock())
 	if err != nil {
-		return backup.RestoreResult{}, fmt.Errorf("%w: wait for it to finish and try again", err)
+		return out, fmt.Errorf("%w: wait for it to finish and try again", err)
 	}
 	defer release()
-	res, err := backup.Restore(ctx, o, repo, snapshot, archiveDir, time.Now())
+	out.RestoreResult, err = backup.Restore(ctx, o, repo, snapshot, archiveDir, time.Now())
 	if err != nil {
 		if strings.Contains(err.Error(), "wrong password") {
-			return res, badInput("the password does not open %s", tildePath(repo, st.paths.Home))
+			return out, badInput("the password does not open %s", tildePath(repo, st.paths.Home))
 		}
-		return res, err
+		return out, err
 	}
-	if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": password}); err != nil {
-		return res, err
+	keepRepo := true
+	switch current := st.secrets.ResticPassword; {
+	case current == "":
+		if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": password}); err != nil {
+			return out, err
+		}
+	case current != password:
+		// The current password opens the current backups; one password serves them all.
+		keepRepo, out.PasswordKept = false, true
 	}
-	if err := adoptRestoredConfig(st, res.Config, archiveDir, repo); err != nil {
-		return res, err
+	if !keepRepo {
+		repo = ""
+	}
+	if out.ConfigAdopted, err = adoptRestoredConfig(st, out.Config, archiveDir, repo); err != nil {
+		return out, err
 	}
 	db, err := store.Open(filepath.Join(archiveDir, "archive.sqlite"))
 	if err != nil {
-		return res, err
+		return out, err
 	}
 	defer db.Close()
 	if _, err := rebuildFiles(ctx, db, archiveDir); err != nil {
-		return res, fmt.Errorf("restored, but rebuilding files/ failed: %w", err)
+		return out, fmt.Errorf("restored, but rebuilding files/ failed: %w", err)
 	}
 	if _, err := renderArchive(ctx, db, archiveDir, true); err != nil {
-		return res, fmt.Errorf("restored, but drawing the pages failed: %w", err)
+		return out, fmt.Errorf("restored, but drawing the pages failed: %w", err)
 	}
-	return res, nil
+	return out, nil
 }
 
-// adoptRestoredConfig writes the snapshot's config when there is none yet,
-// pointing it at the archive folder chosen now, and makes sure the place the
-// archive came from stays a backup place.
-func adoptRestoredConfig(st setup, snapshotConfig []byte, archiveDir, repo string) error {
-	if _, err := os.Stat(st.paths.Config); errors.Is(err, fs.ErrNotExist) && len(snapshotConfig) > 0 {
+// adoptRestoredConfig takes the snapshot's config when the current one has
+// no chats yet (a new Mac, perhaps with backups set up first), pointing it at
+// the archive folder chosen now and keeping the backup places of both. A
+// config with chats keeps its archive folder and settings. repo, when given,
+// becomes a backup place.
+func adoptRestoredConfig(st setup, snapshotConfig []byte, archiveDir, repo string) (bool, error) {
+	home := st.paths.Home
+	current, err := config.LoadWithoutTargets(st.paths.Config, home)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	empty := !exists || (len(current.Targets.Include) == 0 && len(current.Targets.Folders) == 0)
+	adopt := empty && len(snapshotConfig) > 0
+	repos := current.Backup.Repositories
+	if adopt {
 		if err := os.MkdirAll(filepath.Dir(st.paths.Config), 0o700); err != nil {
-			return err
+			return false, err
 		}
 		if err := os.WriteFile(st.paths.Config, bytes.TrimSpace(snapshotConfig), 0o600); err != nil {
-			return err
+			return false, err
 		}
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		if err := config.SetValue(st.paths.Config, []string{"archive_dir"}, tildePath(archiveDir, home)); err != nil {
+			return false, err
+		}
+		restored, err := config.LoadWithoutTargets(st.paths.Config, home)
+		if err != nil {
+			return false, err
+		}
+		repos = append(slices.Clone(restored.Backup.Repositories), repos...)
 	}
-	if err := config.SetValue(st.paths.Config, []string{"archive_dir"}, tildePath(archiveDir, st.paths.Home)); err != nil {
-		return err
+	if repo != "" {
+		repos = append(repos, repo)
 	}
-	cfg, err := config.LoadWithoutTargets(st.paths.Config, st.paths.Home)
-	if err != nil {
-		return err
+	var shown []string
+	for _, r := range repos {
+		if t := tildePath(expandTilde(r, home), home); !slices.Contains(shown, t) {
+			shown = append(shown, t)
+		}
 	}
-	if slices.Contains(cfg.Backup.Repositories, repo) {
-		return nil
+	if !adopt && slices.Equal(shown, tildeAll(current.Backup.Repositories, home)) {
+		return false, nil
 	}
-	repos := append(slices.Clone(cfg.Backup.Repositories), repo)
-	for i, r := range repos {
-		repos[i] = tildePath(r, st.paths.Home)
+	return adopt, config.SetValue(st.paths.Config, []string{"backup", "repositories"}, shown)
+}
+
+func tildeAll(paths []string, home string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = tildePath(p, home)
 	}
-	return config.SetValue(st.paths.Config, []string{"backup", "repositories"}, repos)
+	return out
 }

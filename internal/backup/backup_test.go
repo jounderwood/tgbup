@@ -277,3 +277,20 @@ func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
 		t.Error("unknown snapshot accepted")
 	}
 }
+
+func TestOpensTellsAWrongPassword(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	missing := filepath.Join(t.TempDir(), "missing")
+	e := newEnv(t, repo, missing)
+	ctx := context.Background()
+	if res := Init(ctx, Options{Restic: e.o.Restic, Repos: []string{repo}, Password: e.o.Password}); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if res := Opens(ctx, e.o); res[0].Err != nil || res[1].Err != nil {
+		t.Fatalf("right password: %+v", res)
+	}
+	e.o.Password = "wrong-password"
+	if res := Opens(ctx, e.o); res[0].Err == nil || res[1].Err != nil {
+		t.Fatalf("wrong password: %+v (a missing repository opens with any)", res)
+	}
+}

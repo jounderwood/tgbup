@@ -98,6 +98,34 @@ func SaveFixture(f Fixture) error {
 
 func PinTestServers() error { return os.Setenv("TGBUP_TEST_DC", "1") }
 
+// IsolatedState prepares, under dir, a secrets file with the API keys and a
+// state folder with a copy of the test-server session, so the binary under
+// test never reads or writes the real secrets and state.
+func IsolatedState(dir string) (secrets, state string, err error) {
+	p, err := config.ResolvePaths(os.Getenv)
+	if err != nil {
+		return "", "", err
+	}
+	sec, err := config.LoadSecrets(p.Secrets, os.Getenv)
+	if err != nil {
+		return "", "", err
+	}
+	session, err := os.ReadFile(p.Session(true))
+	if err != nil {
+		return "", "", fmt.Errorf("no test-server session: run `TGBUP_TEST_DC=1 bin/tgbup login` first: %w", err)
+	}
+	state = filepath.Join(dir, "state")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(filepath.Join(state, "session-test"), session, 0o600); err != nil {
+		return "", "", err
+	}
+	secrets = filepath.Join(dir, "secrets.env")
+	keys := fmt.Sprintf("TG_API_ID=%d\nTG_API_HASH=%s\n", sec.APIID, sec.APIHash)
+	return secrets, state, os.WriteFile(secrets, []byte(keys), 0o600)
+}
+
 // WithTelegram connects to the test servers with the test-server session.
 func WithTelegram(fn func(ctx context.Context, raw *tg.Client) error) error {
 	if err := PinTestServers(); err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,13 +37,27 @@ func TestTestDCUsesSeparateSession(t *testing.T) {
 		t.Fatalf("login (session only) on test servers: %v", err)
 	}
 	env["TGBUP_CONFIG"] = filepath.Join(home, "test", "config.yaml")
+	if _, err := loadSetup(e, false); err == nil || !strings.Contains(err.Error(), "TGBUP_SECRETS") {
+		t.Fatalf("test servers with the real secrets: %v", err)
+	}
+	env["TGBUP_SECRETS"] = filepath.Join(dir, "secrets.env") // read-only here; a real run uses a copy
+	env["TGBUP_STATE_DIR"] = filepath.Join(home, "test", "state")
 	test, err := loadSetup(e, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Before the test config exists, the default archive is next to it, never the real one.
-	if want := filepath.Join(home, "test", "TelegramArchive"); test.cfg.ArchiveDir != want {
+	// Before the test config exists, the default archive is next to it, never the
+	// real one, and it is written down at once: a later write of another setting
+	// would otherwise start from the template with the real ~/TelegramArchive.
+	want := filepath.Join(home, "test", "TelegramArchive")
+	if test.cfg.ArchiveDir != want {
 		t.Errorf("test-server archive = %s, want %s", test.cfg.ArchiveDir, want)
+	}
+	if err := config.SetValue(env["TGBUP_CONFIG"], []string{"backup", "repositories"}, []string{"/r"}); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := loadSetup(e, false); err != nil || again.cfg.ArchiveDir != want {
+		t.Errorf("after saving another setting the archive is %s (%v)", again.cfg.ArchiveDir, err)
 	}
 	if o := test.clientOptions(); !o.TestDC || filepath.Base(o.SessionPath) != "session-test" {
 		t.Fatalf("test-DC options = %+v", o)

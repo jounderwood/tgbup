@@ -19,7 +19,7 @@ func cmdRestore(ctx context.Context, args []string, env Env) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	from := fs.String("from", "", "backup place to restore from (default: asked, or the only one in the config)")
-	snapshot := fs.String("snapshot", "latest", "snapshot ID to restore")
+	snapshot := fs.String("snapshot", "", "snapshot ID to restore, or latest (default: asked)")
 	to := fs.String("to", "", "archive folder to restore into (default: archive_dir from the config)")
 	list := fs.Bool("list", false, "only list the snapshots")
 	if err := fs.Parse(args); err != nil {
@@ -60,7 +60,7 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	}
 	if repo == "" {
 		var err error
-		if repo, err = w.askBackupPlace(ctx, home); err != nil {
+		if repo, err = w.askBackupPlace(ctx, st); err != nil {
 			return err
 		}
 	}
@@ -101,7 +101,10 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 		return nil
 	}
 	snapshot := req.snapshot
-	if snapshot == "" || snapshot == "latest" {
+	if snapshot == "latest" {
+		snapshot = snaps[0].ID
+	}
+	if snapshot == "" {
 		ans, err := w.askValid(ctx, "  Which one? [Enter = 1, the newest]: ", func(v string) error {
 			if n, err := strconv.Atoi(v); v != "" && (err != nil || n < 1 || n > min(len(snaps), 10)) {
 				return badInput("choose 1-%d", min(len(snaps), 10))
@@ -121,7 +124,16 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	if dir == "" {
 		dir = st.cfg.ArchiveDir
 	}
-	fmt.Fprintf(w.out, "  restoring into %s…\n", tildePath(expandTilde(dir, home), home))
+	dir = expandTilde(dir, home)
+	if n, err := archivedMessages(ctx, dir); err == nil && n > 0 && !w.assumeYes {
+		fmt.Fprintf(w.out, "  %s already holds %s; its database will be kept aside, not deleted.\n", tildePath(dir, home), plural(n, "message"))
+		if ok, err := w.yes(ctx, "  Restore into it anyway?", false); err != nil {
+			return err
+		} else if !ok {
+			return errStopped
+		}
+	}
+	fmt.Fprintf(w.out, "  restoring into %s…\n", tildePath(dir, home))
 	res, err := restoreArchive(ctx, st, repo, password, snapshot, dir)
 	if err != nil {
 		return err
@@ -134,6 +146,12 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	fmt.Fprintln(w.out)
 	if res.MovedAside != "" {
 		fmt.Fprintf(w.out, "  the database that was there is kept as %s\n", res.MovedAside)
+	}
+	if res.ConfigAdopted {
+		fmt.Fprintln(w.out, "  the chats and settings from the backup are now the config")
+	}
+	if res.PasswordKept {
+		fmt.Fprintf(w.out, "  %s opens with another password than your backups use now; the current one stays,\n  and that place was not added to the backups\n", tildePath(repo, home))
 	}
 	fmt.Fprintln(w.out, "  the pages and files/ are rebuilt; log in to Telegram to keep the archive growing")
 	return nil
@@ -154,10 +172,11 @@ func ensureRcloneFor(ctx context.Context, st setup, repo string, w *wizard) erro
 }
 
 // askBackupPlace offers the places a backup may be in on this Mac.
-func (w *wizard) askBackupPlace(ctx context.Context, home string) (string, error) {
+func (w *wizard) askBackupPlace(ctx context.Context, st setup) (string, error) {
+	home := st.paths.Home
 	var places []storageChoice
-	if def := expandTilde(defaultBackupDir, home); isDir(def) {
-		places = append(places, storageChoice{Label: defaultBackupDir + " (folder on this Mac)", Repo: def})
+	if def := expandTilde(backupDirDefault(st), home); isDir(def) {
+		places = append(places, storageChoice{Label: tildePath(def, home) + " (folder on this Mac)", Repo: def})
 	}
 	places = append(places, storageChoices(home, "/Volumes")...)
 	fmt.Fprintln(w.out, "  Where is the backup?")

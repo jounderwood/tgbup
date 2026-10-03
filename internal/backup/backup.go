@@ -110,6 +110,20 @@ func Init(ctx context.Context, o Options) []RepoResult {
 	return out
 }
 
+// Opens reports, per repository, whether the password opens it; one that
+// does not exist yet counts as opening (it would be created with it).
+func Opens(ctx context.Context, o Options) []RepoResult {
+	out := make([]RepoResult, 0, len(o.Repos))
+	for _, repo := range o.Repos {
+		res := RepoResult{Repo: repo}
+		if _, err := o.restic(ctx, repo, "cat", "config"); err != nil && exitCode(err) != 10 {
+			res.Err = err
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
 func Run(ctx context.Context, a Archive, o Options) Report {
 	var r Report
 	if err := a.IntegrityCheck(ctx); err != nil {

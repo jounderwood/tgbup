@@ -72,6 +72,7 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	defer archiveLn.Close()
 	_, archivePort, _ := net.SplitHostPort(archiveLn.Addr().String())
 	b := &serveBackend{env: env, exe: exe, tg: newTGSession(ctx, 5*time.Minute)}
+	defer b.dropLogin(nil)
 	archiveDir := func() string {
 		if st, err := b.load(); err == nil {
 			return st.cfg.ArchiveDir
@@ -112,6 +113,9 @@ type serveBackend struct {
 	exe string
 	tg  *tgSession
 
+	// dbMu keeps the page's own reads of the archive away from a restore that
+	// swaps the database (and its WAL files) underneath them.
+	dbMu sync.RWMutex
 	// probeMu serializes run.lock probes: two in this process would see each
 	// other's lock as a run in progress.
 	probeMu sync.Mutex
@@ -126,8 +130,10 @@ type serveBackend struct {
 	folders   []tgclient.Folder
 	dialogsAt time.Time
 	// login is a web sign-in in progress; loggedIn caches a session known to work.
-	login    *webLogin
-	loggedIn bool
+	login     *webLogin
+	loggedIn  bool
+	loginMu   sync.Mutex
+	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
 }
 
 const dialogsTTL = 5 * time.Minute
@@ -137,6 +143,8 @@ const dialogsTTL = 5 * time.Minute
 func (b *serveBackend) load() (setup, error) { return loadLocalSetup(b.env, false) }
 
 func (b *serveBackend) Status(ctx context.Context) (serve.Status, error) {
+	b.dbMu.RLock()
+	defer b.dbMu.RUnlock()
 	st, err := b.load()
 	if err != nil {
 		return serve.Status{}, err

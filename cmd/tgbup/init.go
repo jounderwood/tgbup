@@ -341,37 +341,31 @@ func (w *wizard) chooseChats(ctx context.Context) error {
 	return nil
 }
 
-func (w *wizard) setPassword(ctx context.Context) error {
-	st, err := w.load()
-	if err != nil {
-		return err
-	}
+// choosePassword gets a backup password the person has saved elsewhere:
+// generated and shown, or typed.
+func (w *wizard) choosePassword(ctx context.Context) (string, error) {
 	fmt.Fprintln(w.out, `  Backups are encrypted with a password. Without it they cannot be read back,
   so it must also be kept outside this Mac, in a password manager.`)
 	fmt.Fprintln(w.out, "  Restoring, or the repositories already exist? Answer n and type the password they were made with.")
 	gen, err := w.yes(ctx, "  Generate a new strong password?", true)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var pass string
 	if gen {
 		pass = newPassword()
 		if err := w.confirmSaved(ctx, pass); err != nil {
-			return err
+			return "", err
 		}
 	} else {
 		if pass, err = w.ownPassword(ctx); err != nil {
-			return err
+			return "", err
 		}
 		if err := w.waitSaved(ctx); err != nil {
-			return err
+			return "", err
 		}
 	}
-	if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": pass}); err != nil {
-		return err
-	}
-	fmt.Fprintf(w.out, "  saved to %s\n", st.paths.Secrets)
-	return nil
+	return pass, nil
 }
 
 // confirmSaved shows the password and waits until the person has saved it.
@@ -519,6 +513,15 @@ func isDir(p string) bool {
 // defaultBackupDir keeps the first backup on this Mac, outside the archive.
 const defaultBackupDir = "~/TelegramBackup"
 
+// backupDirDefault is defaultBackupDir, or a folder next to the test config
+// on Telegram's test servers.
+func backupDirDefault(st setup) string {
+	if st.testDC {
+		return tildePath(filepath.Join(filepath.Dir(st.paths.Config), "TelegramBackup"), st.paths.Home)
+	}
+	return defaultBackupDir
+}
+
 // setBackup sets up restic backups: a folder on this Mac by default, plus any
 // other places; every run snapshots into all of them.
 func (w *wizard) setBackup(ctx context.Context) error {
@@ -568,24 +571,22 @@ func (w *wizard) setBackup(ctx context.Context) error {
 
 	// The password is always chosen and saved by the person: whatever the
 	// places, a lost password makes every copy unreadable.
+	var password string
 	switch {
 	case st.secrets.ResticPassword == "":
-		if err := w.setPassword(ctx); err != nil {
+		if password, err = w.choosePassword(ctx); err != nil {
 			return err
 		}
 	case len(current) > 0:
 		if ok, err := w.yes(ctx, "  Replace the backup password? (only when your repositories were made with another one)", false); err != nil {
 			return err
 		} else if ok {
-			if err := w.setPassword(ctx); err != nil {
+			if password, err = w.choosePassword(ctx); err != nil {
 				return err
 			}
 		}
 	}
-	if st, err = w.load(); err != nil { // the password may be new
-		return err
-	}
-	if err := saveBackup(st, repos, ""); err != nil {
+	if err := saveBackup(ctx, st, repos, password); err != nil {
 		return err
 	}
 	for _, r := range repos {
@@ -597,7 +598,7 @@ func (w *wizard) setBackup(ctx context.Context) error {
 // askBackupDir asks for the folder on this Mac; "none" keeps no copy here.
 func (w *wizard) askBackupDir(ctx context.Context, st setup, current string) (string, error) {
 	home := st.paths.Home
-	def := defaultBackupDir
+	def := backupDirDefault(st)
 	if current != "" {
 		def = tildePath(current, home)
 	}
@@ -848,9 +849,15 @@ func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remot
 		return cmd
 	}
 	// interactive lets rclone show its sign-in link and ask what it needs.
-	interactive := func(args ...string) error {
+	// interactive runs rclone with the terminal, so its questions and sign-in
+	// link reach the person. config create ends by printing the new remote,
+	// Google's token included, so its stdout is never shown (showOut false).
+	interactive := func(showOut bool, args ...string) error {
 		cmd := rclone(ctx, args...)
-		cmd.Stdout, cmd.Stderr = w.out, w.env.Stderr
+		cmd.Stdout, cmd.Stderr = io.Discard, w.env.Stderr
+		if showOut && !w.assumeYes {
+			cmd.Stdout = w.out
+		}
 		if !w.assumeYes {
 			cmd.Stdin = w.env.Stdin
 		}
@@ -891,7 +898,7 @@ func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remot
 		} else if !ok {
 			return errors.New("no access to Google Drive: sign in again or choose other storage in tgbup init")
 		}
-		if err := interactive("config", "reconnect", remote+":"); err != nil {
+		if err := interactive(true, "config", "reconnect", remote+":"); err != nil {
 			return fmt.Errorf("reconnect Google Drive: %w", err)
 		}
 	} else {
@@ -905,7 +912,7 @@ func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remot
 		} else if !ok {
 			return errors.New("not connected to Google Drive: choose other storage or run tgbup init again")
 		}
-		if err := interactive("config", "create", remote, "drive", "scope=drive.file"); err != nil {
+		if err := interactive(false, "config", "create", remote, "drive", "scope=drive.file"); err != nil {
 			return fmt.Errorf("connect Google Drive: %w", err)
 		}
 		if ok, err := listed(); err != nil || !ok {

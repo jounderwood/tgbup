@@ -174,6 +174,30 @@ func TestBackupCommand(t *testing.T) {
 	if sec, _ := config.LoadSecrets(secrets, func(string) string { return "" }); sec.ResticPassword != "pw" {
 		t.Errorf("password not kept: %q", sec.ResticPassword)
 	}
+
+	// Restoring elsewhere just to look, with backups now on another password:
+	// the working password and the configured archive folder stay.
+	if err := config.SetSecrets(secrets, map[string]string{"RESTIC_PASSWORD": "another-password-1"}); err != nil {
+		t.Fatal(err)
+	}
+	look := filepath.Join(home, "look")
+	out.Reset()
+	env.Stdin = strings.NewReader("pw\n\n")
+	if code := run(context.Background(), []string{"restore", "--from", repo, "--to", look}, env); code != 0 {
+		t.Fatalf("second restore: code %d\n%s", code, out)
+	}
+	if !strings.Contains(out.String(), "another password") {
+		t.Errorf("output:\n%s", out)
+	}
+	if sec, _ := config.LoadSecrets(secrets, func(string) string { return "" }); sec.ResticPassword != "another-password-1" {
+		t.Errorf("the working password was replaced by %q", sec.ResticPassword)
+	}
+	if again, err := config.Load(filepath.Join(home, ".config", "tgbup", "config.yaml"), home); err != nil || again.ArchiveDir != archive {
+		t.Errorf("archive_dir moved to %s (%v)", again.ArchiveDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(look, "archive.sqlite")); err != nil {
+		t.Errorf("nothing restored into %s: %v", look, err)
+	}
 }
 
 func TestBackupNeedsAPassword(t *testing.T) {

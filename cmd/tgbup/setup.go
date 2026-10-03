@@ -28,12 +28,25 @@ func loadSetup(env Env, requireConfig bool) (setup, error) {
 // loadLocalSetup is loadSetup for commands that work on the archive alone
 // (backup, deps) and need no Telegram credentials.
 func loadLocalSetup(env Env, requireConfig bool) (setup, error) {
-	// Only the session file differs on the test servers: with the default
-	// config, test chats would go into the real archive and its backups.
-	if env.Getenv("TGBUP_TEST_DC") == "1" && env.Getenv("TGBUP_CONFIG") == "" {
-		return setup{}, errors.New("TGBUP_TEST_DC=1 needs its own TGBUP_CONFIG (with its own archive_dir): the default config is the real archive")
+	if err := checkTestIsolation(env); err != nil {
+		return setup{}, err
 	}
 	return resolveSetup(env, requireConfig)
+}
+
+// checkTestIsolation: only the session file differs on the test servers, so
+// with the default config, secrets or state, test chats would go into the
+// real archive and backups, and a test password would replace the real one.
+func checkTestIsolation(env Env) error {
+	if env.Getenv("TGBUP_TEST_DC") != "1" {
+		return nil
+	}
+	for _, k := range []string{"TGBUP_CONFIG", "TGBUP_SECRETS", "TGBUP_STATE_DIR"} {
+		if env.Getenv(k) == "" {
+			return fmt.Errorf("TGBUP_TEST_DC=1 needs its own TGBUP_CONFIG, TGBUP_SECRETS and TGBUP_STATE_DIR (%s is not set): the defaults are the real archive, password and state", k)
+		}
+	}
+	return nil
 }
 
 // resolveSetup loads paths, config and secrets.
@@ -54,8 +67,13 @@ func resolveSetup(env Env, requireConfig bool) (setup, error) {
 		cfg = config.Default()
 		cfg.ArchiveDir = expandTilde(cfg.ArchiveDir, p.Home)
 		if env.Getenv("TGBUP_TEST_DC") == "1" {
-			// Never the real archive, even before the test config is written.
+			// Never the real archive. The config is written now: a later write of
+			// any other setting would otherwise create it from the template, whose
+			// archive_dir is the real ~/TelegramArchive.
 			cfg.ArchiveDir = filepath.Join(filepath.Dir(p.Config), "TelegramArchive")
+			if err := config.SetValue(p.Config, []string{"archive_dir"}, cfg.ArchiveDir); err != nil {
+				return setup{}, err
+			}
 		}
 	case err != nil:
 		return setup{}, err

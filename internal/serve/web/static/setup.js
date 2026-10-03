@@ -4,6 +4,10 @@ const $ = (id) => document.getElementById(id);
 let state = null;
 const open = new Set(); // done steps the person chose to change
 const draft = {};       // per-step values typed but not saved yet
+let refreshTimer;       // one pending reload while a download runs
+
+// forgetLogin drops what was typed for a sign-in once it is over.
+function forgetLogin() { delete draft.phone; delete draft.loginCode; delete draft.twoFA; }
 
 async function load() {
   try {
@@ -61,8 +65,13 @@ async function action(form, name, body, okText) {
   }
 }
 
-function field(label, attrs) {
+// field is a labelled input; with key, its value lives in draft and survives re-renders.
+function field(label, attrs, key) {
   const input = el("input", Object.assign({ type: "text", autocomplete: "off" }, attrs));
+  if (key) {
+    if (draft[key] !== undefined) input.value = draft[key];
+    input.addEventListener("input", () => { draft[key] = input.value; });
+  }
   return { input, node: el("label", {}, label, input) };
 }
 
@@ -76,8 +85,8 @@ function folderRow(input) {
 
 const forms = {
   keys() {
-    const id = field("api_id", { inputmode: "numeric", placeholder: "12345678" });
-    const hash = field("api_hash", { placeholder: "32 characters" });
+    const id = field("api_id", { inputmode: "numeric", placeholder: "12345678" }, "apiID");
+    const hash = field("api_hash", { placeholder: "32 characters" }, "apiHash");
     const f = el("div", { class: "form" },
       el("p", { class: "hint" }, "Telegram gives every program its own keys: open ",
         el("a", { href: "https://my.telegram.org", target: "_blank", rel: "noopener" }, "my.telegram.org"),
@@ -92,22 +101,22 @@ const forms = {
   login() {
     const f = el("div", { class: "form" });
     if (state.login.password_needed) {
-      const pw = field("Two-step verification password", { type: "password", autocomplete: "current-password" });
+      const pw = field("Two-step verification password", { type: "password", autocomplete: "current-password" }, "twoFA");
       f.append(pw.node, el("div", {}, el("button", { type: "button", onclick: async () => {
-        if (await action(f, "login/password", { password: pw.input.value }, "Logged in")) load();
+        if (await action(f, "login/password", { password: pw.input.value }, "Logged in")) { forgetLogin(); load(); }
       } }, "Sign in")));
     } else if (state.login.code_sent) {
-      const code = field("Login code from Telegram", { inputmode: "numeric", autocomplete: "one-time-code" });
+      const code = field("Login code from Telegram", { inputmode: "numeric", autocomplete: "one-time-code" }, "loginCode");
       f.append(el("p", { class: "hint" }, "Telegram sent a code to your Telegram app (or by SMS)."), code.node,
         el("div", { class: "row" },
           el("button", { type: "button", onclick: async () => {
             const res = await action(f, "login/signin", { code: code.input.value });
-            if (res && res.done) toast("Logged in");
+            if (res && res.done) { toast("Logged in"); forgetLogin(); }
             if (res) load();
           } }, "Sign in"),
           el("button", { type: "button", class: "link", onclick: () => { state.login.code_sent = false; render(); } }, "use another number")));
     } else {
-      const phone = field("Phone number", { type: "tel", placeholder: "+79990001122", autocomplete: "tel" });
+      const phone = field("Phone number", { type: "tel", placeholder: "+79990001122", autocomplete: "tel" }, "phone");
       f.append(phone.node, el("div", {}, el("button", { type: "button", onclick: async () => {
         if (await action(f, "login/code", { phone: phone.input.value })) load();
       } }, "Send code")));
@@ -123,7 +132,8 @@ const forms = {
     f.append(el("div", { class: "row" },
       el("label", { class: "check" }, el("input", { type: "radio", name: "amode", checked: mode === "new", onchange: () => pick("new") }), "New archive"),
       el("label", { class: "check" }, el("input", { type: "radio", name: "amode", checked: mode === "restore", onchange: () => pick("restore") }), "Restore from a backup")));
-    const dir = el("input", { type: "text", value: a.dir || a.default, "aria-label": "Archive folder" });
+    if (draft.archiveDir === undefined) draft.archiveDir = a.dir || a.default;
+    const dir = el("input", { type: "text", value: draft.archiveDir, "aria-label": "Archive folder", oninput: (e) => { draft.archiveDir = e.target.value; } });
     if (mode === "new") {
       f.append(el("label", {}, "Archive folder"), folderRow(dir),
         el("div", {}, el("button", { type: "button", onclick: async () => {
@@ -242,7 +252,8 @@ const forms = {
     const f = el("div", { class: "form" });
     if (state.running) {
       f.append(el("p", {}, "Running. ", el("a", { href: "/" }, "See the log on Overview"), "; this page updates when it finishes."));
-      setTimeout(load, 5000);
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(load, 5000);
       return f;
     }
     f.append(el("p", { class: "hint" }, "The first download takes minutes to hours. Telegram asks to allow a data export in your Telegram app (a message from “Telegram”): allow it, then start again here."),
@@ -295,8 +306,9 @@ function restoreForm(f, dir) {
     ...places.map((p) => el("option", { value: p.repo, selected: d.repo === p.repo }, p.label)),
     el("option", { value: "other", selected: d.repo === "other" }, "another folder or repository"));
   f.append(el("label", {}, "Backup place", select));
-  if (d.repo === "other") f.append(el("input", { type: "text", placeholder: "folder or restic repository", value: d.custom, oninput: (e) => { d.custom = e.target.value; } }));
-  const pw = el("input", { type: "password", autocomplete: "current-password", value: d.password, oninput: (e) => { d.password = e.target.value; } });
+  // A list found with other inputs must not be restored from.
+  if (d.repo === "other") f.append(el("input", { type: "text", placeholder: "folder or restic repository", value: d.custom, oninput: (e) => { d.custom = e.target.value; d.snapshots = null; } }));
+  const pw = el("input", { type: "password", autocomplete: "current-password", value: d.password, oninput: (e) => { d.password = e.target.value; d.snapshots = null; } });
   f.append(el("label", {}, "Backup password (from your password manager)", pw));
   const repo = () => (d.repo === "other" ? d.custom.trim() : d.repo);
   f.append(el("div", {}, el("button", { type: "button", onclick: async () => {
@@ -314,10 +326,16 @@ function restoreForm(f, dir) {
       el("label", {}, "Restore into"), folderRow(dir),
       el("p", { class: "hint" }, "Nothing is deleted: a database already there is kept aside, existing media stay."),
       el("div", {}, el("button", { type: "button", onclick: async () => {
+        if (!d.snapshots) {
+          (f.querySelector(".err") || f.appendChild(el("div", { class: "err" }))).textContent = "The place or password changed: find the backups again";
+          return;
+        }
         const res = await action(f, "restore", { repo: repo(), password: d.password, snapshot: d.snapshot, dir: dir.value });
         if (res) {
-          toast("Restored: " + res.MediaAdded + " media files");
+          toast("Restored snapshot " + res.snapshot + ": " + res.media_added + " media files" +
+            (res.password_kept ? ". That backup uses another password; your current one stays" : ""));
           delete draft.restore;
+          delete draft.archiveDir;
           draft.archiveMode = "new";
           open.delete("archive");
           load();
