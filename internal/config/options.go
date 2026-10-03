@@ -41,6 +41,8 @@ func optionsReference() string {
 		{`  rclone: ""`, ""},
 		{"notify:", "bot: errors right away, a summary every summary_every"},
 		{"  summary_every: " + shortDuration(d.Notify.SummaryEvery.D()), ""},
+		{"log:", ""},
+		{fmt.Sprintf("  file: %v", d.Log.File), "also write every command's log to logs/tgbup.log (10 MB files, 5 kept)"},
 	}
 	width := 0
 	for _, row := range rows {

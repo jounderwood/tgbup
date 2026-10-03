@@ -21,6 +21,13 @@ type Config struct {
 	Backup     Backup  `yaml:"backup"`
 	Deps       Deps    `yaml:"deps"`
 	Notify     Notify  `yaml:"notify"`
+	Log        Log     `yaml:"log"`
+}
+
+// Log says whether every command's log also goes to logs/tgbup.log; the
+// console always gets it.
+type Log struct {
+	File bool `yaml:"file"`
 }
 
 // Deps points at restic and rclone binaries to use instead of the ones tgbup downloads.
@@ -81,6 +88,7 @@ func Default() Config {
 			CheckReadSubset: "5%",
 		},
 		Notify: Notify{SummaryEvery: Duration(7 * 24 * time.Hour)},
+		Log:    Log{File: true},
 	}
 }
 

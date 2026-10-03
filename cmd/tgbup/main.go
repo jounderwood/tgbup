@@ -42,7 +42,16 @@ type Env struct {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(ctx, os.Args[1:], Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv}))
+	var stderr io.Writer = os.Stderr
+	tee := openLogTee(os.Args[1:], os.Getenv)
+	if tee != nil {
+		stderr = tee
+	}
+	code := run(ctx, os.Args[1:], Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: stderr, Getenv: os.Getenv})
+	if tee != nil {
+		tee.Close()
+	}
+	os.Exit(code)
 }
 
 func run(ctx context.Context, args []string, env Env) int {

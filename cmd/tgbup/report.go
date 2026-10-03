@@ -204,6 +204,9 @@ func chatProgress(w io.Writer, tty bool) func(c store.Chat, saved int, done bool
 }
 
 func isTerminal(w io.Writer) bool {
+	if t, ok := w.(*logTee); ok {
+		w = t.console
+	}
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
 }

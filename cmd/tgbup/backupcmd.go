@@ -148,7 +148,8 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 
 // cmdRun is what the schedule starts: sync, backup, record, notify.
 func cmdRun(ctx context.Context, env Env) int {
-	log := newLogger(env.Stderr)
+	warnings := &warnLines{}
+	log := slog.New(warnings.wrap(newLogger(env.Stderr).Handler()))
 	st, err := loadSetup(env, true)
 	if err != nil {
 		return failEarly(ctx, log, botFromSecrets(env), "load the setup", err)
@@ -163,6 +164,8 @@ func cmdRun(ctx context.Context, env Env) int {
 		return failEarly(ctx, log, bot, "take run.lock", err)
 	}
 	defer release()
+	// launchd opened run.log already: this run still writes to the moved file.
+	rotateLog(st.paths.RunLog())
 	db, err := store.Open(filepath.Join(st.cfg.ArchiveDir, "archive.sqlite"))
 	if err != nil {
 		return failEarly(ctx, log, bot, "open the archive", err)
@@ -185,7 +188,7 @@ func cmdRun(ctx context.Context, env Env) int {
 		db: db, bot: bot,
 		host: hostname(), archiveDir: st.cfg.ArchiveDir, repos: st.cfg.Backup.Repositories,
 		summaryEvery: st.cfg.Notify.SummaryEvery.D(), now: time.Now, loc: time.Local,
-		out: env.Stdout, log: log,
+		out: env.Stdout, log: log, warnings: warnings,
 	})
 }
 

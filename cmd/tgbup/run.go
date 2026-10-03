@@ -32,6 +32,7 @@ type runParts struct {
 	loc          *time.Location
 	out          io.Writer
 	log          *slog.Logger
+	warnings     *warnLines // nil in tests that do not look at them
 }
 
 type runRecord struct {
@@ -40,6 +41,8 @@ type runRecord struct {
 	SyncErrors   []string `json:"sync_errors,omitempty"`
 	BackupErrors []string `json:"backup_errors,omitempty"`
 	Snapshots    []string `json:"snapshots,omitempty"`
+	// Log is the run's warnings and errors as logged, for the web page.
+	Log []string `json:"log,omitempty"`
 }
 
 const summaryKey = "notify:summary_at"
@@ -72,6 +75,9 @@ func runOnce(ctx context.Context, p runParts) int {
 	printBackup(p.out, rep)
 
 	ok := len(rec.SyncErrors) == 0 && len(rec.BackupErrors) == 0
+	if p.warnings != nil {
+		rec.Log = p.warnings.lines()
+	}
 	summary, _ := json.Marshal(rec)
 	code := 0
 	if !ok {
