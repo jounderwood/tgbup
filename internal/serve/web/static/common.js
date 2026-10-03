@@ -3,8 +3,7 @@
 const token = document.querySelector('meta[name="tgbup-token"]').content;
 
 async function api(method, path, body) {
-  const opts = { method, headers: {} };
-  if (method !== "GET") opts.headers["X-Tgbup-Token"] = token;
+  const opts = { method, headers: { "X-Tgbup-Token": token } };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);

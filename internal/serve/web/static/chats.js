@@ -62,7 +62,7 @@ async function toggleTopics(c) {
   render();
   if (!topics.has(c.id)) {
     try { topics.set(c.id, await api("GET", "/api/chats/" + c.id + "/topics")); }
-    catch (e) { topics.set(c.id, []); toast("Could not load topics: " + e.message); }
+    catch (e) { open.delete(c.id); toast("Could not load topics: " + e.message); }
     render();
   }
 }
@@ -115,6 +115,9 @@ async function load() {
     if (c.selected) selected.add(c.id);
     if ((c.excluded_topics || []).length) excluded.set(c.id, new Set(c.excluded_topics));
   }
+  const warn = $("warnings");
+  warn.replaceChildren(...(data.warnings || []).map((w) => el("li", {}, w)));
+  warn.hidden = !(data.warnings || []).length;
   $("group").replaceChildren(...data.groups.map((g, i) => el("option", { value: i }, g.title + " (" + g.ids.length + ")")));
   $("loading").hidden = true;
   document.querySelector("table.chatlist").hidden = false;

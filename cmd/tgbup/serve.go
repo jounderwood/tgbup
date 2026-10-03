@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,22 +59,47 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		return fail(err)
 	}
-	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	b := &serveBackend{env: env, exe: exe, tg: &tgSession{}}
-	defer b.tg.close()
-	srv, err := serve.New(b, st.cfg.ArchiveDir, port)
+	defer ln.Close()
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	// The archive's own origin: the next port when free, any port otherwise.
+	archiveLn, err := net.Listen("tcp", net.JoinHostPort(host, nextPort(port)))
+	if err != nil {
+		archiveLn, err = net.Listen("tcp", net.JoinHostPort(host, "0"))
+	}
 	if err != nil {
 		return fail(err)
 	}
-	url := "http://localhost:" + port + "/"
+	defer archiveLn.Close()
+	_, archivePort, _ := net.SplitHostPort(archiveLn.Addr().String())
+	b := &serveBackend{env: env, exe: exe, tg: newTGSession(ctx, 5*time.Minute)}
+	archiveDir := func() string {
+		if st, err := b.load(); err == nil {
+			return st.cfg.ArchiveDir
+		}
+		return st.cfg.ArchiveDir
+	}
+	srv, err := serve.New(b, archiveDir, port, archivePort)
+	if err != nil {
+		return fail(err)
+	}
+	shown, _, _ := net.SplitHostPort(*listen)
+	url := "http://" + net.JoinHostPort(shown, port) + "/"
 	fmt.Fprintf(env.Stdout, "tgbup is at %s (this computer only). Ctrl+C stops it.\n", url)
 	if *open && runtime.GOOS == "darwin" {
 		openURL(url)
 	}
-	if err := srv.Serve(ctx, ln); err != nil {
+	if err := srv.Serve(ctx, ln, archiveLn); err != nil {
 		return fail(err)
 	}
 	return 0
+}
+
+func nextPort(p string) string {
+	n, err := strconv.Atoi(p)
+	if err != nil || n >= 65535 {
+		return "0"
+	}
+	return strconv.Itoa(n + 1)
 }
 
 // serveBackend gives the web interface the real archive, schedule and Telegram.
@@ -82,15 +108,22 @@ type serveBackend struct {
 	exe string
 	tg  *tgSession
 
+	// probeMu serializes run.lock probes: two in this process would see each
+	// other's lock as a run in progress.
+	probeMu sync.Mutex
+
 	mu     sync.Mutex
 	child  *exec.Cmd // a run started from the page, until it exits
 	counts map[int64]serve.Count
 	topics map[int64][]stats.TopicStats
-	// dialogs are loaded once per serve: the chat list does not change often,
-	// and loading it again costs a few seconds.
-	dialogs []tgclient.Dialog
-	folders []tgclient.Folder
+	// dialogs are kept for a few minutes: loading them costs seconds, but
+	// chats joined meanwhile must show up.
+	dialogs   []tgclient.Dialog
+	folders   []tgclient.Folder
+	dialogsAt time.Time
 }
+
+const dialogsTTL = 5 * time.Minute
 
 // load reads the config and secrets again on every request: tgbup init,
 // setup or a hand edit may have changed them meanwhile.
@@ -200,12 +233,21 @@ func setupProblems(st setup, s serve.Status) []string {
 	return out
 }
 
-// running reports a run in progress, started here or by the schedule.
+// running reports a run in progress, started here or by the schedule; the
+// caller holds b.mu.
+func (b *serveBackend) runningLocked(st setup) bool {
+	if b.child != nil {
+		return true
+	}
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	return lockHeld(st.paths.Lock())
+}
+
 func (b *serveBackend) running(st setup) bool {
 	b.mu.Lock()
-	child := b.child != nil
-	b.mu.Unlock()
-	return child || lockHeld(st.paths.Lock())
+	defer b.mu.Unlock()
+	return b.runningLocked(st)
 }
 
 // lockHeld probes run.lock. The probe holds the lock for an instant; a run
@@ -227,7 +269,10 @@ func (b *serveBackend) StartRun() error {
 	if err != nil {
 		return err
 	}
-	if b.running(st) {
+	// Checked and started under one lock, so two clicks start one run.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.runningLocked(st) {
 		return serve.ErrBusy
 	}
 	logPath := filepath.Join(st.paths.StateDir, "logs", "run.log")
@@ -247,14 +292,14 @@ func (b *serveBackend) StartRun() error {
 		f.Close()
 		return err
 	}
-	b.mu.Lock()
 	b.child = cmd
-	b.mu.Unlock()
 	go func() {
 		_ = cmd.Wait()
 		f.Close()
 		b.mu.Lock()
-		b.child = nil
+		if b.child == cmd {
+			b.child = nil
+		}
 		b.mu.Unlock()
 	}()
 	return nil
@@ -308,7 +353,7 @@ func (b *serveBackend) chatData(ctx context.Context) (setup, *tgclient.API, erro
 		return st, nil, err
 	}
 	b.mu.Lock()
-	loaded := b.dialogs != nil
+	loaded := b.dialogs != nil && time.Since(b.dialogsAt) < dialogsTTL
 	b.mu.Unlock()
 	if loaded {
 		return st, api, nil
@@ -327,7 +372,7 @@ func (b *serveBackend) chatData(ctx context.Context) (setup, *tgclient.API, erro
 		return st, nil, err
 	}
 	b.mu.Lock()
-	b.dialogs, b.folders = dialogs, folders
+	b.dialogs, b.folders, b.dialogsAt = dialogs, folders, time.Now()
 	b.mu.Unlock()
 	return st, api, nil
 }
@@ -351,8 +396,11 @@ func (b *serveBackend) Chats(ctx context.Context) (serve.ChatList, error) {
 	b.mu.Lock()
 	dialogs, folders := b.dialogs, b.folders
 	b.mu.Unlock()
-	state, _ := selector.Initial(dialogs, folders, st.cfg.Targets)
+	state, warnings := selector.Initial(dialogs, folders, st.cfg.Targets)
 	var out serve.ChatList
+	for _, w := range warnings {
+		out.Warnings = append(out.Warnings, "In the current config: "+w+". Saving here leaves it out.")
+	}
 	for _, g := range selector.Groups(dialogs, folders) {
 		ids := make([]int64, len(g.Chats))
 		for i, c := range g.Chats {
@@ -448,7 +496,7 @@ func (b *serveBackend) selected(sel serve.Selection) (config.Selected, []stats.I
 	for _, id := range sel.Chats {
 		d, ok := b.dialog(id)
 		if !ok {
-			return out, nil, fmt.Errorf("chat %d is not in your chat list", id)
+			return out, nil, fmt.Errorf("%w: chat %d is not in your chat list (reload the page)", serve.ErrBadRequest, id)
 		}
 		if slices.Contains(out.Chats, id) {
 			continue
@@ -478,12 +526,28 @@ func (b *serveBackend) Preview(ctx context.Context, sel serve.Selection) (serve.
 	if err != nil {
 		return serve.Preview{}, err
 	}
-	cfgSel, items, err := b.selected(sel)
+	_, items, err := b.selected(sel)
+	if err != nil {
+		return serve.Preview{}, err
+	}
+	collected := stats.Collect(ctx, api, items, func(int, int) {})
+	// Their topic titles become comments in the config Save writes.
+	b.mu.Lock()
+	for _, cs := range collected {
+		if cs.Err == nil && cs.Item.Type == store.ChatForum {
+			if b.topics == nil {
+				b.topics = map[int64][]stats.TopicStats{}
+			}
+			b.topics[cs.Item.ID] = cs.Topics
+		}
+	}
+	b.mu.Unlock()
+	cfgSel, _, err := b.selected(sel)
 	if err != nil {
 		return serve.Preview{}, err
 	}
 	var report bytes.Buffer
-	printReport(&report, stats.Collect(ctx, api, items, func(int, int) {}))
+	printReport(&report, collected)
 	text, err := config.RenderTargets(st.paths.Config, cfgSel)
 	if err != nil {
 		return serve.Preview{}, err
@@ -503,72 +567,109 @@ func (b *serveBackend) Save(ctx context.Context, sel serve.Selection) error {
 	return config.WriteTargets(st.paths.Config, cfgSel)
 }
 
-// tgSession keeps one Telegram connection open while serve runs, so the chat
-// page does not reconnect for every request.
+// tgSession keeps one Telegram connection open while the chat page is in
+// use and closes it after idle: a re-login elsewhere (tgbup init) then takes
+// effect, and the session is not held open for nothing.
 type tgSession struct {
-	mu   sync.Mutex
-	api  *tgclient.API
-	raw  *tg.Client
-	stop context.CancelFunc
-	done chan struct{}
+	base context.Context // serve's: shutting down closes the connection
+	idle time.Duration
+
+	mu         sync.Mutex
+	api        *tgclient.API
+	raw        *tg.Client
+	stop       context.CancelFunc
+	done       chan struct{}
+	connecting chan struct{} // closed when a connect attempt ends
+	connErr    error
+	lastUse    time.Time
+}
+
+func newTGSession(base context.Context, idle time.Duration) *tgSession {
+	return &tgSession{base: base, idle: idle}
 }
 
 func (t *tgSession) get(ctx context.Context, opts tgclient.Options) (*tgclient.API, *tg.Client, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.api != nil {
-		return t.api, t.raw, nil
-	}
-	runCtx, stop := context.WithCancel(context.Background())
-	type conn struct {
-		raw *tg.Client
-		err error
-	}
-	ready := make(chan conn, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		err := tgclient.Run(runCtx, opts, func(ctx context.Context, c *telegram.Client) error {
-			if err := tgclient.RequireAuth(ctx, c); err != nil {
-				return err
-			}
-			ready <- conn{raw: c.API()}
-			<-ctx.Done()
-			return nil
-		})
-		if err == nil {
-			err = errors.New("the Telegram connection closed")
-		}
-		select {
-		case ready <- conn{err: err}:
-		default:
-		}
+	for {
 		t.mu.Lock()
-		if t.done == done {
-			t.api, t.raw, t.stop, t.done = nil, nil, nil, nil
+		if t.api != nil {
+			t.lastUse = time.Now()
+			api, raw := t.api, t.raw
+			t.mu.Unlock()
+			return api, raw, nil
+		}
+		wait := t.connecting
+		if wait == nil {
+			wait = make(chan struct{})
+			t.connecting = wait
+			go t.connect(opts, wait)
 		}
 		t.mu.Unlock()
-	}()
-	select {
-	case c := <-ready:
-		if c.err != nil {
-			stop()
-			return nil, nil, c.err
+		// Not waiting under t.mu: a slow connect must not block shutdown.
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
 		}
-		t.api, t.raw, t.stop, t.done = tgclient.NewAPI(c.raw), c.raw, stop, done
-		return t.api, t.raw, nil
-	case <-ctx.Done():
-		stop()
-		return nil, nil, ctx.Err()
+		t.mu.Lock()
+		err, ok := t.connErr, t.api != nil
+		t.mu.Unlock()
+		if !ok {
+			if err == nil {
+				err = errors.New("the Telegram connection closed")
+			}
+			return nil, nil, err
+		}
 	}
 }
 
-func (t *tgSession) close() {
-	t.mu.Lock()
-	stop, done := t.stop, t.done
-	t.mu.Unlock()
-	if stop != nil {
-		stop()
-		<-done
+// connect runs one connection until it fails, the serve context ends or it
+// stays unused for t.idle.
+func (t *tgSession) connect(opts tgclient.Options, connecting chan struct{}) {
+	runCtx, stop := context.WithCancel(t.base)
+	done := make(chan struct{})
+	announced := false
+	announce := func(raw *tg.Client, err error) {
+		t.mu.Lock()
+		if raw != nil {
+			t.api, t.raw, t.stop, t.done, t.lastUse = tgclient.NewAPI(raw), raw, stop, done, time.Now()
+		}
+		t.connErr, t.connecting = err, nil
+		t.mu.Unlock()
+		close(connecting)
+		announced = true
 	}
+	err := tgclient.Run(runCtx, opts, func(ctx context.Context, c *telegram.Client) error {
+		if err := tgclient.RequireAuth(ctx, c); err != nil {
+			return err
+		}
+		announce(c.API(), nil)
+		tick := time.NewTicker(min(t.idle, time.Minute))
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-tick.C:
+				t.mu.Lock()
+				idle := time.Since(t.lastUse) > t.idle
+				t.mu.Unlock()
+				if idle {
+					return nil
+				}
+			}
+		}
+	})
+	stop()
+	if !announced {
+		if err == nil {
+			err = errors.New("the Telegram connection closed")
+		}
+		announce(nil, err)
+	}
+	t.mu.Lock()
+	if t.done == done {
+		t.api, t.raw, t.stop, t.done = nil, nil, nil, nil
+	}
+	t.mu.Unlock()
+	close(done)
 }

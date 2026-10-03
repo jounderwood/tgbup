@@ -15,6 +15,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -27,6 +28,9 @@ import (
 
 // ErrBusy means a run (manual or scheduled) is already in progress.
 var ErrBusy = errors.New("a run is already in progress")
+
+// ErrBadRequest marks errors caused by what the page sent.
+var ErrBadRequest = errors.New("bad request")
 
 // Backend is what the interface shows and changes.
 type Backend interface {
@@ -90,6 +94,8 @@ type Schedule struct {
 type ChatList struct {
 	Groups []Group `json:"groups"`
 	Chats  []Chat  `json:"chats"`
+	// Warnings name configured chats not in the list: saving drops them.
+	Warnings []string `json:"warnings"`
 }
 
 type Group struct {
@@ -133,33 +139,39 @@ type Preview struct {
 // Server serves the interface on a loopback address.
 type Server struct {
 	backend    Backend
-	archiveDir string
-	token      string
-	port       string
+	archiveDir  func() string
+	token       string
+	port        string
+	archivePort string
 	pages      *template.Template
 }
 
 //go:embed web
 var webFS embed.FS
 
-// CheckListen accepts only loopback addresses: the archive is private and the
-// interface has no login.
+// CheckListen accepts only this computer's addresses that the Host check
+// also accepts: the archive is private and the interface has no login.
 func CheckListen(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("--listen %q: %w", addr, err)
 	}
-	if host == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("--listen %q: only this computer (127.0.0.1, localhost) is allowed: the interface has no login", addr)
+	if !localHost(host) {
+		return fmt.Errorf("--listen %q: only this computer (127.0.0.1, ::1, localhost) is allowed: the interface has no login", addr)
 	}
 	return nil
 }
 
-// New builds a server for an address already bound to port.
-func New(b Backend, archiveDir, port string) (*Server, error) {
+func localHost(h string) bool { return h == "localhost" || h == "127.0.0.1" || h == "::1" }
+
+// New builds a server for addresses already bound to port (the interface)
+// and archivePort (the archive as a site). archiveDir is asked on every
+// request, as tgbup init may move the archive meanwhile.
+//
+// The archive gets its own origin because it holds files other people sent:
+// a page among them that runs a script there can neither read the interface
+// (and its token) nor call the API, which needs the token.
+func New(b Backend, archiveDir func() string, port, archivePort string) (*Server, error) {
 	tok := make([]byte, 16)
 	if _, err := rand.Read(tok); err != nil {
 		return nil, err
@@ -168,7 +180,7 @@ func New(b Backend, archiveDir, port string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{backend: b, archiveDir: archiveDir, token: hex.EncodeToString(tok), port: port, pages: pages}, nil
+	return &Server{backend: b, archiveDir: archiveDir, token: hex.EncodeToString(tok), port: port, archivePort: archivePort, pages: pages}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -177,7 +189,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /chats", s.page("chats.html"))
 	static, _ := fs.Sub(webFS, "web/static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
-	mux.HandleFunc("GET /archive/{dir}/{path...}", s.archive)
 
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("POST /api/run", s.run)
@@ -187,19 +198,36 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{id}/topics", s.topics)
 	mux.HandleFunc("POST /api/chats/preview", s.preview)
 	mux.HandleFunc("POST /api/chats", s.save)
-	return s.guard(mux)
+	return s.guard(mux, s.port, true)
 }
 
-// guard rejects requests a page from another site could make: a foreign Host
-// (DNS rebinding) and changes without the token only our pages carry.
-func (s *Server) guard(next http.Handler) http.Handler {
+// ArchiveHandler serves html/ and media/ of the archive on its own origin.
+func (s *Server) ArchiveHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /{$}", http.RedirectHandler("/html/", http.StatusFound))
+	mux.HandleFunc("GET /{dir}/{path...}", s.archive)
+	return s.guard(mux, s.archivePort, false)
+}
+
+// guard rejects what a page from another site could make the browser do: a
+// foreign Host (DNS rebinding), any API call without the token only our pages
+// carry (a custom header, so the browser asks first and gets no CORS), and
+// loading our pages as a subresource.
+func (s *Server) guard(next http.Handler, wantPort string, ui bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, port, err := net.SplitHostPort(r.Host)
-		if err != nil || port != s.port || (host != "localhost" && host != "127.0.0.1" && host != "::1") {
+		if err != nil || port != wantPort || !localHost(host) {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Tgbup-Token") != s.token {
+		if ui && strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-Tgbup-Token") != s.token {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		// Other sites, the archive's origin included, may link to the
+		// interface but not load anything from it.
+		if ui && r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin" &&
+			r.Header.Get("Sec-Fetch-Site") != "none" && r.Header.Get("Sec-Fetch-Mode") != "navigate" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -214,25 +242,35 @@ func (s *Server) page(name string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
-		if err := s.pages.ExecuteTemplate(w, name, map[string]string{"Token": s.token}); err != nil {
+		host, _, _ := net.SplitHostPort(r.Host)
+		archive := "http://" + net.JoinHostPort(host, s.archivePort) + "/html/"
+		if err := s.pages.ExecuteTemplate(w, name, map[string]string{"Token": s.token, "Archive": archive}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
 }
 
 // archive serves html/ and media/ of the archive and nothing else from it.
+// A received file opened by itself runs sandboxed, and anything but a
+// picture, video or sound is downloaded rather than shown.
 func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
 	dir := r.PathValue("dir")
 	if dir != "html" && dir != "media" {
 		http.NotFound(w, r)
 		return
 	}
-	rel := path.Clean("/" + r.PathValue("path"))
-	if strings.HasSuffix(r.URL.Path, "/") && rel != "/" {
-		rel += "/"
+	root, err := os.OpenRoot(filepath.Join(s.archiveDir(), dir))
+	if err != nil {
+		http.NotFound(w, r)
+		return
 	}
-	full := filepath.Join(s.archiveDir, dir, filepath.FromSlash(rel))
-	f, err := os.Open(full)
+	defer root.Close()
+	// OpenRoot also refuses symlinks leading out of the folder.
+	rel := strings.TrimPrefix(path.Clean("/"+r.PathValue("path")), "/")
+	if rel == "" {
+		rel = "."
+	}
+	f, err := root.Open(filepath.FromSlash(rel))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -241,7 +279,7 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
 	st, err := f.Stat()
 	if err == nil && st.IsDir() {
 		f.Close()
-		if f, err = os.Open(filepath.Join(full, "index.html")); err == nil {
+		if f, err = root.Open(filepath.Join(filepath.FromSlash(rel), "index.html")); err == nil {
 			defer f.Close()
 			st, err = f.Stat()
 		}
@@ -250,8 +288,23 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if dir == "media" {
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'")
+		if !inlineMedia(st.Name()) {
+			w.Header().Set("Content-Disposition", "attachment")
+		}
+	}
 	// ServeContent, not ServeFile: no redirects for index.html, no directory listings.
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
+}
+
+// inlineMedia reports files a browser shows without running anything in them.
+func inlineMedia(name string) bool {
+	t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if t == "" || strings.HasPrefix(t, "image/svg") {
+		return false
+	}
+	return strings.HasPrefix(t, "image/") || strings.HasPrefix(t, "video/") || strings.HasPrefix(t, "audio/")
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +391,7 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.backend.Save(r.Context(), sel); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		replyErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -346,7 +399,7 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 
 func reply(w http.ResponseWriter, v any, err error) {
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		replyErr(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -354,17 +407,37 @@ func reply(w http.ResponseWriter, v any, err error) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// Serve runs the server on ln until ctx ends.
-func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shut)
-	}()
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-		return err
+func replyErr(w http.ResponseWriter, err error) {
+	code := http.StatusInternalServerError
+	if errors.Is(err, ErrBadRequest) {
+		code = http.StatusBadRequest
 	}
-	return nil
+	http.Error(w, err.Error(), code)
+}
+
+// Serve runs the interface on ln and the archive on archiveLn until ctx ends.
+func (s *Server) Serve(ctx context.Context, ln, archiveLn net.Listener) error {
+	errs := make(chan error, 2)
+	for _, p := range []struct {
+		ln net.Listener
+		h  http.Handler
+	}{{ln, s.Handler()}, {archiveLn, s.ArchiveHandler()}} {
+		// Requests share ctx, so a shutdown also ends the ones waiting on Telegram.
+		srv := &http.Server{Handler: p.h, ReadHeaderTimeout: 10 * time.Second,
+			BaseContext: func(net.Listener) context.Context { return ctx }}
+		go func() {
+			<-ctx.Done()
+			shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shut)
+		}()
+		go func() {
+			if err := srv.Serve(p.ln); !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+				return
+			}
+			errs <- nil
+		}()
+	}
+	return errors.Join(<-errs, <-errs)
 }

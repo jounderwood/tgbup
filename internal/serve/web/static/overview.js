@@ -3,6 +3,8 @@ const $ = (id) => document.getElementById(id);
 let running = false;
 let showLog = false;
 let timer;
+// gen changes on "Update now": a status asked for before the click is stale.
+let gen = 0;
 
 function renderStatus(s) {
   running = s.running;
@@ -63,8 +65,11 @@ function renderStatus(s) {
 }
 
 async function refresh() {
+  const asked = gen;
   try {
-    renderStatus(await api("GET", "/api/status"));
+    const s = await api("GET", "/api/status");
+    if (asked !== gen) return;
+    renderStatus(s);
   } catch (e) {
     $("problems").replaceChildren(el("li", {}, "Could not read the status: " + e.message));
     $("problems").hidden = false;
@@ -85,10 +90,12 @@ async function refreshLog() {
 
 $("run-now").addEventListener("click", async () => {
   $("run-now").disabled = true;
+  gen++;
   try {
     await api("POST", "/api/run");
   } catch (e) {
     if (e.status !== 409) { toast("Could not start: " + e.message); $("run-now").disabled = false; return; }
+    toast("A run is already in progress");
   }
   running = true;
   showLog = true;

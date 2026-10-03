@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
@@ -25,6 +26,11 @@ import (
 const ChunkSize = 512 * 1024
 
 const MaxAttempts = 5
+
+// ChunkTimeout bounds one chunk request. gotd waits without a limit for a
+// connection to the data center holding a file, and one that never comes
+// would hang the run and, through run.lock, every scheduled run after it.
+var ChunkTimeout = 2 * time.Minute
 
 type Downloader struct {
 	TG          tgclient.Telegram
@@ -262,8 +268,15 @@ func download(ctx context.Context, t tgclient.Telegram, loc tg.InputFileLocation
 		return err
 	}
 	for {
-		chunk, err := t.FileChunk(ctx, loc, offset, ChunkSize)
+		cctx, cancel := context.WithTimeout(ctx, ChunkTimeout)
+		chunk, err := t.FileChunk(cctx, loc, offset, ChunkSize)
+		cancel()
 		if err != nil {
+			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+				// Not a cancellation: an attempt that counts, so a file that never
+				// answers ends up failed instead of deferred forever.
+				return fmt.Errorf("no answer from Telegram for %s", ChunkTimeout)
+			}
 			return err
 		}
 		if _, err := f.Write(chunk); err != nil {

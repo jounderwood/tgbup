@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
@@ -31,6 +32,7 @@ type fakeFiles struct {
 	data      map[int64][]byte
 	offsets   []int64
 	fail      error
+	hang      bool // wait for the context like a request to an unreachable data center
 	expired   bool // FILE_REFERENCE_EXPIRED until the reference is "fresh"
 	onChunk   func(n int)
 	refetches int
@@ -44,6 +46,12 @@ func (f *fakeFiles) FileChunk(ctx context.Context, loc tg.InputFileLocationClass
 	}
 	if f.fail != nil {
 		return nil, f.fail
+	}
+	if f.hang {
+		f.mu.Unlock()
+		<-ctx.Done()
+		f.mu.Lock()
+		return nil, ctx.Err()
 	}
 	d := loc.(*tg.InputDocumentFileLocation)
 	if f.expired && string(d.FileReference) != "fresh" {
@@ -249,6 +257,18 @@ func TestFailuresBecomeFailedAfterMaxAttempts(t *testing.T) {
 	r, _ := e.d.Run(context.Background())
 	if r.Done+r.Failed+r.Skipped+r.Deferred != 0 {
 		t.Fatalf("failed media retried: %+v", r)
+	}
+}
+
+func TestHangingChunkFailsTheAttempt(t *testing.T) {
+	old := media.ChunkTimeout
+	media.ChunkTimeout = 50 * time.Millisecond
+	defer func() { media.ChunkTimeout = old }()
+	e := newEnv(t, 1000)
+	e.tg.hang = true
+	r, err := e.d.Run(context.Background())
+	if err != nil || r.Failed != 1 || e.info(t).Attempts != 1 {
+		t.Fatalf("report = %+v info = %+v err = %v: a hung request must end and count as an attempt", r, e.info(t), err)
 	}
 }
 

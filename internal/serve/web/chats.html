@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <b class="logo">tgbup</b>
-  <nav><a href="/">Overview</a><a href="/chats" class="on">Chats</a><a href="/archive/html/">Archive</a></nav>
+  <nav><a href="/">Overview</a><a href="/chats" class="on">Chats</a><a href="{{.Archive}}">Archive</a></nav>
 </header>
 <main>
   <p class="muted">Tick the chats to archive. In a forum, open its topics to leave some out; new topics are archived automatically. Nothing changes until you save.</p>
@@ -23,6 +23,7 @@
     <button id="review" type="button">Review and save…</button>
   </div>
   <div class="bulk"><button type="button" id="all" class="link">select all in this list</button> · <button type="button" id="none" class="link">clear all in this list</button></div>
+  <ul class="problems" id="warnings" hidden></ul>
   <div id="loading" class="muted">Loading your chats from Telegram…</div>
   <table class="chatlist" hidden>
     <thead><tr><th></th><th>Chat</th><th>Type</th><th class="num">Messages</th><th>Topics</th></tr></thead>
