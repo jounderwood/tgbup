@@ -40,7 +40,11 @@ type Downloader struct {
 	Workers     int
 	MaxFileSize int64
 	SkipKinds   []string
-	Log         *slog.Logger
+	// SelfID is the account's own user id: its files are not quarantined.
+	SelfID int64
+	// Location is the time zone of the dates in file names; nil is the Mac's.
+	Location *time.Location
+	Log      *slog.Logger
 	// Progress, if set, is called after each file with how many of the
 	// pending files have been handled.
 	Progress func(done, total int)
@@ -184,10 +188,28 @@ func (d *Downloader) handle(ctx context.Context, j store.MediaJob) (outcome, err
 	if !ok {
 		return outDeferred, nil
 	}
-	rel := RelPath(j)
+	rel := j.LocalPath
+	if rel == "" {
+		var err error
+		if rel, err = d.reserve(ctx, j); err != nil {
+			return 0, err
+		}
+	}
 	final := filepath.Join(d.ArchiveDir, rel)
-	if _, err := os.Stat(final); err == nil {
-		return outDone, d.Store.MediaDone(ctx, j.Key, rel)
+	// The name was free when it was reserved, so a file there of the right
+	// size is this one, finished by a run that stopped before recording it.
+	// Any other file there is not ours: leave it and take another name.
+	if st, err := os.Lstat(final); err == nil {
+		if j.Size <= 0 || st.Size() == j.Size {
+			return outDone, d.Store.MediaDone(ctx, j.Key, rel)
+		}
+		if err := d.Store.ReleaseMediaPath(ctx, j.Key); err != nil {
+			return 0, err
+		}
+		if rel, err = d.reserve(ctx, j); err != nil {
+			return 0, err
+		}
+		final = filepath.Join(d.ArchiveDir, rel)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return 0, err
 	}
@@ -195,6 +217,35 @@ func (d *Downloader) handle(ctx context.Context, j store.MediaJob) (outcome, err
 		return 0, err
 	}
 	return outDone, d.Store.MediaDone(ctx, j.Key, rel)
+}
+
+// maxSameName bounds the " (n)" candidates tried for one name.
+const maxSameName = 1000
+
+// reserve picks the file's name: the first candidate that no other file in
+// the archive has and nothing on disk uses. It is recorded before the
+// download, so a later attempt continues into the same file.
+func (d *Downloader) reserve(ctx context.Context, j store.MediaJob) (string, error) {
+	loc := d.Location
+	if loc == nil {
+		loc = time.Local
+	}
+	for n := 1; n <= maxSameName; n++ {
+		rel := RelPath(j, loc, n)
+		if _, err := os.Lstat(filepath.Join(d.ArchiveDir, rel)); err == nil {
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		ok, err := d.Store.ReserveMediaPath(ctx, j.Key, rel, PathKey(rel))
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return rel, nil
+		}
+	}
+	return "", fmt.Errorf("no free name for %s after %d tries", RelPath(j, loc, 1), maxSameName)
 }
 
 func (d *Downloader) fetch(ctx context.Context, j store.MediaJob, peer tg.InputPeerClass, final string) error {
@@ -210,10 +261,11 @@ func (d *Downloader) fetch(ctx context.Context, j store.MediaJob, peer tg.InputP
 	if err != nil {
 		return err
 	}
+	foreign := !ownFile(msg, d.SelfID)
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return err
 	}
-	part := final + ".part"
+	part := PartPath(final)
 	for refreshed := false; ; refreshed = true {
 		err := download(ctx, d.TG, loc, part)
 		if err == nil {
@@ -247,7 +299,48 @@ func (d *Downloader) fetch(ctx context.Context, j store.MediaJob, peer tg.InputP
 			return fmt.Errorf("size mismatch: got %d bytes, want %d", st.Size(), j.Size)
 		}
 	}
+	if foreign {
+		// Only a warning: a volume without extended attributes (some network
+		// shares) must not stop the archive.
+		if err := quarantine(part, time.Now()); err != nil {
+			d.Log.Warn("could not mark the file as downloaded", "file", final, "err", err)
+		}
+	}
+	date := time.Unix(j.Date, 0)
+	if err := os.Chtimes(part, date, date); err != nil {
+		return err
+	}
+	// Names are reserved, so something at final is not ours: never overwrite it.
+	if _, err := os.Lstat(final); err == nil {
+		return &fs.PathError{Op: "rename", Path: final, Err: fs.ErrExist}
+	}
 	return os.Rename(part, final)
+}
+
+// ownFile tells a file the account's owner sent from one someone else did:
+// a forward of someone else's file is theirs. Telegram does not always mark
+// the owner's messages in Saved Messages as outgoing, so the sender counts
+// too, and a message there without one is the owner's.
+func ownFile(msg tg.MessageClass, self int64) bool {
+	m, ok := msg.(*tg.Message)
+	if !ok {
+		return false
+	}
+	if _, forwarded := m.GetFwdFrom(); forwarded {
+		return false
+	}
+	if _, viaBot := m.GetViaBotID(); viaBot {
+		return false // an inline bot made the content
+	}
+	if m.Out {
+		return true
+	}
+	if from, ok := m.GetFromID(); ok {
+		u, isUser := from.(*tg.PeerUser)
+		return isUser && self != 0 && u.UserID == self
+	}
+	u, isUser := m.PeerID.(*tg.PeerUser)
+	return isUser && self != 0 && u.UserID == self
 }
 
 func download(ctx context.Context, t tgclient.Telegram, loc tg.InputFileLocationClass, part string) error {

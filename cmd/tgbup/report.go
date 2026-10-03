@@ -14,7 +14,6 @@ import (
 
 	"golang.org/x/term"
 
-	"gitlab.com/joeunderwood/tgbup/internal/browse"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
@@ -224,18 +223,6 @@ func statItems(targets []tgclient.Target) []stats.Item {
 		})
 	}
 	return items
-}
-
-// printFiles reports the files/ rebuild; dir is shown when given.
-func printFiles(w io.Writer, r browse.Result, dir string) {
-	fmt.Fprintf(w, "files/: %s linked", groupDigits(r.Linked))
-	if r.Missing > 0 {
-		fmt.Fprintf(w, " · %s not downloaded yet", groupDigits(r.Missing))
-	}
-	if dir != "" {
-		fmt.Fprintf(w, " → %s", dir)
-	}
-	fmt.Fprintln(w)
 }
 
 // newLogger writes plain lines for a person at a terminal and slog's text

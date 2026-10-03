@@ -180,20 +180,20 @@ func (b *serveBackend) checkLoginCached(ctx context.Context) (string, bool, erro
 // SetupAction runs one step's action with the JSON the page sent.
 func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte) (any, error) {
 	var req struct {
-		APIID         string   `json:"api_id"`
-		APIHash       string   `json:"api_hash"`
-		Phone         string   `json:"phone"`
-		Code          string   `json:"code"`
-		Password      string   `json:"password"`
-		Dir           string   `json:"dir"`
-		Enabled       bool     `json:"enabled"`
-		Local         string   `json:"local"`
-		Extras        []string `json:"extras"`
-		Token         string   `json:"token"`
-		ChatID        string   `json:"chat_id"`
-		Takeout       bool     `json:"takeout"`
-		Repo          string   `json:"repo"`
-		Snapshot      string   `json:"snapshot"`
+		APIID    string   `json:"api_id"`
+		APIHash  string   `json:"api_hash"`
+		Phone    string   `json:"phone"`
+		Code     string   `json:"code"`
+		Password string   `json:"password"`
+		Dir      string   `json:"dir"`
+		Enabled  bool     `json:"enabled"`
+		Local    string   `json:"local"`
+		Extras   []string `json:"extras"`
+		Token    string   `json:"token"`
+		ChatID   string   `json:"chat_id"`
+		Takeout  bool     `json:"takeout"`
+		Repo     string   `json:"repo"`
+		Snapshot string   `json:"snapshot"`
 	}
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -290,7 +290,7 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 			return nil, err
 		}
 		return map[string]any{"snapshot": res.Snapshot.ShortID, "media_added": res.MediaAdded, "media_kept": res.MediaKept,
-			"moved_aside": res.MovedAside, "config_adopted": res.ConfigAdopted, "password_kept": res.PasswordKept}, nil
+			"moved_aside": res.MovedAside, "media_replaced": res.MediaReplaced, "media_aside": res.MediaAside, "config_adopted": res.ConfigAdopted, "password_kept": res.PasswordKept}, nil
 	}
 	return nil, badInput("unknown setup action %q", name)
 }

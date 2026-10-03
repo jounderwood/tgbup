@@ -25,7 +25,6 @@ commands:
   deps      find or download restic and rclone
   notify    notify test: send a test message through the alerts bot
   schedule  install|uninstall|status: start tgbup run 4 times a day (launchd)
-  files     rebuild files/, the readable view of downloaded media
   render    redraw html/ and md/ from the archive (--full: every page)
   export    pack a chat, topic or period with its media into a zip
   serve     web page on this computer: setup, status, update now, chat list, the archive (--open)
@@ -66,8 +65,6 @@ func run(ctx context.Context, args []string, env Env) int {
 		return cmdSetup(ctx, env)
 	case "sync":
 		return cmdSync(ctx, args[1:], env)
-	case "files":
-		return cmdFiles(ctx, env)
 	case "run":
 		return cmdRun(ctx, env)
 	case "backup":

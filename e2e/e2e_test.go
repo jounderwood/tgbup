@@ -15,13 +15,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/gotd/td/tg"
+	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 
 	"gitlab.com/joeunderwood/tgbup/e2e/testenv"
@@ -200,15 +203,22 @@ func checkPrivateAndGroup(t *testing.T, db *sql.DB) {
 	}
 }
 
-// checkFilesView looks for the seeded documents under readable names in files/.
-func checkFilesView(t *testing.T, archive string) {
+// checkMediaNames looks for the seeded documents under their own names in
+// media/: one in the forum, one in Saved Messages. The test account sent both,
+// so neither is quarantined.
+func checkMediaNames(t *testing.T, archive string) {
 	t.Helper()
-	for _, pattern := range []string{
-		filepath.Join(archive, "files", fx.Title, "*", "* отчёт 2026.pdf"),
-		filepath.Join(archive, "files", "Saved Messages", "* отчёт 2026.pdf"),
-	} {
-		if m, _ := filepath.Glob(pattern); len(m) != 1 {
-			t.Errorf("files view: %d matches for %s", len(m), pattern)
+	pattern := filepath.Join(archive, "media", "*", "*_отчёт 2026*.pdf")
+	m, _ := filepath.Glob(pattern)
+	if len(m) != 2 {
+		t.Errorf("%d matches for %s: %q", len(m), pattern, m)
+	}
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	for _, p := range m {
+		if _, err := unix.Getxattr(p, "com.apple.quarantine", make([]byte, 128)); err == nil {
+			t.Errorf("own file %s is quarantined", p)
 		}
 	}
 }
@@ -247,7 +257,11 @@ func checkRendered(t *testing.T, archive string) {
 		head := string(b[:i])
 		href := head[strings.LastIndex(head, `href="`)+len(`href="`):]
 		href = href[:strings.Index(href, `"`)]
-		if _, err := os.Stat(filepath.Join(filepath.Dir(p), filepath.FromSlash(href))); err != nil {
+		file, err := url.PathUnescape(href)
+		if err != nil {
+			t.Fatalf("link %s: %v", href, err)
+		}
+		if _, err := os.Stat(filepath.Join(filepath.Dir(p), filepath.FromSlash(file))); err != nil {
 			t.Errorf("document link %s on %s is broken: %v", href, p, err)
 		}
 		linked = true
@@ -282,7 +296,7 @@ func checkExport(t *testing.T, cfgPath string) {
 	defer r.Close()
 	var doc, page bool
 	for _, f := range r.File {
-		doc = doc || (strings.HasPrefix(f.Name, "forum/media/document/") && strings.HasSuffix(f.Name, ".pdf"))
+		doc = doc || (strings.HasPrefix(f.Name, "forum/media/") && strings.HasSuffix(f.Name, "_отчёт 2026.pdf"))
 		page = page || strings.HasPrefix(f.Name, "forum/html/"+fx.Title+"/")
 	}
 	if !doc || !page {
@@ -327,7 +341,7 @@ func TestSyncArchivesForum(t *testing.T) {
 	}
 	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
-	checkFilesView(t, archive)
+	checkMediaNames(t, archive)
 	checkMeta(t, db)
 	checkRendered(t, archive)
 	checkExport(t, cfgPath)

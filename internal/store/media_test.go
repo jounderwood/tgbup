@@ -70,3 +70,32 @@ func TestMediaQueueLifecycle(t *testing.T) {
 		t.Fatalf("raw = %v %v", raw, err)
 	}
 }
+
+func TestReserveMediaPath(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedChat(t, s, chatA)
+	m := msg(1, "document:1", "document:2")
+	m.Date = 1718388153
+	if err := s.SaveBatch(ctx, Batch{ChatID: chatA,
+		Media:    []Media{{Key: "document:1", Kind: "document"}, {Key: "document:2", Kind: "document"}},
+		Messages: []Message{m}}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ReserveMediaPath(ctx, "document:1", "media/2024/a.pdf", "media/2024/a.pdf"); !ok || err != nil {
+		t.Fatalf("first reservation: %v %v", ok, err)
+	}
+	if ok, err := s.ReserveMediaPath(ctx, "document:2", "media/2024/A.pdf", "media/2024/a.pdf"); ok || err != nil {
+		t.Fatalf("a taken name was given again: %v %v", ok, err)
+	}
+	jobs, err := s.PendingMedia(ctx)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v %v", jobs, err)
+	}
+	if j := jobs[0]; j.LocalPath != "media/2024/a.pdf" || j.Date != 1718388153 || j.ChatTitle != "A" {
+		t.Errorf("job = %+v", j)
+	}
+	if jobs[1].LocalPath != "" {
+		t.Errorf("unreserved job has a path: %+v", jobs[1])
+	}
+}

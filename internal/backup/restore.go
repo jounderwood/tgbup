@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,7 @@ type Snapshot struct {
 	Time    time.Time `json:"time"`
 	Host    string    `json:"hostname"`
 	// Paths are the absolute paths backed up: the work folder with the
-	// database copy and the config, and the archive's media/.
+	// database copy and the config, and the archive's media/ and html/.
 	Paths []string `json:"paths"`
 }
 
@@ -44,8 +45,13 @@ type RestoreResult struct {
 	Snapshot Snapshot
 	// MovedAside is where the database that was in the archive folder went; "" if there was none.
 	MovedAside string
-	// MediaAdded files came from the snapshot; MediaKept were already there and left alone.
+	// MediaAdded files came from the snapshot; MediaKept were already there,
+	// the same, and left alone.
 	MediaAdded, MediaKept int
+	// MediaReplaced files were already there under a snapshot file's name but
+	// differ (names are not ids); they were moved to MediaAside.
+	MediaReplaced int
+	MediaAside    string
 	// Config is the snapshot's config.yaml; the caller decides whether to use it.
 	Config []byte
 }
@@ -84,7 +90,15 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 	}
 	tmp := filepath.Join(archiveDir, ".tgbup-restore-"+now.Format("20060102-150405"))
 	defer os.RemoveAll(tmp)
-	if _, err := o.restic(ctx, repo, "restore", res.Snapshot.ID, "--target", tmp); err != nil {
+	args := []string{"restore", res.Snapshot.ID, "--target", tmp}
+	for _, p := range res.Snapshot.Paths {
+		// The pages are redrawn after the restore; html/ is in snapshots for
+		// reading them without tgbup.
+		if filepath.Base(p) == "html" {
+			args = append(args, "--exclude", p)
+		}
+	}
+	if _, err := o.restic(ctx, repo, args...); err != nil {
 		return res, err
 	}
 
@@ -121,7 +135,11 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 		return res, err
 	}
 	if media != "" {
-		if res.MediaAdded, res.MediaKept, err = mergeMedia(media, filepath.Join(archiveDir, "media")); err != nil {
+		aside := filepath.Join(archiveDir, "media.before-restore-"+now.Format("20060102-150405"))
+		if res.MediaAdded, res.MediaKept, res.MediaReplaced, err = mergeMedia(media, filepath.Join(archiveDir, "media"), aside); res.MediaReplaced > 0 {
+			res.MediaAside = aside
+		}
+		if err != nil {
 			where := "there was none before"
 			if res.MovedAside != "" {
 				where = "the previous one is " + res.MovedAside
@@ -133,8 +151,10 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 	return res, nil
 }
 
-// mergeMedia moves the files of src missing in dst into it.
-func mergeMedia(src, dst string) (added, kept int, err error) {
+// mergeMedia moves the files of src into dst. A file already in dst with
+// the same content stays; one with other content under the same name is
+// moved to aside, so the restored database finds its own files there.
+func mergeMedia(src, dst, aside string) (added, kept, replaced int, err error) {
 	if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) && os.Rename(src, dst) == nil {
 		err = filepath.WalkDir(dst, func(_ string, d fs.DirEntry, err error) error {
 			if err == nil && !d.IsDir() {
@@ -142,7 +162,7 @@ func mergeMedia(src, dst string) (added, kept int, err error) {
 			}
 			return err
 		})
-		return added, 0, err
+		return added, 0, 0, err
 	}
 	err = filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -154,8 +174,22 @@ func mergeMedia(src, dst string) (added, kept int, err error) {
 		}
 		to := filepath.Join(dst, rel)
 		if _, err := os.Lstat(to); err == nil {
-			kept++
-			return nil
+			same, err := sameContent(p, to)
+			if err != nil {
+				return err
+			}
+			if same {
+				kept++
+				return nil
+			}
+			away := filepath.Join(aside, rel)
+			if err := os.MkdirAll(filepath.Dir(away), 0o755); err != nil {
+				return err
+			}
+			if err := os.Rename(to, away); err != nil {
+				return err
+			}
+			replaced++
 		}
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 			return err
@@ -166,7 +200,49 @@ func mergeMedia(src, dst string) (added, kept int, err error) {
 		added++
 		return nil
 	})
-	return added, kept, err
+	return added, kept, replaced, err
+}
+
+// sameContent compares two files byte by byte.
+func sameContent(a, b string) (bool, error) {
+	fa, err := os.Open(a)
+	if err != nil {
+		return false, err
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false, err
+	}
+	defer fb.Close()
+	sa, err := fa.Stat()
+	if err != nil {
+		return false, err
+	}
+	sb, err := fb.Stat()
+	if err != nil {
+		return false, err
+	}
+	if sa.Size() != sb.Size() {
+		return false, nil
+	}
+	ba, bb := make([]byte, 1<<20), make([]byte, 1<<20)
+	for {
+		na, ea := io.ReadFull(fa, ba)
+		nb, eb := io.ReadFull(fb, bb)
+		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
+			return false, nil
+		}
+		if ea == io.EOF || ea == io.ErrUnexpectedEOF {
+			return eb == ea, nil
+		}
+		if ea != nil {
+			return false, ea
+		}
+		if eb != nil {
+			return false, eb
+		}
+	}
 }
 
 // moveFile renames, or copies when the target is on another volume (media/
@@ -195,6 +271,11 @@ func moveFile(from, to string) error {
 		os.Remove(part)
 		return err
 	}
+	// Keep what the download set: the message date and the quarantine mark.
+	if st, err := src.Stat(); err == nil {
+		_ = os.Chtimes(part, st.ModTime(), st.ModTime())
+	}
+	copyQuarantine(from, part)
 	if err := os.Rename(part, to); err != nil {
 		return err
 	}

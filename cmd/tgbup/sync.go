@@ -14,7 +14,6 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbup/internal/browse"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/media"
 	"gitlab.com/joeunderwood/tgbup/internal/render"
@@ -32,16 +31,14 @@ type syncSummary struct {
 	unresolved []string
 	// notes are config problems that lose nothing (e.g. a stale exclude_topics key).
 	notes     []string
-	files     browse.Result
-	filesErr  error
 	render    render.Result
 	renderErr error
-	// viewsDone is set once files/ and the pages were rebuilt.
+	// viewsDone is set once the pages were redrawn.
 	viewsDone bool
 }
 
 func (s syncSummary) ok() bool {
-	return s.sync.OK() && len(s.unresolved) == 0 && s.filesErr == nil && s.renderErr == nil && len(s.render.Errors) == 0 &&
+	return s.sync.OK() && len(s.unresolved) == 0 && s.renderErr == nil && len(s.render.Errors) == 0 &&
 		s.media.AuthErr == nil && s.media.LocalErr == nil && s.media.Failed == 0
 }
 
@@ -81,10 +78,6 @@ func (s syncSummary) print(w io.Writer) {
 	}
 	if s.media.LocalErr != nil {
 		fmt.Fprintf(w, "media stopped by a local disk error: %v\n", s.media.LocalErr)
-	}
-	printFiles(w, s.files, "")
-	if s.filesErr != nil {
-		fmt.Fprintf(w, "files view: %v\n", s.filesErr)
 	}
 	printRender(w, s.render, s.renderErr)
 }
@@ -151,8 +144,7 @@ func syncArchive(ctx context.Context, st setup, db *store.Store, log *slog.Logge
 		return body(ctx, c.API())
 	})
 	if err != nil && !sum.viewsDone && ctx.Err() == nil {
-		// Telegram failed before the views were rebuilt; they need no Telegram.
-		sum.files, sum.filesErr = rebuildFiles(ctx, db, st.cfg.ArchiveDir)
+		// Telegram failed before the pages were redrawn; they need no Telegram.
 		sum.render, sum.renderErr = renderArchive(ctx, db, st.cfg.ArchiveDir, false)
 	}
 	if err != nil && tgclient.Classify(err) == tgclient.KindAuth && !errors.Is(err, tgclient.ErrNotLoggedIn) {
@@ -180,9 +172,6 @@ func (s syncSummary) problems(err error) []string {
 	}
 	if s.media.LocalErr != nil {
 		out = append(out, "media stopped by a local disk error: "+s.media.LocalErr.Error())
-	}
-	if s.filesErr != nil {
-		out = append(out, "files view: "+s.filesErr.Error())
 	}
 	for _, e := range s.render.Errors {
 		out = append(out, "render: "+e.Error())
@@ -311,10 +300,9 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		Progress: chatProgress(progressOut, tty),
 	}
 	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings, notes: sel.notes}
-	// files/ and the pages need no Telegram: messages saved before a lost
-	// session or a failed media phase still show up in them.
+	// The pages need no Telegram: messages saved before a lost session or a
+	// failed media phase still show up in them.
 	views := func() {
-		sum.files, sum.filesErr = rebuildFiles(ctx, db, cfg.ArchiveDir)
 		sum.render, sum.renderErr = renderArchive(ctx, db, cfg.ArchiveDir, false)
 		sum.viewsDone = true
 	}
@@ -324,7 +312,7 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	}
 
 	d := media.Downloader{
-		TG: api, Store: db, ArchiveDir: cfg.ArchiveDir, Peers: peers, Workers: cfg.Media.Workers,
+		TG: api, Store: db, ArchiveDir: cfg.ArchiveDir, Peers: peers, Workers: cfg.Media.Workers, SelfID: self,
 		MaxFileSize: int64(cfg.Media.MaxFileSize), SkipKinds: cfg.Media.SkipKinds, Log: log,
 		Progress: progressPrinter(progressOut, tty, "media"),
 	}

@@ -147,13 +147,17 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	if res.MovedAside != "" {
 		fmt.Fprintf(w.out, "  the database that was there is kept as %s\n", res.MovedAside)
 	}
+	if res.MediaReplaced > 0 {
+		fmt.Fprintf(w.out, "  %s there had the names of other files in the backup; they are kept in %s\n",
+			plural(res.MediaReplaced, "media file"), tildePath(res.MediaAside, home))
+	}
 	if res.ConfigAdopted {
 		fmt.Fprintln(w.out, "  the chats and settings from the backup are now the config")
 	}
 	if res.PasswordKept {
 		fmt.Fprintf(w.out, "  %s opens with another password than your backups use now; the current one stays,\n  and that place was not added to the backups\n", tildePath(repo, home))
 	}
-	fmt.Fprintln(w.out, "  the pages and files/ are rebuilt; log in to Telegram to keep the archive growing")
+	fmt.Fprintln(w.out, "  the pages are redrawn; log in to Telegram to keep the archive growing")
 	return nil
 }
 

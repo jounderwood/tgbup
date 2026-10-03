@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/browse"
+	"gitlab.com/joeunderwood/tgbup/internal/names"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -379,35 +379,35 @@ func newLayout(chats []store.RenderChat) *layout {
 			l.upgradedTo[c.MigratedFromID] = c.ID
 		}
 	}
-	fcs := make([]browse.FolderChat, 0, len(chats))
+	fcs := make([]names.FolderChat, 0, len(chats))
 	for _, c := range chats {
-		fc := browse.FolderChat{ID: c.ID, Title: c.Title}
+		fc := names.FolderChat{ID: c.ID, Title: c.Title}
 		if up, ok := l.upgradedTo[c.ID]; ok {
 			fc.UpgradedTo, fc.UpgradedTitle = up, l.chats[up].Title
 		}
 		fcs = append(fcs, fc)
 	}
-	l.folder = browse.FolderNames(fcs)
+	l.folder = names.FolderNames(fcs)
 	for _, c := range chats {
 		if c.Type != store.ChatForum {
 			continue
 		}
-		names := map[int]string{}
+		topics := map[int]string{}
 		seen := map[string]int{}
 		for id, title := range c.Topics {
-			name := browse.Clean(title)
+			name := names.Clean(title)
 			if name == "" || name == beforeUpgrade {
 				name = "Topic " + strconv.Itoa(id)
 			}
-			names[id] = name
+			topics[id] = name
 			seen[strings.ToLower(name)]++
 		}
-		for id, name := range names {
+		for id, name := range topics {
 			if seen[strings.ToLower(name)] > 1 {
-				names[id] = fmt.Sprintf("%s #%d", name, id)
+				topics[id] = fmt.Sprintf("%s #%d", name, id)
 			}
 		}
-		l.topics[c.ID] = names
+		l.topics[c.ID] = topics
 	}
 	return l
 }

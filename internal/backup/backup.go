@@ -1,5 +1,5 @@
 // Package backup snapshots the archive into restic repositories: a checked,
-// consistent copy of the database, the config and media/, then forget by the
+// consistent copy of the database, the config, media/ and html/, then forget by the
 // retention policy, with prune and check on their own, longer intervals.
 package backup
 
@@ -172,14 +172,19 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 	res := RepoResult{Repo: repo}
 	now := o.Now()
 	paths := []string{o.WorkDir}
-	if st, err := os.Stat(filepath.Join(o.ArchiveDir, "media")); err == nil && st.IsDir() {
-		paths = append(paths, filepath.Join(o.ArchiveDir, "media"))
+	// html/ can be redrawn, but with it a snapshot restored by plain restic,
+	// without tgbup, is readable in a browser.
+	for _, d := range []string{"media", "html"} {
+		if st, err := os.Stat(filepath.Join(o.ArchiveDir, d)); err == nil && st.IsDir() {
+			paths = append(paths, filepath.Join(o.ArchiveDir, d))
+		}
 	}
 	// A run killed earlier may have left its lock; unlock removes only locks of
 	// processes that are gone. If the repository is unreachable, backup says so.
 	_, _ = o.restic(ctx, repo, "unlock")
-	// .part files are downloads in progress; the finished file comes in a later snapshot.
-	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host, "--exclude", "*.part"}, paths...)...)
+	// .<name>.part files are downloads in progress (media.PartPath); the
+	// finished file comes in a later snapshot. A real file named x.part stays in.
+	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host, "--exclude", ".*.part"}, paths...)...)
 	res.Snapshot = snapshotID(out)
 	switch {
 	case err != nil && exitCode(err) == 3 && res.Snapshot != "":
@@ -194,7 +199,10 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 		return res
 	}
 	k := o.Retention
-	if _, err := o.restic(ctx, repo, "forget", "--tag", "tgbup", "--host", host,
+	// Grouped by host and tag, not restic's default host and paths: the paths
+	// change (html/ added, a folder missing on a run), and a group no new
+	// snapshot joins would never be thinned.
+	if _, err := o.restic(ctx, repo, "forget", "--tag", "tgbup", "--host", host, "--group-by", "host,tags",
 		"--keep-last", strconv.Itoa(k.Last), "--keep-daily", strconv.Itoa(k.Daily),
 		"--keep-weekly", strconv.Itoa(k.Weekly), "--keep-monthly", strconv.Itoa(k.Monthly)); err != nil {
 		res.Err = err

@@ -332,6 +332,7 @@ function restoreForm(f, dir) {
         const res = await action(f, "restore", { repo: repo(), password: d.password, snapshot: d.snapshot, dir: dir.value });
         if (res) {
           toast("Restored snapshot " + res.snapshot + ": " + res.media_added + " media files" +
+            (res.media_replaced ? ". " + res.media_replaced + " files there had the same names as others in the backup and are kept in " + res.media_aside : "") +
             (res.password_kept ? ". That backup uses another password; your current one stays" : ""));
           delete draft.restore;
           delete draft.archiveDir;

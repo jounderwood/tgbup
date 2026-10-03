@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+	"golang.org/x/sys/unix"
 
 	"gitlab.com/joeunderwood/tgbup/internal/convert"
 	"gitlab.com/joeunderwood/tgbup/internal/media"
@@ -132,12 +134,16 @@ func newEnv(t *testing.T, size int) *env {
 	f := &fakeFiles{data: map[int64][]byte{555: data}}
 	return &env{st: st, dir: dir, tg: f, data: data, d: &media.Downloader{
 		TG: f, Store: st, ArchiveDir: dir, Workers: 2,
-		Peers: map[int64]tg.InputPeerClass{chatID: &tg.InputPeerChannel{ChannelID: chatN}},
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Peers:    map[int64]tg.InputPeerClass{chatID: &tg.InputPeerChannel{ChannelID: chatN}},
+		Location: time.UTC,
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}}
 }
 
-func (e *env) final() string { return filepath.Join(e.dir, "media", "document", "555.pdf") }
+// finalRel is where docMessage's file goes: its date is 1 second after the epoch.
+var finalRel = filepath.Join("media", "1970", "1970-01-01_000001_отчёт 2026.pdf")
+
+func (e *env) final() string { return filepath.Join(e.dir, finalRel) }
 
 func (e *env) info(t *testing.T) store.MediaInfo {
 	t.Helper()
@@ -158,8 +164,126 @@ func TestDownloadsMultiChunkFile(t *testing.T) {
 	if err != nil || !bytes.Equal(got, e.data) {
 		t.Fatalf("file mismatch: %v", err)
 	}
-	if i := e.info(t); i.Status != store.MediaDone || i.LocalPath != filepath.Join("media", "document", "555.pdf") {
+	if i := e.info(t); i.Status != store.MediaDone || i.LocalPath != finalRel {
 		t.Fatalf("info = %+v", i)
+	}
+	if st, _ := os.Stat(e.final()); !st.ModTime().Equal(time.Unix(1, 0)) {
+		t.Errorf("modified %v, want the message date", st.ModTime())
+	}
+}
+
+func TestSomeoneElsesFileIsQuarantined(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("quarantine is a macOS attribute")
+	}
+	e := newEnv(t, 100)
+	if _, err := e.d.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 128)
+	n, err := unix.Getxattr(e.final(), "com.apple.quarantine", buf)
+	if err != nil || !strings.Contains(string(buf[:n]), ";tgbup;") {
+		t.Fatalf("quarantine = %q %v", buf[:n], err)
+	}
+}
+
+func TestOwnFileIsNotQuarantined(t *testing.T) {
+	for name, sent := range map[string]func(*tg.Message){
+		"outgoing":    func(m *tg.Message) { m.Out = true },
+		"from self":   func(m *tg.Message) { m.SetFromID(&tg.PeerUser{UserID: 42}) },
+		"saved, bare": func(m *tg.Message) { m.PeerID = &tg.PeerUser{UserID: 42} },
+	} {
+		if quarantinedWhenSent(t, sent) {
+			t.Errorf("%s: the owner's own file was quarantined", name)
+		}
+	}
+}
+
+func TestForwardedFileIsSomeoneElses(t *testing.T) {
+	for name, sent := range map[string]func(*tg.Message){
+		"forwarded": func(m *tg.Message) {
+			m.Out = true
+			m.SetFwdFrom(tg.MessageFwdHeader{Date: 1, FromName: "someone"})
+		},
+		"via an inline bot": func(m *tg.Message) { m.Out = true; m.SetViaBotID(7) },
+	} {
+		if !quarantinedWhenSent(t, sent) {
+			t.Errorf("%s: someone else's file was not quarantined", name)
+		}
+	}
+}
+
+// A file of another size at the name reserved earlier is not this one: it
+// stays, and the download takes another name.
+func TestOtherFileAtTheReservedNameIsLeftAlone(t *testing.T) {
+	e := newEnv(t, 100)
+	ctx := context.Background()
+	if ok, err := e.st.ReserveMediaPath(ctx, "document:555", finalRel, media.PathKey(finalRel)); !ok || err != nil {
+		t.Fatalf("reserve: %v %v", ok, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(e.final()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.final(), []byte("not this one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := e.d.Run(ctx); err != nil || r.Done != 1 {
+		t.Fatalf("report = %+v %v", r, err)
+	}
+	if b, _ := os.ReadFile(e.final()); string(b) != "not this one" {
+		t.Fatal("the other file was overwritten")
+	}
+	i := e.info(t)
+	if got, _ := os.ReadFile(filepath.Join(e.dir, i.LocalPath)); i.LocalPath == finalRel || !bytes.Equal(got, e.data) {
+		t.Fatalf("downloaded to %s", i.LocalPath)
+	}
+}
+
+// quarantinedWhenSent downloads docMessage's file changed by sent, for the
+// account with id 42.
+func quarantinedWhenSent(t *testing.T, sent func(*tg.Message)) bool {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("quarantine is a macOS attribute")
+	}
+	e := newEnv(t, 100)
+	e.d.SelfID = 42
+	m := docMessage(7, 555, "old", 100)
+	sent(m)
+	raw, err := convert.Encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpdateMessageRaw(context.Background(), chatID, 7, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = unix.Getxattr(e.final(), "com.apple.quarantine", make([]byte, 128))
+	return err == nil
+}
+
+// A file already on disk under the name, even differing only in case, is
+// never overwritten: the download takes the next name.
+func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
+	e := newEnv(t, 100)
+	other := filepath.Join(e.dir, "media", "1970", "1970-01-01_000001_ОТЧЁТ 2026.pdf")
+	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("someone else's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := e.d.Run(context.Background()); err != nil || r.Done != 1 {
+		t.Fatalf("report = %+v %v", r, err)
+	}
+	if b, _ := os.ReadFile(other); string(b) != "someone else's" {
+		t.Fatal("an existing file was overwritten")
+	}
+	want := filepath.Join("media", "1970", "1970-01-01_000001_отчёт 2026 (2).pdf")
+	if i := e.info(t); i.LocalPath != want {
+		t.Fatalf("path = %s, want %s", i.LocalPath, want)
 	}
 }
 
@@ -168,7 +292,7 @@ func TestResumesFromAlignedPartFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(e.final()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(e.final()+".part", e.data[:media.ChunkSize+1000], 0o644); err != nil {
+	if err := os.WriteFile(media.PartPath(e.final()), e.data[:media.ChunkSize+1000], 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.d.Run(context.Background()); err != nil {
@@ -303,18 +427,44 @@ func TestCancelLeavesPartAndPending(t *testing.T) {
 	if i := e.info(t); i.Status != store.MediaPending || i.Attempts != 0 {
 		t.Fatalf("info = %+v", i)
 	}
-	st, err := os.Stat(e.final() + ".part")
+	st, err := os.Stat(media.PartPath(e.final()))
 	if err != nil || st.Size() != media.ChunkSize {
 		t.Fatalf("part = %v %v", st, err)
 	}
 }
 
-func TestRelPathIgnoresHostileFileName(t *testing.T) {
-	got := media.RelPath(store.MediaJob{Key: "document:555", Kind: "document", FileName: "../../etc/passwd", Mime: "application/pdf"})
-	if got != filepath.Join("media", "document", "555.pdf") {
-		t.Fatalf("path = %s", got)
+func TestRelPath(t *testing.T) {
+	const date = 1718388153 // 2024-06-14 18:02:33 UTC
+	for _, c := range []struct {
+		job  store.MediaJob
+		n    int
+		want string
+	}{
+		{store.MediaJob{Kind: "document", FileName: "Договор аренды.PDF", Mime: "application/pdf"}, 1, "2024-06-14_180233_Договор аренды.PDF"},
+		{store.MediaJob{Kind: "document", FileName: "Договор аренды.pdf"}, 2, "2024-06-14_180233_Договор аренды (2).pdf"},
+		{store.MediaJob{Kind: "document", FileName: "../../etc/passwd", Mime: "application/pdf"}, 1, "2024-06-14_180233_etcpasswd.pdf"},
+		{store.MediaJob{Kind: "photo", ChatTitle: "Семья / дом"}, 1, "2024-06-14_180233_Семья дом.jpg"},
+		{store.MediaJob{Kind: "video_note"}, 1, "2024-06-14_180233_round.mp4"},
+		{store.MediaJob{Kind: "document", FileName: "install.command"}, 1, "2024-06-14_180233_install.command.txt"},
+		{store.MediaJob{Kind: "document", FileName: "run.SH", ChatTitle: "x"}, 1, "2024-06-14_180233_run.SH.txt"},
+	} {
+		c.job.Date = date
+		got := media.RelPath(c.job, time.UTC, c.n)
+		if want := filepath.Join("media", "2024", c.want); got != want {
+			t.Errorf("%+v → %s, want %s", c.job, got, want)
+		}
 	}
-	if e := media.Ext("x.tar.GZ", "", "document"); e != ".gz" {
+	long := media.RelPath(store.MediaJob{Date: date, Kind: "document", FileName: strings.Repeat("я", 200) + ".pdf"}, time.UTC, 999)
+	if n := len(filepath.Base(media.PartPath(long))); n > 255 || !strings.HasSuffix(long, " (999).pdf") {
+		t.Errorf("long name: its download is %d bytes: %s", n, long)
+	}
+	if media.PathKey("media/2024/Фото.JPG") != media.PathKey("media/2024/фото.jpg") ||
+		media.PathKey("media/2024/\u0439.jpg") != media.PathKey("media/2024/\u0438\u0306.jpg") ||
+		media.PathKey("media/2024/Straße.pdf") != media.PathKey("media/2024/STRASSE.pdf") ||
+		media.PathKey("media/2024/\ufb01le.pdf") != media.PathKey("media/2024/file.pdf") {
+		t.Error("names APFS sees as one get different keys")
+	}
+	if e := media.Ext("x.tar.GZ", "", "document"); e != ".GZ" {
 		t.Errorf("ext = %s", e)
 	}
 	if e := media.Ext("evil.p;h p", "", "voice"); e != ".ogg" {

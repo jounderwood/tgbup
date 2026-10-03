@@ -200,7 +200,7 @@ type restoreOutcome struct {
 }
 
 // restoreArchive brings a snapshot back into archiveDir (or the configured
-// one) and rebuilds the views. Nothing is deleted. The password that opened
+// one) and redraws the pages. Nothing is deleted. The password that opened
 // the snapshot is saved only if none was set; a config with chats is left as
 // it is, an empty one is replaced by the snapshot's.
 func restoreArchive(ctx context.Context, st setup, repo, password, snapshot, archiveDir string) (restoreOutcome, error) {
@@ -250,9 +250,6 @@ func restoreArchive(ctx context.Context, st setup, repo, password, snapshot, arc
 		return out, err
 	}
 	defer db.Close()
-	if _, err := rebuildFiles(ctx, db, archiveDir); err != nil {
-		return out, fmt.Errorf("restored, but rebuilding files/ failed: %w", err)
-	}
 	if _, err := renderArchive(ctx, db, archiveDir, true); err != nil {
 		return out, fmt.Errorf("restored, but drawing the pages failed: %w", err)
 	}

@@ -15,6 +15,11 @@ type MediaJob struct {
 	Attempts  int
 	ChatID    int64
 	MessageID int
+	// Date and ChatTitle are the message's the file is downloaded through; they name the file.
+	Date      int64
+	ChatTitle string
+	// LocalPath is the name chosen by an earlier attempt; "" until one is chosen.
+	LocalPath string
 }
 
 type MediaInfo struct {
@@ -28,9 +33,12 @@ func (s *Store) PendingMedia(ctx context.Context) ([]MediaJob, error) {
 	// chat_id and message_id must come from the same link: a file forwarded between
 	// chats has several links, and mixing them points at a message that does not exist.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT m.key, m.kind, m.file_name, m.mime, m.size, m.attempts, mm.chat_id, mm.message_id
+SELECT m.key, m.kind, m.file_name, m.mime, m.size, m.attempts, mm.chat_id, mm.message_id,
+       msg.date, c.title, COALESCE(m.local_path, '')
 FROM media m
 JOIN message_media mm ON mm.rowid = (SELECT min(rowid) FROM message_media WHERE media_key = m.key)
+JOIN messages msg ON msg.chat_id = mm.chat_id AND msg.id = mm.message_id
+JOIN chats c ON c.id = mm.chat_id
 WHERE m.status = 'pending'
 ORDER BY m.rowid`)
 	if err != nil {
@@ -40,12 +48,26 @@ ORDER BY m.rowid`)
 	var out []MediaJob
 	for rows.Next() {
 		var j MediaJob
-		if err := rows.Scan(&j.Key, &j.Kind, &j.FileName, &j.Mime, &j.Size, &j.Attempts, &j.ChatID, &j.MessageID); err != nil {
+		if err := rows.Scan(&j.Key, &j.Kind, &j.FileName, &j.Mime, &j.Size, &j.Attempts, &j.ChatID, &j.MessageID,
+			&j.Date, &j.ChatTitle, &j.LocalPath); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
 	}
 	return out, rows.Err()
+}
+
+// ReserveMediaPath gives the file key the name path unless another file has
+// it (compared by pathKey); false means the name is taken.
+func (s *Store) ReserveMediaPath(ctx context.Context, key, path, pathKey string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE media SET local_path = ?, path_key = ?
+WHERE key = ? AND NOT EXISTS (SELECT 1 FROM media WHERE path_key = ?)`, path, pathKey, key, pathKey)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func (s *Store) MediaDone(ctx context.Context, key, localPath string) error {
@@ -118,4 +140,10 @@ func (s *Store) CountMedia(ctx context.Context, status string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM media WHERE status = ?`, status).Scan(&n)
 	return n, err
+}
+
+// ReleaseMediaPath forgets the name reserved for key, so another can be chosen.
+func (s *Store) ReleaseMediaPath(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media SET local_path = NULL, path_key = NULL WHERE key = ?`, key)
+	return err
 }

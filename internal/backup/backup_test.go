@@ -43,6 +43,14 @@ func newEnv(t *testing.T, repos ...string) *env {
 	if err := os.WriteFile(filepath.Join(archive, "media", "photo", "7.jpg"), []byte("jpeg"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	for _, d := range []string{"html", "md"} {
+		if err := os.MkdirAll(filepath.Join(archive, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(archive, d, "index."+d), []byte(d), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfg, []byte("archive_dir: x\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -90,10 +98,13 @@ func TestBackupSnapshotsArchive(t *testing.T) {
 		t.Fatalf("report = %+v", r)
 	}
 	files := e.restic(t, repo, "ls", "latest")
-	for _, want := range []string{"/archive.sqlite", "/config.yaml", "/media/photo/7.jpg"} {
+	for _, want := range []string{"/archive.sqlite", "/config.yaml", "/media/photo/7.jpg", "/html/index.html"} {
 		if !strings.Contains(files, want) {
 			t.Errorf("snapshot lacks %s:\n%s", want, files)
 		}
+	}
+	if strings.Contains(files, "/md/") {
+		t.Errorf("md/ is the same as html/ and stays out:\n%s", files)
 	}
 	if snaps := e.restic(t, repo, "snapshots", "--tag", "tgbup", "--host", "test-host"); !strings.Contains(snaps, r.Repos[0].Snapshot[:8]) {
 		t.Errorf("snapshot not tagged for this host:\n%s", snaps)
@@ -234,7 +245,7 @@ func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
 		t.Fatalf("backup = %+v", r)
 	}
 	snaps, err := Snapshots(ctx, e.o, repo)
-	if err != nil || len(snaps) != 1 || len(snaps[0].Paths) != 2 {
+	if err != nil || len(snaps) != 1 || len(snaps[0].Paths) != 3 {
 		t.Fatalf("snapshots = %+v, %v", snaps, err)
 	}
 
@@ -246,6 +257,9 @@ func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
 	}
 	if res.MediaAdded != 1 || res.MovedAside != "" || !strings.Contains(string(res.Config), "archive_dir") {
 		t.Errorf("result = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(fresh, "html")); !os.IsNotExist(err) {
+		t.Errorf("html/ restored, but tgbup redraws it: %v", err)
 	}
 	db, err := store.Open(filepath.Join(fresh, "archive.sqlite"))
 	if err != nil {
@@ -259,22 +273,59 @@ func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
 		t.Errorf("left behind: %v", entries)
 	}
 
-	// Restoring over an existing archive: its database is kept aside, its media untouched.
-	if err := os.WriteFile(filepath.Join(fresh, "media", "photo", "7.jpg"), []byte("newer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// Restoring over the same archive: its database is kept aside, the same media stay.
 	res, err = Restore(ctx, e.o, repo, snaps[0].ShortID, fresh, e.now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.MovedAside == "" || !isFile(res.MovedAside) || res.MediaKept != 1 || res.MediaAdded != 0 {
+	if res.MovedAside == "" || !isFile(res.MovedAside) || res.MediaKept != 1 || res.MediaAdded != 0 || res.MediaReplaced != 0 {
 		t.Errorf("second restore = %+v", res)
 	}
-	if b, _ := os.ReadFile(filepath.Join(fresh, "media", "photo", "7.jpg")); string(b) != "newer" {
-		t.Errorf("an existing media file was replaced: %q", b)
+
+	// A different file under a snapshot file's name (names are not ids) is
+	// moved aside, not deleted, and the restored database finds its own file.
+	if err := os.WriteFile(filepath.Join(fresh, "media", "photo", "7.jpg"), []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = Restore(ctx, e.o, repo, snaps[0].ShortID, fresh, e.now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MediaReplaced != 1 || res.MediaAdded != 1 || res.MediaAside == "" {
+		t.Errorf("third restore = %+v", res)
+	}
+	if b, _ := os.ReadFile(filepath.Join(fresh, "media", "photo", "7.jpg")); string(b) != "jpeg" {
+		t.Errorf("restored file = %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(res.MediaAside, "photo", "7.jpg")); string(b) != "other" {
+		t.Errorf("the other file was not kept aside: %q", b)
 	}
 	if _, err := Restore(ctx, e.o, repo, "nope", fresh, e.now); err == nil {
 		t.Error("unknown snapshot accepted")
+	}
+}
+
+// Snapshots taken with other folders (html/ added, a folder missing on a run)
+// are thinned together with the rest, not kept forever as their own group.
+func TestRetentionIgnoresChangedFolders(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	e := newEnv(t, repo)
+	e.o.Retention = config.Retention{Last: 1}
+	ctx := context.Background()
+	if res := Init(ctx, e.o); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if r := Run(ctx, e.db, e.o); !r.OK() {
+		t.Fatalf("first backup = %+v", r)
+	}
+	if err := os.RemoveAll(filepath.Join(e.o.ArchiveDir, "html")); err != nil {
+		t.Fatal(err)
+	}
+	if r := Run(ctx, e.db, e.o); !r.OK() {
+		t.Fatalf("second backup = %+v", r)
+	}
+	if snaps, err := Snapshots(ctx, e.o, repo); err != nil || len(snaps) != 1 {
+		t.Fatalf("snapshots = %d %v, want 1", len(snaps), err)
 	}
 }
 
