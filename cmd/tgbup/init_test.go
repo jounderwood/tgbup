@@ -28,7 +28,9 @@ func testWizard(t *testing.T, input string) (*wizard, *bytes.Buffer, config.Path
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &wizard{env: env, out: &out, in: newLineReader(env.Stdin, nil)}, &out, p
+	w := &wizard{env: env, out: &out, in: newLineReader(env.Stdin, nil)}
+	w.initRepos = func(context.Context) error { return nil }
+	return w, &out, p
 }
 
 func TestRunStepsSkipsDoneStepsAndStopsAtFailure(t *testing.T) {
@@ -147,72 +149,6 @@ func TestNewPassword(t *testing.T) {
 	a, b := newPassword(), newPassword()
 	if !regexp.MustCompile(`^([a-hjkmnp-z2-9]{5}-){5}[a-hjkmnp-z2-9]{5}$`).MatchString(a) || a == b {
 		t.Fatalf("passwords %q %q", a, b)
-	}
-}
-
-func TestStorageChoicesFindCloudFolders(t *testing.T) {
-	home := t.TempDir()
-	for _, d := range []string{"Library/Mobile Documents/com~apple~CloudDocs", "Library/CloudStorage/GoogleDrive-me@x.com/My Drive", "Library/CloudStorage/Dropbox"} {
-		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got := storageChoices(home)
-	var repos, defaults []string
-	for _, c := range got {
-		repos = append(repos, tildePath(c.Repo, home))
-		if c.Default {
-			defaults = append(defaults, c.Repo)
-		}
-	}
-	want := []string{
-		"~/Library/Mobile Documents/com~apple~CloudDocs/tgbup-restic", "rclone:gdrive:tgbup-restic",
-		"~/Library/CloudStorage/Dropbox/tgbup-restic", "~/Library/CloudStorage/GoogleDrive-me@x.com/My Drive/tgbup-restic", "",
-	}
-	if !slices.Equal(repos, want) {
-		t.Errorf("repos = %q", repos)
-	}
-	if len(defaults) != 2 {
-		t.Errorf("defaults = %q, want iCloud and Google Drive", defaults)
-	}
-	if !strings.Contains(got[3].Label, "me@x.com") {
-		t.Errorf("label = %q", got[3].Label)
-	}
-
-	// No iCloud: only Google Drive is preselected.
-	if c := storageChoices(t.TempDir()); len(c) != 2 || !c[0].Default || c[1].Repo != "" {
-		t.Errorf("choices without cloud folders = %+v", c)
-	}
-}
-
-func TestChooseStorageWritesRepositories(t *testing.T) {
-	w, out, p := testWizard(t, "9\n1,2\n/Volumes/NAS/restic\n")
-	if err := w.chooseStorage(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.LoadWithoutTargets(p.Config, p.Home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(cfg.Backup.Repositories, []string{"rclone:gdrive:tgbup-restic", "/Volumes/NAS/restic"}) {
-		t.Errorf("repositories = %q", cfg.Backup.Repositories)
-	}
-	if !strings.Contains(out.String(), `no choice "9"`) {
-		t.Errorf("bad choice not reported:\n%s", out.String())
-	}
-}
-
-func TestChooseStorageDefaultsOnEnter(t *testing.T) {
-	w, _, p := testWizard(t, "\n")
-	if err := os.MkdirAll(filepath.Join(p.Home, "Library/Mobile Documents/com~apple~CloudDocs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.chooseStorage(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(p.Config)
-	if !strings.Contains(string(raw), "~/Library/Mobile Documents/com~apple~CloudDocs/tgbup-restic") || !strings.Contains(string(raw), "rclone:gdrive:tgbup-restic") {
-		t.Errorf("config:\n%s", raw)
 	}
 }
 
@@ -471,19 +407,6 @@ func TestJobState(t *testing.T) {
 	}
 }
 
-func TestCloudBackupIsOffByDefault(t *testing.T) {
-	w, out, p := testWizard(t, "\n")
-	if err := w.setBackup(context.Background()); !errors.Is(err, errDeclined) {
-		t.Fatalf("Enter at the backup question: %v, want declined", err)
-	}
-	if _, err := os.Stat(p.Config); err == nil {
-		t.Error("declining backups wrote the config")
-	}
-	if !strings.Contains(out.String(), "kept as files in") {
-		t.Errorf("output:\n%s", out.String())
-	}
-}
-
 func TestDeclinedIsNotMissingAndAfterRunsForDoneSteps(t *testing.T) {
 	w, out, _ := testWizard(t, "\n")
 	checked := false
@@ -499,5 +422,113 @@ func TestDeclinedIsNotMissingAndAfterRunsForDoneSteps(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "– off") {
 		t.Errorf("output:\n%s", out.String())
+	}
+}
+
+func TestStorageChoicesFindCloudFoldersAndDisks(t *testing.T) {
+	home, vols := t.TempDir(), t.TempDir()
+	for _, d := range []string{"Library/Mobile Documents/com~apple~CloudDocs", "Library/CloudStorage/GoogleDrive-me@x.com/My Drive", "Library/CloudStorage/Dropbox"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.Mkdir(filepath.Join(vols, "Backup Disk"), 0o755)
+	_ = os.Symlink("/", filepath.Join(vols, "Macintosh HD"))
+	var repos []string
+	for _, c := range storageChoices(home, vols) {
+		repos = append(repos, strings.TrimPrefix(tildePath(c.Repo, home), vols))
+	}
+	want := []string{
+		"~/Library/Mobile Documents/com~apple~CloudDocs/TelegramBackup", "rclone:gdrive:TelegramBackup",
+		"~/Library/CloudStorage/Dropbox/TelegramBackup", "~/Library/CloudStorage/GoogleDrive-me@x.com/My Drive/TelegramBackup",
+		"/Backup Disk/TelegramBackup", "",
+	}
+	if !slices.Equal(repos, want) {
+		t.Errorf("repos = %q", repos)
+	}
+}
+
+func TestOffDisk(t *testing.T) {
+	home := "/Users/me"
+	for repo, want := range map[string]bool{
+		"~/TelegramBackup": false, "/Users/me/x": false, "/opt/backup": false,
+		"/Volumes/Disk/TelegramBackup": true, "~/Library/Mobile Documents/com~apple~CloudDocs/b": true,
+		"~/Library/CloudStorage/Dropbox/b": true, "rclone:gdrive:b": true, "sftp:nas:/b": true,
+	} {
+		if got := offDisk(repo, home); got != want {
+			t.Errorf("%s: %v", repo, got)
+		}
+	}
+}
+
+func backupConfig(t *testing.T, p config.Paths) ([]string, config.Secrets) {
+	t.Helper()
+	cfg, err := config.LoadWithoutTargets(p.Config, p.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec, _ := config.LoadSecrets(p.Secrets, func(string) string { return "" })
+	return cfg.Backup.Repositories, sec
+}
+
+// Enter at every question: a folder on this Mac, no extra places, and no
+// password chore, as the password does not leave the Mac yet.
+func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
+	w, out, p := testWizard(t, "\n\n\n")
+	inited := false
+	w.initRepos = func(context.Context) error { inited = true; return nil }
+	if err := w.setBackup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	repos, sec := backupConfig(t, p)
+	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup")}) || len(sec.ResticPassword) != 35 || !inited {
+		t.Fatalf("repos %q, password %d chars, inited %v\n%s", repos, len(sec.ResticPassword), inited, out)
+	}
+	if strings.Contains(out.String(), "type \"saved\"") || strings.Contains(out.String(), sec.ResticPassword) {
+		t.Errorf("asked to save or showed a password that stays on this Mac:\n%s", out)
+	}
+}
+
+func TestBackupToAnotherPlaceAsksToSaveThePassword(t *testing.T) {
+	w, out, p := testWizard(t, "\n/Volumes/Ext/tg\n0\nsaved\n")
+	// The chosen folder is on an external disk: it outlives this Mac.
+	if err := w.setBackup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	repos, sec := backupConfig(t, p)
+	if !slices.Equal(repos, []string{"/Volumes/Ext/tg"}) || !strings.Contains(out.String(), sec.ResticPassword) {
+		t.Fatalf("repos %q\n%s", repos, out)
+	}
+
+	// Later adding Google Drive to a Mac-only setup asks to save the existing password.
+	w, out, p = testWizard(t, "\n\n\nsaved\n")
+	if err := w.setBackup(context.Background()); err != nil { // first: folder on this Mac only
+		t.Fatal(err)
+	}
+	_, sec = backupConfig(t, p)
+	w.in = newLineReader(strings.NewReader("y\n\n1\nsaved\n"), nil) // change settings, keep folder, add Google Drive
+	if err := runStep(context.Background(), w, initStep{name: "Backups", check: w.checkStorage, change: "Change?", run: w.setBackup}); err != nil {
+		t.Fatal(err)
+	}
+	repos, sec2 := backupConfig(t, p)
+	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup"}) {
+		t.Errorf("repos = %q", repos)
+	}
+	if sec2.ResticPassword != sec.ResticPassword || !strings.Contains(out.String(), "also leave this Mac") {
+		t.Errorf("password changed or not shown for saving:\n%s", out)
+	}
+}
+
+func TestBackupCanBeDeclinedAndRejectsFoldersInTheArchive(t *testing.T) {
+	w, _, p := testWizard(t, "n\n")
+	if err := w.setBackup(context.Background()); !errors.Is(err, errDeclined) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(p.Config); err == nil {
+		t.Error("declining wrote the config")
+	}
+	w, out, _ := testWizard(t, "\n~/TelegramArchive/backup\nnone\n0\n")
+	if err := w.setBackup(context.Background()); err == nil || !strings.Contains(out.String(), "apart from the archive") {
+		t.Fatalf("err = %v\n%s", err, out)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -52,6 +53,8 @@ type wizard struct {
 	env Env
 	in  *lineReader
 	out io.Writer
+	// initRepos creates or checks the backup repositories; tests replace it.
+	initRepos func(context.Context) error
 }
 
 func (w *wizard) ask(ctx context.Context, prompt string) (string, bool) {
@@ -92,6 +95,7 @@ func (w *wizard) load() (setup, error) { return loadLocalSetup(w.env, false) }
 func cmdInit(ctx context.Context, env Env) int {
 	w := &wizard{env: env, out: env.Stdout,
 		in: newLineReader(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) })}
+	w.initRepos = w.createRepos
 	fmt.Fprintln(w.out, "tgbup init sets everything up step by step. Finished steps are kept:")
 	fmt.Fprintln(w.out, "stop any time (Ctrl+C) and run tgbup init again to continue.")
 	skipped, ok := runSteps(ctx, w, w.steps())
@@ -160,7 +164,7 @@ func (w *wizard) steps() []initStep {
 		{name: "Telegram login", check: w.checkLogin, run: w.login},
 		{name: "Archive folder", check: w.checkArchiveDir, run: w.setArchiveDir},
 		{name: "Chats to archive", check: w.checkChats, change: "Change the chat list?", run: w.chooseChats},
-		{name: "Cloud backup (optional)", check: w.checkStorage, change: "Change the backup settings?",
+		{name: "Backups", check: w.checkStorage, change: "Change the backup settings?",
 			run: w.setBackup, after: w.initRepos, optional: true},
 		{name: "Alerts bot (optional)", check: w.checkBot, run: w.setBot, optional: true},
 		{name: "First download", check: w.checkArchive, run: w.firstSync},
@@ -331,43 +335,6 @@ func (w *wizard) chooseChats(ctx context.Context) error {
 	return nil
 }
 
-// setBackup turns on encrypted restic backups: password, places, repositories.
-// Without them the archive is kept only as files in the archive folder.
-func (w *wizard) setBackup(ctx context.Context) error {
-	st, err := w.load()
-	if err != nil {
-		return err
-	}
-	if len(st.cfg.Backup.Repositories) == 0 {
-		fmt.Fprintf(w.out, `  The archive is kept as files in %s. tgbup can also back it up, encrypted and
-  with history, to iCloud Drive, Google Drive or another place (restic snapshots after every run).
-`, tildePath(st.cfg.ArchiveDir, st.paths.Home))
-		if ok, err := w.yes(ctx, "  Set up cloud backups?", false); err != nil {
-			return err
-		} else if !ok {
-			return errDeclined
-		}
-	}
-	switch {
-	case st.secrets.ResticPassword == "":
-		if err := w.setPassword(ctx); err != nil {
-			return err
-		}
-	case len(st.cfg.Backup.Repositories) > 0:
-		if ok, err := w.yes(ctx, "  Replace the backup password? (only when your repositories were made with another one)", false); err != nil {
-			return err
-		} else if ok {
-			if err := w.setPassword(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	if err := w.chooseStorage(ctx); err != nil {
-		return err
-	}
-	return w.initRepos(ctx)
-}
-
 func (w *wizard) setPassword(ctx context.Context) error {
 	st, err := w.load()
 	if err != nil {
@@ -380,29 +347,17 @@ func (w *wizard) setPassword(ctx context.Context) error {
 		return err
 	}
 	var pass string
-	copied := false
 	if gen {
 		pass = newPassword()
-		copied = isTerminal(w.out) && copyToClipboard(pass) == nil
-		note := ""
-		if copied {
-			note = " (copied to the clipboard)"
+		if err := w.confirmSaved(ctx, pass, "New backup password."); err != nil {
+			return err
 		}
-		fmt.Fprintf(w.out, "\n  Password%s:\n\n      %s\n\n", note, pass)
-	} else if pass, err = w.ownPassword(ctx); err != nil {
-		return err
-	}
-	if copied {
-		// Universal Clipboard would otherwise keep it on every Apple device.
-		defer func() { _ = copyToClipboard("") }()
-	}
-	for {
-		ans, ok := w.ask(ctx, `  Save it in your password manager (e.g. 1Password, item "tgbup backups"), then type "saved": `)
-		if !ok {
-			return errStopped
+	} else {
+		if pass, err = w.ownPassword(ctx); err != nil {
+			return err
 		}
-		if a := strings.ToLower(ans); a == "saved" || a == "сохранил" || a == "сохранила" {
-			break
+		if err := w.waitSaved(ctx); err != nil {
+			return err
 		}
 	}
 	if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": pass}); err != nil {
@@ -410,6 +365,31 @@ func (w *wizard) setPassword(ctx context.Context) error {
 	}
 	fmt.Fprintf(w.out, "  saved to %s\n", st.paths.Secrets)
 	return nil
+}
+
+// confirmSaved shows the password and waits until the person has saved it.
+func (w *wizard) confirmSaved(ctx context.Context, pass, why string) error {
+	copied := isTerminal(w.out) && copyToClipboard(pass) == nil
+	note := ""
+	if copied {
+		note = " (copied to the clipboard)"
+		// Universal Clipboard would otherwise keep it on every Apple device.
+		defer func() { _ = copyToClipboard("") }()
+	}
+	fmt.Fprintf(w.out, "  %s\n\n  Backup password%s:\n\n      %s\n\n", why, note, pass)
+	return w.waitSaved(ctx)
+}
+
+func (w *wizard) waitSaved(ctx context.Context) error {
+	for {
+		ans, ok := w.ask(ctx, `  Save it in your password manager (e.g. 1Password, item "tgbup backups"), then type "saved": `)
+		if !ok {
+			return errStopped
+		}
+		if a := strings.ToLower(ans); a == "saved" || a == "сохранил" || a == "сохранила" {
+			return nil
+		}
+	}
 }
 
 func (w *wizard) ownPassword(ctx context.Context) (string, error) {
@@ -510,26 +490,197 @@ func (w *wizard) checkStorage(context.Context) (string, bool, error) {
 	return strings.Join(names, "\n    "), true, nil
 }
 
-// storageChoice is one place backups can go.
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// defaultBackupDir keeps the first backup on this Mac, outside the archive.
+const defaultBackupDir = "~/TelegramBackup"
+
+// setBackup sets up restic backups: a folder on this Mac by default, plus any
+// other places; every run snapshots into all of them. The password is
+// generated, and the person must save it elsewhere once a copy leaves this
+// disk, as only then does it outlive the Mac.
+func (w *wizard) setBackup(ctx context.Context) error {
+	st, err := w.load()
+	if err != nil {
+		return err
+	}
+	home := st.paths.Home
+	current := st.cfg.Backup.Repositories
+	if len(current) == 0 {
+		fmt.Fprintln(w.out, `  Backups keep earlier versions of the archive (encrypted restic snapshots after every run),
+  so a deleted chat, a damaged file or a mistake can be undone. By default they go to a
+  folder on this Mac; iCloud, Google Drive or an external disk can be added.`)
+		if ok, err := w.yes(ctx, "  Back up the archive?", true); err != nil {
+			return err
+		} else if !ok {
+			return errDeclined
+		}
+	}
+	local, extras := splitRepos(current, home)
+	dir, err := w.askBackupDir(ctx, st, local)
+	if err != nil {
+		return err
+	}
+	if extras, err = w.chooseExtras(ctx, home, extras); err != nil {
+		return err
+	}
+	var repos []string
+	if dir != "" {
+		repos = append(repos, dir)
+	}
+	repos = append(repos, extras...)
+	if len(repos) == 0 {
+		return errors.New("no backup place chosen")
+	}
+
+	pass := st.secrets.ResticPassword
+	leaves, left := anyOffDisk(repos, home), anyOffDisk(current, home)
+	switch {
+	case pass == "":
+		pass = newPassword()
+		if leaves {
+			if err := w.confirmSaved(ctx, pass, "Backups are encrypted with this password; without it they cannot be read back."); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintln(w.out, "  A strong password was generated for the backups and kept in secrets.env;")
+			fmt.Fprintln(w.out, "  tgbup init asks you to save it elsewhere when a backup place outside this Mac is added.")
+		}
+	case leaves && !left:
+		if err := w.confirmSaved(ctx, pass, "Backups now also leave this Mac: keep their password outside it too."); err != nil {
+			return err
+		}
+	case len(current) > 0:
+		if ok, err := w.yes(ctx, "  Replace the backup password? (only when your repositories were made with another one)", false); err != nil {
+			return err
+		} else if ok {
+			if err := w.setPassword(ctx); err != nil {
+				return err
+			}
+			if st, err = w.load(); err != nil {
+				return err
+			}
+			pass = st.secrets.ResticPassword
+		}
+	}
+	if pass != st.secrets.ResticPassword {
+		if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": pass}); err != nil {
+			return err
+		}
+	}
+	shown := make([]string, len(repos))
+	for i, r := range repos {
+		shown[i] = tildePath(r, home)
+	}
+	if err := config.SetValue(st.paths.Config, []string{"backup", "repositories"}, shown); err != nil {
+		return err
+	}
+	for _, r := range shown {
+		fmt.Fprintf(w.out, "  → %s\n", r)
+	}
+	return w.initRepos(ctx)
+}
+
+// askBackupDir asks for the folder on this Mac; "none" keeps no copy here.
+func (w *wizard) askBackupDir(ctx context.Context, st setup, current string) (string, error) {
+	home := st.paths.Home
+	def := defaultBackupDir
+	if current != "" {
+		def = tildePath(current, home)
+	}
+	for {
+		ans, ok := w.ask(ctx, fmt.Sprintf("  Backup folder on this Mac [%s] (none: no copy on this Mac): ", def))
+		if !ok {
+			return "", errStopped
+		}
+		switch strings.ToLower(ans) {
+		case "":
+			ans = def
+		case "none", "нет":
+			return "", nil
+		}
+		dir := expandTilde(ans, home)
+		if !filepath.IsAbs(dir) {
+			fmt.Fprintln(w.out, "  give a full path or one starting with ~/")
+			continue
+		}
+		archive := expandTilde(st.cfg.ArchiveDir, home)
+		if within(dir, archive) || within(archive, dir) || within(dir, st.paths.StateDir) {
+			fmt.Fprintln(w.out, "  choose a folder apart from the archive and tgbup's own files")
+			continue
+		}
+		return dir, nil
+	}
+}
+
+// within reports whether p is dir or inside it.
+func within(p, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(p))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func expandTilde(p, home string) string {
+	if p == "~" {
+		return home
+	}
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		return filepath.Join(home, rest)
+	}
+	return p
+}
+
+// offDisk reports a backup place that survives this Mac's disk: a cloud
+// folder, an external volume or any remote restic repository.
+func offDisk(repo, home string) bool {
+	p := expandTilde(repo, home)
+	if !filepath.IsAbs(p) {
+		return true // sftp:, s3:, rclone:…
+	}
+	for _, dir := range []string{"/Volumes", filepath.Join(home, "Library", "Mobile Documents"), filepath.Join(home, "Library", "CloudStorage")} {
+		if within(p, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyOffDisk(repos []string, home string) bool {
+	return slices.ContainsFunc(repos, func(r string) bool { return offDisk(r, home) })
+}
+
+// splitRepos separates the first folder on this Mac from the other places.
+func splitRepos(repos []string, home string) (local string, others []string) {
+	for _, r := range repos {
+		if local == "" && !offDisk(r, home) {
+			local = r
+			continue
+		}
+		others = append(others, r)
+	}
+	return local, others
+}
+
+// storageChoice is one more place backups can go.
 type storageChoice struct {
 	Label string
 	Repo  string // "" asks for a path
-	// Default marks the choices preselected when Enter is pressed.
-	Default bool
 }
 
-const repoDirName = "tgbup-restic"
+const repoDirName = "TelegramBackup"
 
-// storageChoices lists the cloud folders found on this Mac, Google Drive
-// through rclone, and a free-form entry.
-func storageChoices(home string) []storageChoice {
+// storageChoices lists the cloud folders and external disks found on this
+// Mac, Google Drive through rclone, and a free-form entry.
+func storageChoices(home, volumes string) []storageChoice {
 	var out []storageChoice
 	icloud := filepath.Join(home, "Library", "Mobile Documents", "com~apple~CloudDocs")
 	if isDir(icloud) {
-		out = append(out, storageChoice{Label: "iCloud Drive", Repo: filepath.Join(icloud, repoDirName), Default: true})
+		out = append(out, storageChoice{Label: "iCloud Drive", Repo: filepath.Join(icloud, repoDirName)})
 	}
 	out = append(out, storageChoice{Label: "Google Drive, connected by rclone (sign in once in the browser; needs no Google Drive app)",
-		Repo: "rclone:gdrive:" + repoDirName, Default: true})
+		Repo: "rclone:gdrive:" + repoDirName})
 	entries, _ := os.ReadDir(filepath.Join(home, "Library", "CloudStorage"))
 	for _, e := range entries {
 		dir := filepath.Join(home, "Library", "CloudStorage", e.Name())
@@ -545,37 +696,47 @@ func storageChoices(home string) []storageChoice {
 		}
 		out = append(out, storageChoice{Label: label, Repo: filepath.Join(dir, repoDirName)})
 	}
+	vols, _ := os.ReadDir(volumes)
+	for _, e := range vols {
+		// The startup disk shows up in /Volumes as a symlink to /; Time Machine
+		// and recovery volumes are not for this, and a read-only disk cannot be.
+		name := e.Name()
+		if e.Type()&os.ModeSymlink != 0 || !e.IsDir() || strings.HasPrefix(name, ".") ||
+			strings.HasPrefix(name, "com.apple.") || name == "Recovery" ||
+			syscall.Access(filepath.Join(volumes, name), 2 /* W_OK */) != nil {
+			continue
+		}
+		out = append(out, storageChoice{Label: "external disk " + e.Name(), Repo: filepath.Join(volumes, e.Name(), repoDirName)})
+	}
 	return append(out, storageChoice{Label: "another folder or restic repository (sftp:, s3:, rclone:…)"})
 }
 
-func isDir(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && st.IsDir()
-}
-
-func (w *wizard) chooseStorage(ctx context.Context) error {
-	st, err := w.load()
-	if err != nil {
-		return err
-	}
-	choices := storageChoices(st.paths.Home)
-	fmt.Fprintln(w.out, "  Backups are restic snapshots; two places are safer than one.")
-	var defaults []string
+// chooseExtras asks for the places besides the folder on this Mac; Enter
+// keeps the current ones.
+func (w *wizard) chooseExtras(ctx context.Context, home string, current []string) ([]string, error) {
+	choices := storageChoices(home, "/Volumes")
+	fmt.Fprintln(w.out, "  Also back up to (every run snapshots into each place):")
 	for i, c := range choices {
 		mark := " "
-		if c.Default {
+		if c.Repo != "" && slices.ContainsFunc(current, func(r string) bool { return expandTilde(r, home) == c.Repo }) {
 			mark = "*"
-			defaults = append(defaults, strconv.Itoa(i+1))
 		}
 		fmt.Fprintf(w.out, "  %s %d) %s\n", mark, i+1, c.Label)
 	}
+	hint := "nothing more"
+	if len(current) > 0 {
+		hint = "keep the current ones"
+	}
 	for {
-		ans, ok := w.ask(ctx, fmt.Sprintf("  Choose, e.g. 1,2 [Enter = %s]: ", strings.Join(defaults, ",")))
+		ans, ok := w.ask(ctx, fmt.Sprintf("  Choose, e.g. 1,2 [Enter = %s, 0 = none]: ", hint))
 		if !ok {
-			return errStopped
+			return nil, errStopped
 		}
-		if ans == "" {
-			ans = strings.Join(defaults, ",")
+		switch ans {
+		case "":
+			return current, nil
+		case "0":
+			return nil, nil
 		}
 		idx, err := parseChoice(ans, len(choices))
 		if err != nil {
@@ -587,25 +748,16 @@ func (w *wizard) chooseStorage(ctx context.Context) error {
 			repo := choices[i].Repo
 			if repo == "" {
 				if repo, ok = w.ask(ctx, "  Folder or repository: "); !ok {
-					return errStopped
+					return nil, errStopped
 				}
 				if repo == "" {
 					continue
 				}
+				repo = expandTilde(repo, home)
 			}
-			repos = append(repos, tildePath(repo, st.paths.Home))
+			repos = append(repos, repo)
 		}
-		if len(repos) == 0 {
-			fmt.Fprintln(w.out, "  choose at least one place")
-			continue
-		}
-		if err := config.SetValue(st.paths.Config, []string{"backup", "repositories"}, repos); err != nil {
-			return err
-		}
-		for _, r := range repos {
-			fmt.Fprintf(w.out, "  → %s\n", r)
-		}
-		return nil
+		return repos, nil
 	}
 }
 
@@ -634,12 +786,12 @@ func parseChoice(s string, n int) ([]int, error) {
 	return out, nil
 }
 
-func (w *wizard) initRepos(ctx context.Context) error {
+func (w *wizard) createRepos(ctx context.Context) error {
 	st, err := loadLocalSetup(w.env, true)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(w.out, "  getting restic (and rclone) — downloaded once, checksums verified…")
+	fmt.Fprintln(w.out, "  getting restic (and rclone when needed): downloaded once, checksums verified…")
 	o, err := backupOptions(ctx, st)
 	if err != nil {
 		return err

@@ -41,6 +41,7 @@ func loadLocalSetup(env Env, requireConfig bool) (setup, error) {
 		return setup{}, fmt.Errorf("no config at %s yet: run tgbup init", p.Config)
 	case errors.Is(err, fs.ErrNotExist):
 		cfg = config.Default()
+		cfg.ArchiveDir = expandTilde(cfg.ArchiveDir, p.Home)
 	case err != nil:
 		return setup{}, err
 	}

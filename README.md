@@ -15,11 +15,12 @@ make setup        # соберёт, поставит в ~/.local/bin/tgbup и з
 2. вход в Telegram (код придёт в приложение Telegram);
 3. папка архива (по умолчанию `~/TelegramArchive`);
 4. выбор чатов (тот же экран, что `tgbup setup`, — ниже);
-5. облачный бэкап — **необязательно, по умолчанию выключен**: архив и так лежит файлами в папке архива.
-   Если включить: мастер сгенерирует пароль (покажет один раз, скопирует в буфер; шаг закончится, когда вы
-   напишете `saved`, сохранив его в менеджере паролей), предложит места — найденные на Mac iCloud Drive и папки
-   `~/Library/CloudStorage` (Google Drive, Dropbox, OneDrive), Google Drive через rclone (вход в браузере) или
-   свой путь — и создаст репозитории restic (restic и rclone tgbup скачает сам);
+5. бэкап — **по умолчанию включён, в папку на этом Mac** (`~/TelegramBackup`, можно выбрать другую или `none`).
+   Дополнительно можно добавить найденные на Mac iCloud Drive, папки `~/Library/CloudStorage` (Google Drive, Dropbox,
+   OneDrive), внешние диски из `/Volumes`, Google Drive через rclone (вход в браузере) или свой путь/репозиторий —
+   каждый запуск делает снимок во все выбранные места. Пароль restic генерируется сам; пока бэкап только на этом
+   диске, его ничего не нужно делать, а при добавлении места вне Mac (облако, внешний диск) мастер покажет пароль и
+   дождётся `saved` — без него копии на новом компьютере не открыть. Бэкап можно и отключить (`n`);
 6. бот для уведомлений (необязательно): вставить токен от @BotFather и написать боту — chat_id мастер найдёт сам;
 7. первая выгрузка архива;
 8. расписание и проверочный запуск в фоне — заодно macOS спросит доступ к iCloud;
@@ -70,9 +71,9 @@ targets:
 Полная выгрузка вручную: `tgbup sync --takeout` (Telegram попросит подтвердить экспорт в приложении — подтвердите
 и запустите снова).
 
-## Бэкап (необязательно) и расписание
+## Бэкап и расписание
 
-`tgbup run` — то, что запускает расписание: `sync` → снимок restic во все репозитории, если бэкап включён (даже если `sync`
+`tgbup run` — то, что запускает расписание: `sync` → снимок restic во все места из `backup.repositories` (даже если `sync`
 упал) → запись в историю → бот: ошибки сразу, сводка раз в `notify.summary_every` (7 дней).
 
 Всё это настраивает `tgbup init`; ниже — то же вручную.
@@ -83,8 +84,9 @@ targets:
    ```yaml
    backup:
      repositories:
-       - "~/Library/Mobile Documents/com~apple~CloudDocs/tgbup-restic"   # iCloud Drive
-       - "rclone:gdrive:tgbup-restic"                                     # Google Drive
+       - "~/TelegramBackup"                                                 # папка на этом Mac (по умолчанию)
+       - "~/Library/Mobile Documents/com~apple~CloudDocs/TelegramBackup"  # iCloud Drive
+       - "rclone:gdrive:TelegramBackup"                                     # Google Drive
    ```
    Папку iCloud в Finder пометьте «Всегда хранить на этом Mac». Для Google Drive: `tgbup deps` печатает
    путь к rclone → `<путь> config` → New remote → имя `gdrive`, тип Google Drive, вход через браузер.
