@@ -50,12 +50,12 @@ func TestNextRun(t *testing.T) {
 func TestSetupProblems(t *testing.T) {
 	st := setup{cfg: config.Default()}
 	got := setupProblems(st, serve.Status{})
-	if len(got) != 4 || !strings.Contains(got[0], "tgbup init") {
+	if len(got) != 3 || !strings.Contains(got[0], "tgbup init") {
 		t.Errorf("empty setup: %q", got)
 	}
-	st.secrets = config.Secrets{APIID: 1, APIHash: "h", ResticPassword: "p"}
+	// Cloud backup is optional: not having it is not a problem.
+	st.secrets = config.Secrets{APIID: 1, APIHash: "h"}
 	st.cfg.Targets.Include = []config.PeerRef{"1"}
-	st.cfg.Backup.Repositories = []string{"/r"}
 	if got := setupProblems(st, serve.Status{Schedule: serve.Schedule{Installed: true}}); len(got) != 0 {
 		t.Errorf("complete setup: %q", got)
 	}

@@ -228,7 +228,6 @@ func setupProblems(st setup, s serve.Status) []string {
 	}
 	add(st.secrets.APIID != 0 && st.secrets.APIHash != "", "Telegram is not connected")
 	add(len(st.cfg.Targets.Include) > 0 || len(st.cfg.Targets.Folders) > 0, "No chats chosen")
-	add(st.secrets.ResticPassword != "" && len(st.cfg.Backup.Repositories) > 0, "Backups are not set up")
 	add(s.Schedule.Installed || s.Schedule.Note != "" || st.testDC, "Automatic updates are not scheduled")
 	return out
 }

@@ -470,3 +470,34 @@ func TestJobState(t *testing.T) {
 		t.Errorf("missing job: %+v", s)
 	}
 }
+
+func TestCloudBackupIsOffByDefault(t *testing.T) {
+	w, out, p := testWizard(t, "\n")
+	if err := w.setBackup(context.Background()); !errors.Is(err, errDeclined) {
+		t.Fatalf("Enter at the backup question: %v, want declined", err)
+	}
+	if _, err := os.Stat(p.Config); err == nil {
+		t.Error("declining backups wrote the config")
+	}
+	if !strings.Contains(out.String(), "kept as files in") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}
+
+func TestDeclinedIsNotMissingAndAfterRunsForDoneSteps(t *testing.T) {
+	w, out, _ := testWizard(t, "\n")
+	checked := false
+	steps := []initStep{
+		{name: "backup", optional: true, run: func(context.Context) error { return errDeclined }},
+		{name: "storage", change: "Change?", check: func(context.Context) (string, bool, error) { return "icloud", true, nil },
+			run:   func(context.Context) error { t.Error("redone without a yes"); return nil },
+			after: func(context.Context) error { checked = true; return nil }},
+	}
+	skipped, ok := runSteps(context.Background(), w, steps)
+	if !ok || len(skipped) != 0 || !checked {
+		t.Fatalf("ok=%v skipped=%v checked=%v\n%s", ok, skipped, checked, out.String())
+	}
+	if !strings.Contains(out.String(), "– off") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}

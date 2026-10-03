@@ -30,6 +30,10 @@ import (
 // errSkipped ends a step the person chose to leave for later.
 var errSkipped = errors.New("skipped")
 
+// errDeclined ends an optional step the person does not want; unlike a
+// skipped one it is not reported as missing.
+var errDeclined = errors.New("declined")
+
 // initStep is one stage of tgbup init. A step whose check says done is shown
 // and passed over, so running init again continues where it stopped.
 type initStep struct {
@@ -37,7 +41,9 @@ type initStep struct {
 	// check is nil for steps that always run (they are quick and idempotent).
 	check func(ctx context.Context) (status string, done bool, err error)
 	// change, when set, offers to redo a done step.
-	change   string
+	change string
+	// after, when set, runs for a done step that is not redone (a quick check).
+	after    func(ctx context.Context) error
 	run      func(ctx context.Context) error
 	optional bool
 }
@@ -107,6 +113,8 @@ func runSteps(ctx context.Context, w *wizard, steps []initStep) (skipped []strin
 		case errors.Is(err, errSkipped):
 			fmt.Fprintln(w.out, "  – skipped: tgbup init offers it again next time")
 			skipped = append(skipped, s.name)
+		case errors.Is(err, errDeclined):
+			fmt.Fprintln(w.out, "  – off (tgbup init can turn it on later)")
 		case errors.Is(err, errStopped) || ctx.Err() != nil:
 			fmt.Fprintln(w.out, "\nStopped. Run tgbup init again to continue from this step.")
 			return skipped, false
@@ -129,12 +137,17 @@ func runStep(ctx context.Context, w *wizard, s initStep) error {
 		}
 		if done {
 			fmt.Fprintf(w.out, "  ✓ %s\n", status)
-			if s.change == "" {
-				return nil
+			redo := false
+			if s.change != "" {
+				if redo, err = w.yes(ctx, "  "+s.change, false); err != nil {
+					return err
+				}
 			}
-			redo, err := w.yes(ctx, "  "+s.change, false)
-			if err != nil || !redo {
-				return err
+			if !redo {
+				if s.after != nil {
+					return s.after(ctx)
+				}
+				return nil
 			}
 		}
 	}
@@ -147,10 +160,8 @@ func (w *wizard) steps() []initStep {
 		{name: "Telegram login", check: w.checkLogin, run: w.login},
 		{name: "Archive folder", check: w.checkArchiveDir, run: w.setArchiveDir},
 		{name: "Chats to archive", check: w.checkChats, change: "Change the chat list?", run: w.chooseChats},
-		{name: "Backup password", check: w.checkPassword,
-			change: "Replace it? (only when your repositories were made with another password)", run: w.setPassword},
-		{name: "Backup storage", check: w.checkStorage, change: "Change where backups go?", run: w.chooseStorage},
-		{name: "Backup repositories", run: w.initRepos},
+		{name: "Cloud backup (optional)", check: w.checkStorage, change: "Change the backup settings?",
+			run: w.setBackup, after: w.initRepos, optional: true},
 		{name: "Alerts bot (optional)", check: w.checkBot, run: w.setBot, optional: true},
 		{name: "First download", check: w.checkArchive, run: w.firstSync},
 		{name: "Schedule", check: w.checkSchedule, run: w.schedule},
@@ -320,12 +331,41 @@ func (w *wizard) chooseChats(ctx context.Context) error {
 	return nil
 }
 
-func (w *wizard) checkPassword(context.Context) (string, bool, error) {
+// setBackup turns on encrypted restic backups: password, places, repositories.
+// Without them the archive is kept only as files in the archive folder.
+func (w *wizard) setBackup(ctx context.Context) error {
 	st, err := w.load()
 	if err != nil {
-		return "", false, err
+		return err
 	}
-	return "set", st.secrets.ResticPassword != "", nil
+	if len(st.cfg.Backup.Repositories) == 0 {
+		fmt.Fprintf(w.out, `  The archive is kept as files in %s. tgbup can also back it up, encrypted and
+  with history, to iCloud Drive, Google Drive or another place (restic snapshots after every run).
+`, tildePath(st.cfg.ArchiveDir, st.paths.Home))
+		if ok, err := w.yes(ctx, "  Set up cloud backups?", false); err != nil {
+			return err
+		} else if !ok {
+			return errDeclined
+		}
+	}
+	switch {
+	case st.secrets.ResticPassword == "":
+		if err := w.setPassword(ctx); err != nil {
+			return err
+		}
+	case len(st.cfg.Backup.Repositories) > 0:
+		if ok, err := w.yes(ctx, "  Replace the backup password? (only when your repositories were made with another one)", false); err != nil {
+			return err
+		} else if ok {
+			if err := w.setPassword(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if err := w.chooseStorage(ctx); err != nil {
+		return err
+	}
+	return w.initRepos(ctx)
 }
 
 func (w *wizard) setPassword(ctx context.Context) error {
@@ -627,7 +667,7 @@ func (w *wizard) initRepos(ctx context.Context) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("could not open or create %s. If a repository already exists from an earlier setup, "+
-			"run tgbup init again and replace the backup password with the one it was made with", strings.Join(failed, ", "))
+			"run tgbup init again, change the backup settings and replace the password with the one it was made with", strings.Join(failed, ", "))
 	}
 	return nil
 }
@@ -753,7 +793,7 @@ func (w *wizard) setBot(ctx context.Context) error {
 			return errStopped
 		}
 		if token == "" {
-			return errSkipped
+			return errDeclined
 		}
 		if !botTokenRe.MatchString(token) {
 			fmt.Fprintln(w.out, "  that does not look like a bot token")
@@ -940,7 +980,18 @@ func (w *wizard) schedule(ctx context.Context) error {
 		return err
 	}
 	if !j.installedHere() || !j.state().Loaded {
-		fmt.Fprintf(w.out, "  tgbup run downloads what is new, backs up and alerts on errors, at %s.\n", strings.Join(runTimes(), ", "))
+		st, err := w.load()
+		if err != nil {
+			return err
+		}
+		what := "downloads what is new"
+		if len(st.cfg.Backup.Repositories) > 0 {
+			what += ", backs up"
+		}
+		if st.secrets.BotToken != "" {
+			what += " and alerts on errors"
+		}
+		fmt.Fprintf(w.out, "  tgbup run %s, at %s.\n", what, strings.Join(runTimes(), ", "))
 		fmt.Fprintln(w.out, "  A run missed while the Mac sleeps starts on wake-up.")
 		if ok, err := w.yes(ctx, "  Install the schedule?", true); err != nil {
 			return err
@@ -952,8 +1003,8 @@ func (w *wizard) schedule(ctx context.Context) error {
 		}
 		fmt.Fprintln(w.out, "  installed")
 	}
-	fmt.Fprintln(w.out, "  A first run in the background checks that it all works unattended: download,")
-	fmt.Fprintln(w.out, "  backups and alerts. macOS may ask to let tgbup access iCloud or other folders: allow it.")
+	fmt.Fprintln(w.out, "  A first run in the background checks that it all works unattended.")
+	fmt.Fprintln(w.out, "  macOS may ask to let tgbup access iCloud or other folders: allow it.")
 	if ok, err := w.yes(ctx, "  Start it now?", true); err != nil {
 		return err
 	} else if !ok {

@@ -55,7 +55,7 @@ func runOnce(ctx context.Context, p runParts) int {
 	rep, configured := p.backup(ctx)
 	switch {
 	case !configured:
-		fmt.Fprintln(p.out, "backup: no storage set up (tgbup init)")
+		fmt.Fprintln(p.out, "backup: off, the archive is kept as files only")
 	case rep.Integrity != nil:
 		rec.BackupErrors = append(rec.BackupErrors, rep.Integrity.Error())
 	}

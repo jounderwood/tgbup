@@ -44,7 +44,9 @@ function renderStatus(s) {
     return el("li", {}, el("span", { class: old ? "bad" : "ok" }, old ? "● " : "● "), b.repo, el("br"),
       el("span", { class: "muted" }, "last snapshot " + ago(b.last_success)));
   }));
-  if (!(s.backups || []).length) $("backups").replaceChildren(el("li", { class: "muted" }, "No backup storage set up"));
+  if (!(s.backups || []).length) $("backups").replaceChildren(
+    el("li", {}, "Off: the archive is kept as files in " + s.archive.dir),
+    el("li", { class: "muted" }, "tgbup init can add encrypted backups to iCloud or Google Drive"));
 
   const sc = s.schedule;
   if (sc.note) $("schedule").textContent = sc.note;

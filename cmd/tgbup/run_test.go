@@ -144,7 +144,7 @@ func TestRunWithoutBotOrBackup(t *testing.T) {
 	if code := runOnce(context.Background(), e.parts); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	for _, want := range []string{"backup: no storage set up", "alerts: no bot set up"} {
+	for _, want := range []string{"backup: off", "alerts: no bot set up"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
