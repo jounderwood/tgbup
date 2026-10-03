@@ -122,6 +122,17 @@ func TestRenderSite(t *testing.T) {
 	if res, _ := Render(ctx, db, Options{OutDir: dir, Track: true, Full: true, Loc: time.UTC}); res.Pages != 4 {
 		t.Fatalf("--full drew %d pages", res.Pages)
 	}
+	// html/ deleted, or missing after a restore that brought the fingerprints
+	// back with the database: every page is drawn again.
+	if err := os.RemoveAll(filepath.Join(dir, "html")); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := Render(ctx, db, opts); res.Pages != 4 {
+		t.Fatalf("after deleting html/ drew %d pages, want 4", res.Pages)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "html", "Mom", "p1.html")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRenderKeepsGoingAfterAPageFails(t *testing.T) {

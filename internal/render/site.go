@@ -114,7 +114,9 @@ func Render(ctx context.Context, db *store.Store, opts Options) (Result, error) 
 		// What a page shows also depends on where it lives, how many pages its
 		// thread has (the pager), the time zone and the templates, so those redraw it too.
 		fp := strings.Join([]string{p.Fingerprint, dir, strconv.Itoa(p.Total), zoneAt(p.First, opts.Loc), templatesHash}, "|")
-		if done[p.PageKey] == fp {
+		// The files are checked too: html/ and md/ may be deleted, or missing
+		// after a restore, while the fingerprints come back with the database.
+		if done[p.PageKey] == fp && pageFilesExist(opts.OutDir, dir, p.N) {
 			res.Skipped++
 			continue
 		}
@@ -661,4 +663,14 @@ func writeSearch(ctx context.Context, db *store.Store, l *layout, opts Options, 
 		_, err := fmt.Fprintf(w, "tgbupSearch.add(%s);\n", data)
 		return err
 	})
+}
+
+func pageFilesExist(out, dir string, n int) bool {
+	for _, f := range []string{filepath.Join(out, "html", filepath.FromSlash(dir), pageName(n)+".html"),
+		filepath.Join(out, "md", filepath.FromSlash(dir), pageName(n)+".md")} {
+		if _, err := os.Stat(f); err != nil {
+			return false
+		}
+	}
+	return true
 }
