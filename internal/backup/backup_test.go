@@ -222,3 +222,58 @@ func TestHostIsKeptFromTheFirstBackup(t *testing.T) {
 		t.Fatalf("snapshot taken under a new host: %s", snaps)
 	}
 }
+
+func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	e := newEnv(t, repo)
+	ctx := context.Background()
+	if res := Init(ctx, e.o); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if r := Run(ctx, e.db, e.o); !r.OK() {
+		t.Fatalf("backup = %+v", r)
+	}
+	snaps, err := Snapshots(ctx, e.o, repo)
+	if err != nil || len(snaps) != 1 || len(snaps[0].Paths) != 2 {
+		t.Fatalf("snapshots = %+v, %v", snaps, err)
+	}
+
+	// A new Mac: empty folder.
+	fresh := filepath.Join(t.TempDir(), "TelegramArchive")
+	res, err := Restore(ctx, e.o, repo, "latest", fresh, e.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MediaAdded != 1 || res.MovedAside != "" || !strings.Contains(string(res.Config), "archive_dir") {
+		t.Errorf("result = %+v", res)
+	}
+	db, err := store.Open(filepath.Join(fresh, "archive.sqlite"))
+	if err != nil {
+		t.Fatalf("restored database does not open: %v", err)
+	}
+	db.Close()
+	if b, _ := os.ReadFile(filepath.Join(fresh, "media", "photo", "7.jpg")); string(b) != "jpeg" {
+		t.Errorf("media = %q", b)
+	}
+	if entries, _ := os.ReadDir(fresh); len(entries) != 2 {
+		t.Errorf("left behind: %v", entries)
+	}
+
+	// Restoring over an existing archive: its database is kept aside, its media untouched.
+	if err := os.WriteFile(filepath.Join(fresh, "media", "photo", "7.jpg"), []byte("newer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = Restore(ctx, e.o, repo, snaps[0].ShortID, fresh, e.now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MovedAside == "" || !isFile(res.MovedAside) || res.MediaKept != 1 || res.MediaAdded != 0 {
+		t.Errorf("second restore = %+v", res)
+	}
+	if b, _ := os.ReadFile(filepath.Join(fresh, "media", "photo", "7.jpg")); string(b) != "newer" {
+		t.Errorf("an existing media file was replaced: %q", b)
+	}
+	if _, err := Restore(ctx, e.o, repo, "nope", fresh, e.now); err == nil {
+		t.Error("unknown snapshot accepted")
+	}
+}

@@ -173,11 +173,11 @@ func TestRcloneRemote(t *testing.T) {
 }
 
 func TestSetArchiveDir(t *testing.T) {
-	w, _, _ := testWizard(t, "relative/dir\n")
-	if err := w.setArchiveDir(context.Background()); err == nil {
-		t.Fatal("relative path accepted")
+	w, out, _ := testWizard(t, "\nrelative/dir\n")
+	if err := w.setArchiveDir(context.Background()); err == nil || !strings.Contains(out.String(), "full path") {
+		t.Fatalf("relative path accepted: %v", err)
 	}
-	w, _, _ = testWizard(t, "\n")
+	w, _, _ = testWizard(t, "\n\n")
 	if _, done, _ := w.checkArchiveDir(context.Background()); done {
 		t.Fatal("done before the config exists")
 	}

@@ -188,14 +188,7 @@ func (w *wizard) checkKeys(context.Context) (string, bool, error) {
 	return fmt.Sprintf("set (api_id %d)", st.secrets.APIID), true, nil
 }
 
-var apiHashRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
-
 func (w *wizard) setKeys(ctx context.Context) error {
-	// Not w.load: it fails on the broken keys this step is here to replace.
-	paths, err := config.ResolvePaths(w.env.Getenv)
-	if err != nil {
-		return err
-	}
 	fmt.Fprintln(w.out, `  Telegram gives every program its own keys:
     1. open https://my.telegram.org and sign in with your phone number
     2. API development tools → create an app (any title, e.g. "tgbup"; platform Desktop)
@@ -207,34 +200,35 @@ func (w *wizard) setKeys(ctx context.Context) error {
 			openURL("https://my.telegram.org")
 		}
 	}
-	var id, hash string
-	for {
-		v, ok := w.ask(ctx, "  api_id: ")
-		if !ok {
-			return errStopped
-		}
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			id = v
-			break
-		}
-		fmt.Fprintln(w.out, "  api_id is a number, e.g. 12345678")
-	}
-	for {
-		v, ok := w.ask(ctx, "  api_hash: ")
-		if !ok {
-			return errStopped
-		}
-		if v = strings.ToLower(v); apiHashRe.MatchString(v) {
-			hash = v
-			break
-		}
-		fmt.Fprintln(w.out, "  api_hash is 32 characters 0-9 and a-f")
-	}
-	if err := config.SetSecrets(paths.Secrets, map[string]string{"TG_API_ID": id, "TG_API_HASH": hash}); err != nil {
+	id, err := w.askValid(ctx, "  api_id: ", checkAPIID)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w.out, "  saved to %s\n", paths.Secrets)
+	hash, err := w.askValid(ctx, "  api_hash: ", checkAPIHash)
+	if err != nil {
+		return err
+	}
+	path, err := saveKeys(w.env, id, hash)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w.out, "  saved to %s\n", path)
 	return nil
+}
+
+// askValid asks until check accepts the answer.
+func (w *wizard) askValid(ctx context.Context, prompt string, check func(string) error) (string, error) {
+	for {
+		v, ok := w.ask(ctx, prompt)
+		if !ok {
+			return "", errStopped
+		}
+		if err := check(v); err != nil {
+			fmt.Fprintf(w.out, "  %v\n", err)
+			continue
+		}
+		return v, nil
+	}
 }
 
 func (w *wizard) checkLogin(ctx context.Context) (string, bool, error) {
@@ -277,22 +271,27 @@ func (w *wizard) setArchiveDir(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	def := config.Default().ArchiveDir
-	var dir string
-	for {
-		var ok bool
-		if dir, ok = w.ask(ctx, fmt.Sprintf("  Where to keep the archive? [%s]: ", def)); !ok {
-			return errStopped
-		}
-		if dir == "" {
-			dir = def
-		}
-		if strings.HasPrefix(dir, "~/") || dir == "~" || filepath.IsAbs(dir) {
-			break
-		}
-		fmt.Fprintln(w.out, "  give a full path or one starting with ~/")
+	restore, err := w.yes(ctx, "  Restore an archive from an existing backup instead of starting a new one?", false)
+	if err != nil {
+		return err
 	}
-	if err := config.SetValue(st.paths.Config, []string{"archive_dir"}, dir); err != nil {
+	def := config.Default().ArchiveDir
+	dir, err := w.askValid(ctx, fmt.Sprintf("  Where to keep the archive? [%s]: ", def), func(v string) error {
+		if v == "" {
+			return nil
+		}
+		return checkArchiveDir(v)
+	})
+	if err != nil {
+		return err
+	}
+	if dir == "" {
+		dir = def
+	}
+	if restore {
+		return w.restore(ctx, st, dir)
+	}
+	if err := saveArchiveDir(st, dir); err != nil {
 		return err
 	}
 	fmt.Fprintf(w.out, "  config: %s\n", st.paths.Config)
@@ -394,18 +393,21 @@ func (w *wizard) waitSaved(ctx context.Context) error {
 	}
 }
 
-func (w *wizard) ownPassword(ctx context.Context) (string, error) {
-	read := func(prompt string) (string, error) {
-		fmt.Fprint(w.out, prompt)
-		if f, ok := w.env.Stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-			return w.readHidden(ctx, int(f.Fd()))
-		}
-		s, ok := w.in.next(ctx)
-		if !ok {
-			return "", errStopped
-		}
-		return s, nil
+// readSecret reads a line without echo on a terminal.
+func (w *wizard) readSecret(ctx context.Context, prompt string) (string, error) {
+	fmt.Fprint(w.out, prompt)
+	if f, ok := w.env.Stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		return w.readHidden(ctx, int(f.Fd()))
 	}
+	s, ok := w.in.next(ctx)
+	if !ok {
+		return "", errStopped
+	}
+	return s, nil
+}
+
+func (w *wizard) ownPassword(ctx context.Context) (string, error) {
+	read := func(prompt string) (string, error) { return w.readSecret(ctx, prompt) }
 	for {
 		p1, err := read("  Password (at least 12 characters, not shown): ")
 		if err != nil {
@@ -524,7 +526,7 @@ func (w *wizard) setBackup(ctx context.Context) error {
 		if keep, err := w.yes(ctx, "  Keep backing up?", true); err != nil {
 			return err
 		} else if !keep {
-			if err := config.SetValue(st.paths.Config, []string{"backup", "repositories"}, []string{}); err != nil {
+			if err := disableBackup(st); err != nil {
 				return err
 			}
 			fmt.Fprintln(w.out, "  backups are off; the snapshots made so far stay where they are")
@@ -564,15 +566,14 @@ func (w *wizard) setBackup(ctx context.Context) error {
 			}
 		}
 	}
-	shown := make([]string, len(repos))
-	for i, r := range repos {
-		shown[i] = tildePath(r, home)
-	}
-	if err := config.SetValue(st.paths.Config, []string{"backup", "repositories"}, shown); err != nil {
+	if st, err = w.load(); err != nil { // the password may be new
 		return err
 	}
-	for _, r := range shown {
-		fmt.Fprintf(w.out, "  → %s\n", r)
+	if err := saveBackup(st, repos, ""); err != nil {
+		return err
+	}
+	for _, r := range repos {
+		fmt.Fprintf(w.out, "  → %s\n", tildePath(r, home))
 	}
 	return w.initRepos(ctx)
 }
@@ -595,14 +596,9 @@ func (w *wizard) askBackupDir(ctx context.Context, st setup, current string) (st
 		case "none", "нет":
 			return "", nil
 		}
-		dir := expandTilde(ans, home)
-		if !filepath.IsAbs(dir) {
-			fmt.Fprintln(w.out, "  give a full path or one starting with ~/")
-			continue
-		}
-		archive := expandTilde(st.cfg.ArchiveDir, home)
-		if within(dir, archive) || within(archive, dir) || within(dir, st.paths.StateDir) {
-			fmt.Fprintln(w.out, "  choose a folder apart from the archive and tgbup's own files")
+		dir, err := checkBackupDir(st, ans)
+		if err != nil {
+			fmt.Fprintf(w.out, "  %v\n", err)
 			continue
 		}
 		return dir, nil
@@ -969,10 +965,7 @@ func (w *wizard) setBot(ctx context.Context) error {
 		return errSkipped
 	}
 	bot.ChatID = strconv.FormatInt(chat.ID, 10)
-	if err := bot.Send(ctx, "✅ tgbup on "+hostname()+": alerts will come here"); err != nil {
-		return err
-	}
-	if err := config.SetSecrets(st.paths.Secrets, map[string]string{"BOT_TOKEN": bot.Token, "BOT_CHAT_ID": bot.ChatID}); err != nil {
+	if err := saveBot(ctx, st, bot); err != nil {
 		return err
 	}
 	fmt.Fprintln(w.out, "  sent a test message; saved")

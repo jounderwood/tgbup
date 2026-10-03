@@ -6,10 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"gitlab.com/joeunderwood/tgbup/internal/browse"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 	"gitlab.com/joeunderwood/tgbup/internal/syncer"
@@ -143,6 +145,34 @@ func TestBackupCommand(t *testing.T) {
 	out.Reset()
 	if code := run(context.Background(), []string{"backup"}, env); code != 0 || !strings.Contains(out.String(), "snapshot") {
 		t.Fatalf("backup: code %d\n%s", code, out)
+	}
+
+	// A new Mac: no config, no secrets, no archive; only the backup folder.
+	for _, p := range []string{filepath.Join(home, ".config"), archive} {
+		if err := os.RemoveAll(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", filepath.Dir(restic)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out.Reset()
+	env.Stdin = strings.NewReader("wrong password\npw\n\n")
+	if code := run(context.Background(), []string{"restore", "--from", repo, "--to", archive}, env); code != 0 {
+		t.Fatalf("restore: code %d\n%s", code, out)
+	}
+	if !strings.Contains(out.String(), "does not open") || !strings.Contains(out.String(), "restored snapshot") {
+		t.Errorf("output:\n%s", out)
+	}
+	for _, f := range []string{"archive.sqlite", "html/index.html"} {
+		if _, err := os.Stat(filepath.Join(archive, f)); err != nil {
+			t.Errorf("%s not restored: %v", f, err)
+		}
+	}
+	restored, err := config.Load(filepath.Join(home, ".config", "tgbup", "config.yaml"), home)
+	if err != nil || restored.ArchiveDir != archive || !slices.Contains(restored.Backup.Repositories, repo) {
+		t.Fatalf("restored config = %+v, %v", restored, err)
+	}
+	if sec, _ := config.LoadSecrets(secrets, func(string) string { return "" }); sec.ResticPassword != "pw" {
+		t.Errorf("password not kept: %q", sec.ResticPassword)
 	}
 }
 
