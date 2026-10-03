@@ -330,7 +330,11 @@ func (b *serveBackend) saveBackupForm(ctx context.Context, st setup, enabled boo
 		return nil, err
 	}
 	var log bytes.Buffer
-	err := b.quietWizard(&log).createRepos(ctx)
+	out := io.Writer(&log)
+	if b.env.Stderr != nil {
+		out = io.MultiWriter(&log, b.env.Stderr) // also where serve was started
+	}
+	err := b.quietWizard(out).createRepos(ctx)
 	return map[string]string{"log": strings.TrimSpace(log.String())}, err
 }
 

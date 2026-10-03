@@ -79,7 +79,12 @@ function folderRow(input) {
   return el("div", { class: "row" }, input,
     el("button", { type: "button", class: "secondary", onclick: async (e) => {
       const res = await action(e.target.closest(".form"), "choose-folder");
-      if (res && res.path) input.value = res.path;
+      if (res && res.path) {
+        input.value = res.path;
+        // The forms keep their values in draft through input events; a value set
+        // here would otherwise be lost on the next re-render and not be saved.
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     } }, "Choose…"));
 }
 

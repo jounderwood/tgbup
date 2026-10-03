@@ -1,10 +1,12 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,9 +18,9 @@ import (
 
 type fakeBackend struct {
 	actions []string
-	busy  bool
-	runs  int
-	saved *Selection
+	busy    bool
+	runs    int
+	saved   *Selection
 }
 
 func (f *fakeBackend) Status(context.Context) (Status, error) {
@@ -358,5 +360,24 @@ func TestSetupRoutes(t *testing.T) {
 	}
 	if w := do(t, s, "POST", "/api/setup/login/code", host, tok, `{"phone":"+1"}`); w.Code != 200 || f.actions[len(f.actions)-1] != "login/code" {
 		t.Fatalf("nested action name: %d %v", w.Code, f.actions)
+	}
+}
+
+// The log names each action and a failure's message, never what was typed.
+func TestLogShowsActionsWithoutTheirInput(t *testing.T) {
+	s, _, _ := testServer(t)
+	var buf bytes.Buffer
+	s.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	do(t, s, "POST", "/api/setup/keys", host, s.token, `{"api_hash":"SECRET-VALUE"}`)
+	do(t, s, "POST", "/api/setup/password/new", host, s.token, `{"password":"SECRET-VALUE"}`)
+	do(t, s, "GET", "/favicon.ico", host, "", "")
+	out := buf.String()
+	for _, want := range []string{"/api/setup/keys failed", "api_id is a number", "/api/setup/password/new done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "SECRET-VALUE") || strings.Contains(out, "favicon") {
+		t.Errorf("log shows input or noise:\n%s", out)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -71,7 +72,7 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	}
 	defer archiveLn.Close()
 	_, archivePort, _ := net.SplitHostPort(archiveLn.Addr().String())
-	b := &serveBackend{env: env, exe: exe, tg: newTGSession(ctx, 5*time.Minute)}
+	b := &serveBackend{env: env, exe: exe, tg: newTGSession(ctx, 5*time.Minute), log: newLogger(env.Stderr)}
 	defer b.dropLogin(nil)
 	archiveDir := func() string {
 		if st, err := b.load(); err == nil {
@@ -83,6 +84,7 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		return fail(err)
 	}
+	srv.Log = b.log
 	shown, _, _ := net.SplitHostPort(*listen)
 	url := "http://" + net.JoinHostPort(shown, port) + "/"
 	fmt.Fprintf(env.Stdout, "tgbup is at %s (this computer only). Ctrl+C stops it.\n", url)
@@ -134,6 +136,7 @@ type serveBackend struct {
 	loggedIn  bool
 	loginMu   sync.Mutex
 	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
+	log       *slog.Logger                                           // nil in tests
 }
 
 const dialogsTTL = 5 * time.Minute
@@ -311,8 +314,14 @@ func (b *serveBackend) startProcess(args ...string) error {
 		return err
 	}
 	b.child = cmd
+	what := "tgbup " + strings.Join(args, " ")
+	b.logger().Info("started "+what, "log", logPath)
 	go func() {
-		_ = cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			b.logger().Warn(what+" failed, see the log", "err", err, "log", logPath)
+		} else {
+			b.logger().Info(what + " finished")
+		}
 		f.Close()
 		b.mu.Lock()
 		if b.child == cmd {
@@ -690,4 +699,12 @@ func (t *tgSession) connect(opts tgclient.Options, connecting chan struct{}) {
 	}
 	t.mu.Unlock()
 	close(done)
+}
+
+// logger is the backend's log; tests build backends without one.
+func (b *serveBackend) logger() *slog.Logger {
+	if b.log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return b.log
 }

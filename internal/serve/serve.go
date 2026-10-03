@@ -15,6 +15,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -142,12 +143,15 @@ type Preview struct {
 
 // Server serves the interface on a loopback address.
 type Server struct {
-	backend    Backend
+	// Log, when set, gets a line for each action taken on the page and each
+	// failed request; request bodies (passwords, codes, tokens) never.
+	Log         *slog.Logger
+	backend     Backend
 	archiveDir  func() string
 	token       string
 	port        string
 	archivePort string
-	pages      *template.Template
+	pages       *template.Template
 }
 
 //go:embed web
@@ -205,7 +209,63 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chats", s.save)
 	mux.HandleFunc("GET /api/setup", s.setupState)
 	mux.HandleFunc("POST /api/setup/{action...}", s.setupAction)
-	return s.guard(mux, s.port, true)
+	return s.logged(s.guard(mux, s.port, true))
+}
+
+// slowRequest is how long a read takes before the log mentions it.
+const slowRequest = 2 * time.Second
+
+// logged reports actions (POST) when they start and end, and any request
+// that failed, with the error the page was given.
+func (s *Server) logged(next http.Handler) http.Handler {
+	if s.Log == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.Method == http.MethodPost
+		if action {
+			s.Log.Info("page: " + r.URL.Path + " …")
+		}
+		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(rec, r)
+		took := time.Since(start).Round(time.Millisecond)
+		api := strings.HasPrefix(r.URL.Path, "/api/")
+		switch {
+		case rec.status >= 500 || rec.status >= 400 && api:
+			s.Log.Warn("page: "+r.Method+" "+r.URL.Path+" failed", "status", rec.status, "error", strings.TrimSpace(rec.errText.String()), "took", took)
+		case action:
+			s.Log.Info("page: "+r.URL.Path+" done", "took", took)
+		case api && took > slowRequest:
+			s.Log.Info("page: "+r.URL.Path+" was slow", "took", took)
+		}
+	})
+}
+
+// recorder keeps the status and, for a failure, the start of the message
+// sent to the page.
+type recorder struct {
+	http.ResponseWriter
+	status  int
+	errText strings.Builder
+}
+
+func (r *recorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *recorder) Write(b []byte) (int, error) {
+	if r.status >= 400 && r.errText.Len() < 500 {
+		r.errText.Write(b[:min(len(b), 500-r.errText.Len())])
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *recorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // ArchiveHandler serves html/ and media/ of the archive on its own origin.
