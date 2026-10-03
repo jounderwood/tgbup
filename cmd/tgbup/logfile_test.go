@@ -20,15 +20,19 @@ func TestLogTeeWritesLinesToTheFile(t *testing.T) {
 	}
 	devnull, _ := os.Open(os.DevNull)
 	tee.console = devnull
-	fmt.Fprint(tee, "media 1/3\rmedia 2/3\rmedia 3/3\nfirst line\nunfinished")
+	fmt.Fprint(tee, "media 1/3\rmedia 2/3\rmedia 3/3\nfirst line\n")
+	fmt.Fprint(tee, "\r\033[Kcounting 12/50")
+	fmt.Fprint(tee, "time=x level=WARN msg=hm\n")
+	fmt.Fprint(tee, "unfinished")
 	tee.Close()
 	b, err := os.ReadFile(filepath.Join(home, "Tgbup", "logs", "tgbup.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 3 || !strings.HasSuffix(lines[0], " sync: media 3/3") ||
-		!strings.HasSuffix(lines[1], " sync: first line") || !strings.HasSuffix(lines[2], " sync: unfinished") {
+	if len(lines) != 4 || !strings.HasSuffix(lines[0], " sync: media 3/3") ||
+		!strings.HasSuffix(lines[1], " sync: first line") || !strings.HasSuffix(lines[2], " sync: time=x level=WARN msg=hm") ||
+		!strings.HasSuffix(lines[3], " sync: unfinished") {
 		t.Fatalf("log =\n%s", b)
 	}
 }

@@ -718,6 +718,9 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 	if place < 0 || place >= len(repos) {
 		return nil, fmt.Errorf("%w: no backup place %d", serve.ErrBadRequest, place)
 	}
+	if checkRepo(repos[place], st.secrets.ResticPassword) != nil {
+		return nil, errBadPlace
+	}
 	o, err := backupOptions(ctx, st)
 	if err != nil {
 		return nil, err

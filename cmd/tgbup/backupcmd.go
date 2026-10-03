@@ -28,18 +28,21 @@ func hostname() string {
 
 // backupOptions resolves everything a backup needs, downloading restic (and
 // rclone, for rclone: repositories) when they are not installed.
+// errBadPlace names no place: what is in the config may be a pasted password.
+var errBadPlace = fmt.Errorf("%w; one in the config is not and was skipped: remove it in tgbup init or on the Setup page (Backups → change)", errNotAPlace)
+
 func backupOptions(ctx context.Context, st setup) (backup.Options, error) {
 	b := st.cfg.Backup
 	if st.secrets.ResticPassword == "" {
 		return backup.Options{}, errors.New("RESTIC_PASSWORD is not set in secrets.env: without it the backups cannot be read back")
 	}
-	for _, r := range b.Repositories {
-		if checkRepo(r, st.secrets.ResticPassword) != nil {
-			return backup.Options{}, fmt.Errorf("%w; one in the config is not: remove it in tgbup init or on the Setup page (Backups → change)", errNotAPlace)
-		}
+	// A place that is not one is left out; the run reports it (see cmdRun).
+	repos, bad := splitPlaces(st)
+	if len(repos) == 0 && bad > 0 {
+		return backup.Options{}, errBadPlace
 	}
 	o := backup.Options{
-		Repos: b.Repositories, Retention: b.Retention, PruneEvery: b.PruneEvery.D(), CheckEvery: b.CheckEvery.D(),
+		Repos: repos, Retention: b.Retention, PruneEvery: b.PruneEvery.D(), CheckEvery: b.CheckEvery.D(),
 		CheckSubset: b.CheckReadSubset, Password: st.secrets.ResticPassword, RcloneConfigPass: st.secrets.RcloneConfigPass,
 		WorkDir: filepath.Join(st.paths.StateDir, "backup"), ArchiveDir: st.cfg.ArchiveDir, ConfigPath: st.paths.Config,
 		Host: hostname(), Now: time.Now,
@@ -183,7 +186,11 @@ func cmdRun(ctx context.Context, env Env) int {
 			if err != nil {
 				return backup.Report{Integrity: err}, true
 			}
-			return backup.Run(ctx, db, o), true
+			rep := backup.Run(ctx, db, o)
+			if _, bad := splitPlaces(st); bad > 0 {
+				rep.Repos = append(rep.Repos, backup.RepoResult{Repo: "(a place that is not one)", Err: errBadPlace})
+			}
+			return rep, true
 		},
 		db: db, bot: bot,
 		host: hostname(), archiveDir: st.cfg.ArchiveDir, repos: st.cfg.Backup.Repositories,

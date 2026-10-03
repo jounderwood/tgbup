@@ -2,7 +2,9 @@
 // The chat picker, a step of the Setup page. Its markup is in setup.html;
 // it reads the chats from Telegram only once the step is opened.
 window.tgbupChats = (() => {
-const $ = (id) => document.getElementById(id);
+// Found inside the picker: while its step is closed it is not in the document.
+const picker = document.getElementById("chatpicker");
+const $ = (id) => picker.querySelector("#" + id);
 let started = false;
 let onSaved = () => {};
 const PAGE = 50;
@@ -112,7 +114,8 @@ async function load() {
   try {
     data = await api("GET", "/api/chats");
   } catch (e) {
-    $("loading").textContent = "Could not load the chats: " + e.message;
+    $("loading").textContent = "Could not load the chats: " + e.message + " (close and open this step to try again)";
+    started = false;
     return;
   }
   for (const c of data.chats) {
@@ -167,7 +170,6 @@ return {
   start(saved) {
     onSaved = saved;
     if (!started) { started = true; load(); }
-    const picker = $("chatpicker");
     picker.hidden = false;
     return picker;
   },

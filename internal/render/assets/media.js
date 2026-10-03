@@ -115,9 +115,13 @@ window.tgbupMedia = {
     } else {
       a.append(Object.assign(document.createElement('span'), { className: 'play', textContent: '▶ ' + it.k }));
     }
-    div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'), this.local(it.f));
+    div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'));
+    if (this.isLocal(it.f)) div.append(this.local(it.f));
     return div;
   },
+
+  // isLocal: f is a file in the archive, not an outside link or a map.
+  isLocal(f) { return !!f && !/^[a-z][a-z0-9+.-]*:/i.test(f); },
 
   // local marks a file on this Mac with its path (see local.js).
   local(href) {
@@ -130,7 +134,7 @@ window.tgbupMedia = {
     div.className = 'row-item';
     div.append(Object.assign(document.createElement('span'), { className: 'kind', textContent: it.k }));
     div.append(it.f ? this.link(it.f, it.n || it.f, 'name') : Object.assign(document.createElement('span'), { className: 'name', textContent: (it.x ? '⏳ ' : '') + (it.n || it.k) }));
-    if (it.f) div.append(this.local(it.f));
+    if (this.isLocal(it.f)) div.append(this.local(it.f));
     const meta = [it.s, it.x, it.t, it.d].filter(Boolean).join(' · ');
     div.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: meta }));
     div.append(this.link(it.m, 'message', 'when'));

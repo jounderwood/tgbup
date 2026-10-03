@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -244,16 +245,36 @@ func TestWebScheduleTimesAndOff(t *testing.T) {
 }
 
 func TestWizardAsksForTimes(t *testing.T) {
-	w, out, _ := testWizard(t, "25:00\n7:05, 19:40\n")
-	j, err := w.askTimes(context.Background(), launchdJob{})
-	if err != nil || clockList(j.Times) != "07:05, 19:40" {
-		t.Fatalf("times = %v %v\n%s", j.Times, err, out)
+	w, out, _ := testWizard(t, "25:00\n7:05 19:40\n")
+	j, changed, err := w.askTimes(context.Background(), launchdJob{})
+	if err != nil || !changed || clockList(j.Times) != "07:05, 19:40" {
+		t.Fatalf("times = %v %v %v\n%s", j.Times, changed, err, out)
 	}
 	if !strings.Contains(out.String(), "not a time") {
 		t.Errorf("no explanation:\n%s", out)
 	}
 	w.in = newLineReader(strings.NewReader("\n"), nil)
-	if j, err := w.askTimes(context.Background(), j); err != nil || clockList(j.Times) != "07:05, 19:40" {
-		t.Fatalf("Enter changed the times: %v %v", j.Times, err)
+	if j, changed, err := w.askTimes(context.Background(), j); err != nil || changed || clockList(j.Times) != "07:05, 19:40" {
+		t.Fatalf("Enter changed the times: %v %v %v", j.Times, changed, err)
+	}
+}
+
+// On Telegram's test servers the step never reaches launchd: the job is the
+// real archive's.
+func TestScheduleStepLeavesTheJobAloneInTestMode(t *testing.T) {
+	dir := t.TempDir()
+	vars := map[string]string{"HOME": dir, "TGBUP_TEST_DC": "1", "TGBUP_CONFIG": filepath.Join(dir, "t", "config.yaml"),
+		"TGBUP_SECRETS": filepath.Join(dir, "t", "secrets.env"), "TGBUP_STATE_DIR": filepath.Join(dir, "t", "state")}
+	var out bytes.Buffer
+	env := Env{Stdin: strings.NewReader("y\ny\n7:00\ny\n"), Stdout: &out, Stderr: &out, Getenv: func(k string) string { return vars[k] }}
+	w := &wizard{env: env, out: &out, in: newLineReader(env.Stdin, nil)}
+	if err := w.schedule(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "?") {
+		t.Errorf("asked about the real job:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Library", "LaunchAgents")); err == nil {
+		t.Error("a launchd job was written")
 	}
 }

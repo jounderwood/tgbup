@@ -658,3 +658,19 @@ func TestBackupPlaceThatIsThePasswordIsRefused(t *testing.T) {
 		t.Fatalf("status %q done %v err %v", status, done, err)
 	}
 }
+
+// A place that is not one is left out of the backups; the others still run.
+func TestBadPlaceIsSkippedNotFatal(t *testing.T) {
+	_, _, p := testWizard(t, "")
+	const pw = "abcde-fghij-klmno-pqrst-uvwxy-z0123"
+	st := setup{paths: p}
+	st.cfg.Backup.Repositories = []string{filepath.Join(p.Home, "Tgbup", "backup"), pw, "local:/Volumes/Disk/b"}
+	st.secrets.ResticPassword = pw
+	good, bad := splitPlaces(st)
+	if bad != 1 || !slices.Equal(good, []string{filepath.Join(p.Home, "Tgbup", "backup"), "local:/Volumes/Disk/b"}) {
+		t.Fatalf("good %q bad %d", good, bad)
+	}
+	if strings.Contains(errBadPlace.Error(), pw) {
+		t.Error("the error shows the place")
+	}
+}

@@ -275,15 +275,28 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		return nil, b.startProcess(args...)
 	case "schedule/install":
 		// With times: save them, then (re)install the job so launchd uses them.
+		if st.testDC {
+			return nil, badInput("not on Telegram's test servers: the scheduled job runs the real archive")
+		}
+		before := clockList(st.cfg.Schedule.Clocks())
 		if req.Times != "" {
-			if st.testDC {
-				return nil, badInput("not on Telegram's test servers: the scheduled job runs the real archive")
-			}
 			if err := saveScheduleTimes(st, req.Times); err != nil {
 				return nil, err
 			}
 			if st, err = b.load(); err != nil {
 				return nil, err
+			}
+		}
+		j, err := b.launchd(st)
+		if err != nil {
+			return nil, err
+		}
+		if j.installedHere() && j.state().Loaded {
+			if clockList(j.Times) == before {
+				return nil, nil // nothing changed: leave the job (and a run in progress) alone
+			}
+			if j.state().Running {
+				return nil, badInput("a run is in progress: save the times when it has finished (reinstalling would stop it)")
 			}
 		}
 		return nil, b.installSchedule(st)

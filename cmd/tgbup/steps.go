@@ -108,7 +108,7 @@ func checkPassword(p string) error {
 }
 
 // resticSchemes are the repository addresses restic understands besides a folder.
-var resticSchemes = []string{"sftp:", "rest:", "s3:", "azure:", "gs:", "b2:", "swift:", "rclone:"}
+var resticSchemes = []string{"local:", "sftp:", "rest:", "s3:", "azure:", "gs:", "b2:", "swift:", "rclone:", "opendal:"}
 
 // errNotAPlace is deliberately without the value: what was typed may be the
 // password, pasted into the wrong field.
@@ -129,6 +129,19 @@ func checkRepo(repo, password string) error {
 		}
 	}
 	return errNotAPlace
+}
+
+// splitPlaces separates the configured places restic can use from those that
+// are not places at all (a password pasted by mistake), counted, never shown.
+func splitPlaces(st setup) (good []string, bad int) {
+	for _, r := range st.cfg.Backup.Repositories {
+		if checkRepo(r, st.secrets.ResticPassword) == nil {
+			good = append(good, r)
+		} else {
+			bad++
+		}
+	}
+	return good, bad
 }
 
 // saveBackup writes the backup places and, when given, a new password. A
@@ -185,11 +198,16 @@ func checkOpens(ctx context.Context, st setup, repos []string, password string) 
 // saveScheduleTimes writes schedule.times from "06:30, 18:30"; the job must
 // then be installed again to use them.
 func saveScheduleTimes(st setup, times string) error {
-	clocks, err := config.ParseTimes(strings.Split(times, ","))
+	clocks, err := config.ParseTimes(splitTimes(times))
 	if err != nil {
 		return badInput("%v", err)
 	}
 	return config.SetValue(st.paths.Config, []string{"schedule", "times"}, strings.Split(clockList(clocks), ", "))
+}
+
+// splitTimes reads times separated by commas or spaces.
+func splitTimes(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == ';' })
 }
 
 // disableBackup forgets the places; the snapshots made so far stay.

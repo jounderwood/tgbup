@@ -41,7 +41,7 @@ func ParseTimes(times []string) ([]Clock, error) {
 	for _, t := range times {
 		var c Clock
 		var rest string
-		if n, _ := fmt.Sscanf(strings.TrimSpace(t)+" x", "%d:%d %s", &c.Hour, &c.Minute, &rest); n != 3 ||
+		if n, _ := fmt.Sscanf(strings.TrimSpace(t)+" x", "%d:%d %s", &c.Hour, &c.Minute, &rest); n != 3 || rest != "x" ||
 			c.Hour < 0 || c.Hour > 23 || c.Minute < 0 || c.Minute > 59 {
 			return nil, fmt.Errorf("schedule: %q is not a time like 06:30", t)
 		}

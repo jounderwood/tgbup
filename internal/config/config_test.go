@@ -173,7 +173,7 @@ func TestParseTimes(t *testing.T) {
 	if err != nil || len(got) != 3 || got[0].String() != "00:00" || got[1].String() != "06:05" || got[2].String() != "18:30" {
 		t.Fatalf("times = %v %v", got, err)
 	}
-	for _, bad := range [][]string{{}, {"24:00"}, {"6"}, {"06:60"}, {"6:30pm"}, {"x"}} {
+	for _, bad := range [][]string{{}, {"24:00"}, {"6"}, {"06:60"}, {"6:30pm"}, {"x"}, {"6:30 18:30"}} {
 		if _, err := config.ParseTimes(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

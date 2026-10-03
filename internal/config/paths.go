@@ -51,7 +51,7 @@ func ResolvePaths(getenv func(string) string) (Paths, error) {
 	if !exists(p.Config) && exists(filepath.Join(legacy, "config.yaml")) {
 		p.Config, p.Logs = filepath.Join(legacy, "config.yaml"), filepath.Join(stateDir, "logs")
 	}
-	if !exists(p.Secrets) && exists(filepath.Join(legacy, "secrets.env")) {
+	if !exists(p.Secrets) && getenv("TGBUP_STATE_DIR") == "" && exists(filepath.Join(legacy, "secrets.env")) {
 		p.Secrets = filepath.Join(legacy, "secrets.env")
 	}
 	if v := getenv("TGBUP_CONFIG"); v != "" {

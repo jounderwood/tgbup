@@ -1130,30 +1130,40 @@ func lastRun(ctx context.Context, archiveDir string) (store.Run, bool, error) {
 }
 
 // askTimes asks when to run; Enter keeps the times in the config. It returns
-// the job with the times chosen.
-func (w *wizard) askTimes(ctx context.Context, j launchdJob) (launchdJob, error) {
+// the job with the times chosen and whether they changed.
+func (w *wizard) askTimes(ctx context.Context, j launchdJob) (launchdJob, bool, error) {
 	st, err := w.load()
 	if err != nil {
-		return j, err
+		return j, false, err
 	}
 	current := clockList(st.cfg.Schedule.Clocks())
 	ans, err := w.askValid(ctx, fmt.Sprintf("  Run at (HH:MM, comma-separated) [%s]: ", current), func(v string) error {
 		if v == "" {
 			return nil
 		}
-		_, err := config.ParseTimes(strings.Split(v, ","))
+		_, err := config.ParseTimes(splitTimes(v))
 		return err
 	})
 	if err != nil || ans == "" {
-		return j, err
+		return j, false, err
 	}
 	if err := saveScheduleTimes(st, ans); err != nil {
-		return j, err
+		return j, false, err
 	}
-	return w.job()
+	nj, err := w.job()
+	return nj, err == nil && clockList(nj.Times) != current, err
 }
 
 func (w *wizard) schedule(ctx context.Context) error {
+	st, err := w.load()
+	if err != nil {
+		return err
+	}
+	// The job is one per Mac and runs the real archive: test runs never touch it.
+	if st.testDC || runtime.GOOS != "darwin" {
+		fmt.Fprintln(w.out, "  left alone: the scheduled job is the real archive's, on macOS only")
+		return nil
+	}
 	j, err := w.job()
 	if err != nil {
 		return err
@@ -1170,10 +1180,17 @@ func (w *wizard) schedule(ctx context.Context) error {
 			return errDeclined
 		}
 	}
-	if j, err = w.askTimes(ctx, j); err != nil {
+	var changed bool
+	if j, changed, err = w.askTimes(ctx, j); err != nil {
 		return err
 	}
+	if installed && !changed {
+		return nil
+	}
 	if installed {
+		if j.state().Running {
+			return errors.New("a run is in progress: change the times when it has finished (reinstalling would stop it)")
+		}
 		if err := j.install(); err != nil {
 			return err
 		}
@@ -1210,10 +1227,6 @@ func (w *wizard) schedule(ctx context.Context) error {
 		return err
 	} else if !ok {
 		return errSkipped
-	}
-	st, err := w.load()
-	if err != nil {
-		return err
 	}
 	return w.watchRun(ctx, j, st.cfg.ArchiveDir, 2*time.Second, 30*time.Minute)
 }

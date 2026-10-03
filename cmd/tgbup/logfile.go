@@ -28,11 +28,18 @@ type logTee struct {
 	command string
 	mu      sync.Mutex
 	line    []byte
+	// redrawn: the pending line is a progress line drawn with \r; another
+	// write drops it rather than gluing onto it.
+	redrawn bool
+	escape  bool // inside a terminal escape sequence such as \033[K
 }
 
 // openLogTee starts logs/tgbup.log for the command unless the config turns
 // it off; nil when the file cannot be written: the console still has it all.
 func openLogTee(args []string, getenv func(string) string) *logTee {
+	if getenv("TGBUP_TEST_DC") == "1" && getenv("TGBUP_CONFIG") == "" {
+		return nil // refused right after; the real log is not the place for it
+	}
 	p, err := config.ResolvePaths(getenv)
 	if err != nil {
 		return nil
@@ -60,12 +67,20 @@ func (t *logTee) Write(b []byte) (int, error) {
 	n, err := t.console.Write(b)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.redrawn && len(b) > 0 && b[0] != '\r' && b[0] != '\n' {
+		t.line, t.redrawn = t.line[:0], false
+	}
 	for _, c := range b {
-		switch c {
-		case '\n':
+		switch {
+		case t.escape:
+			t.escape = c < '@' || c > '~' || c == '[' // a letter ends the sequence
+		case c == 0x1b:
+			t.escape = true
+		case c == '\n':
 			t.flushLine()
-		case '\r':
-			t.line = t.line[:0]
+			t.redrawn = false
+		case c == '\r':
+			t.line, t.redrawn = t.line[:0], true
 		default:
 			t.line = append(t.line, c)
 		}

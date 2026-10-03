@@ -212,7 +212,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/setup/{action...}", s.setupAction)
 	mux.HandleFunc("POST /api/archive/open", s.openArchive)
 	mux.HandleFunc("GET /api/backups/{place}/snapshots", s.snapshots)
-	return s.logged(s.guard(mux))
+	// The guard comes first: requests it refuses (any website can send them)
+	// do not reach the log.
+	return s.guard(s.logged(mux))
 }
 
 // slowRequest is how long a read takes before the log mentions it.
