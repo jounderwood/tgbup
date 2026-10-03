@@ -300,7 +300,7 @@ func (b *serveBackend) startProcess(args ...string) error {
 	if b.runningLocked(st) {
 		return serve.ErrBusy
 	}
-	logPath := filepath.Join(st.paths.StateDir, "logs", "run.log")
+	logPath := st.paths.RunLog()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return err
 	}
@@ -341,7 +341,7 @@ func (b *serveBackend) RunLog() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tailFile(filepath.Join(st.paths.StateDir, "logs", "run.log"), 64<<10, 200)
+	return tailFile(st.paths.RunLog(), 64<<10, 200)
 }
 
 // tailFile returns up to the last n lines from the last limit bytes of path.

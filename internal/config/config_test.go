@@ -114,26 +114,41 @@ func TestParseDuration(t *testing.T) {
 }
 
 func TestResolvePaths(t *testing.T) {
-	env := map[string]string{"HOME": "/h"}
+	home := t.TempDir()
+	env := map[string]string{"HOME": home}
 	getenv := func(k string) string { return env[k] }
+	j := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 	p, err := config.ResolvePaths(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Config != "/h/.config/tgbup/config.yaml" || p.Secrets != "/h/.config/tgbup/secrets.env" || p.StateDir != "/h/.local/state/tgbup" {
+	if p.Config != j("Tgbup", "config.yaml") || p.Logs != j("Tgbup", "logs") ||
+		p.Secrets != j(".local", "state", "tgbup", "secrets.env") || p.StateDir != j(".local", "state", "tgbup") {
 		t.Errorf("defaults = %+v", p)
 	}
-	if p.Session(false) != "/h/.local/state/tgbup/session" || p.Lock() != "/h/.local/state/tgbup/run.lock" {
-		t.Errorf("session/lock = %s %s", p.Session(false), p.Lock())
-	}
-	if p.Session(true) != "/h/.local/state/tgbup/session-test" {
-		t.Errorf("test-DC session = %s", p.Session(true))
+	if p.Session(false) != j(".local", "state", "tgbup", "session") || p.Lock() != j(".local", "state", "tgbup", "run.lock") ||
+		p.Session(true) != j(".local", "state", "tgbup", "session-test") || p.RunLog() != j("Tgbup", "logs", "run.log") {
+		t.Errorf("session/lock/log = %s %s %s", p.Session(false), p.Lock(), p.RunLog())
 	}
 
-	env["XDG_CONFIG_HOME"] = "/x"
-	env["TGBUP_STATE_DIR"] = "/s"
+	// A setup from before ~/Tgbup keeps its files.
+	for _, f := range []string{"config.yaml", "secrets.env"} {
+		if err := os.MkdirAll(j(".config", "tgbup"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(j(".config", "tgbup", f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	p, _ = config.ResolvePaths(getenv)
-	if p.Config != "/x/tgbup/config.yaml" || p.StateDir != "/s" {
+	if p.Config != j(".config", "tgbup", "config.yaml") || p.Secrets != j(".config", "tgbup", "secrets.env") ||
+		p.Logs != j(".local", "state", "tgbup", "logs") {
+		t.Errorf("old setup = %+v", p)
+	}
+
+	env["TGBUP_CONFIG"], env["TGBUP_SECRETS"], env["TGBUP_STATE_DIR"] = "/t/config.yaml", "/t/secrets.env", "/s"
+	p, _ = config.ResolvePaths(getenv)
+	if p.Config != "/t/config.yaml" || p.Secrets != "/t/secrets.env" || p.StateDir != "/s" || p.Logs != "/t/logs" {
 		t.Errorf("overrides = %+v", p)
 	}
 

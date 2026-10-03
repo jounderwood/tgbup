@@ -85,7 +85,7 @@ func editConfig(path string, requireTargets bool, edit func(root *yaml.Node) err
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		data = []byte("archive_dir: ~/TelegramArchive\n")
+		data = []byte("archive_dir: ~/Tgbup/archive\n")
 	case err != nil:
 		return nil, err
 	}

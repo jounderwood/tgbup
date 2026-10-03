@@ -188,7 +188,7 @@ func TestSetArchiveDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, done, err := w.checkArchiveDir(context.Background())
-	if err != nil || !done || status != "~/TelegramArchive" {
+	if err != nil || !done || status != "~/Tgbup/archive" {
 		t.Fatalf("check = %q %v %v", status, done, err)
 	}
 }
@@ -491,7 +491,7 @@ func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
 		t.Fatal(err)
 	}
 	repos, sec := backupConfig(t, p)
-	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup")}) || len(sec.ResticPassword) != 35 || !inited {
+	if !slices.Equal(repos, []string{filepath.Join(p.Home, "Tgbup", "backup")}) || len(sec.ResticPassword) != 35 || !inited {
 		t.Fatalf("repos %q, password %d chars, inited %v\n%s", repos, len(sec.ResticPassword), inited, out)
 	}
 	if !strings.Contains(out.String(), sec.ResticPassword) || !strings.Contains(out.String(), "Use this password?") {
@@ -519,16 +519,16 @@ func TestBackupChangeKeepsThePasswordAndAddsPlaces(t *testing.T) {
 	}
 	_, sec := backupConfig(t, p)
 	// The fake initRepos creates nothing; the folder repository must look created to count as done.
-	if err := os.MkdirAll(filepath.Join(p.Home, "TelegramBackup"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(p.Home, "Tgbup", "backup"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(p.Home, "TelegramBackup", "config"), nil, 0o600)
+	_ = os.WriteFile(filepath.Join(p.Home, "Tgbup", "backup", "config"), nil, 0o600)
 	w.in = newLineReader(strings.NewReader("y\n\n\n1\n\n"), nil) // change, keep backing up, keep folder, add Google Drive, keep password
 	if err := runStep(context.Background(), w, initStep{name: "Backups", check: w.checkStorage, change: "Change?", run: w.setBackup}); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	repos, sec2 := backupConfig(t, p)
-	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup"}) || sec2.ResticPassword != sec.ResticPassword {
+	if !slices.Equal(repos, []string{filepath.Join(p.Home, "Tgbup", "backup"), "rclone:gdrive:TelegramBackup"}) || sec2.ResticPassword != sec.ResticPassword {
 		t.Errorf("repos = %q, password kept %v", repos, sec2.ResticPassword == sec.ResticPassword)
 	}
 }
@@ -541,7 +541,7 @@ func TestBackupCanBeDeclinedAndRejectsFoldersInTheArchive(t *testing.T) {
 	if _, err := os.Stat(p.Config); err == nil {
 		t.Error("declining wrote the config")
 	}
-	w, out, _ := testWizard(t, "\n~/TelegramArchive/backup\nnone\n0\n")
+	w, out, _ := testWizard(t, "\n~/Tgbup/archive/backup\nnone\n0\n")
 	if err := w.setBackup(context.Background()); err == nil || !strings.Contains(out.String(), "apart from the archive") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -587,8 +587,8 @@ func TestBackupFolderNotCreatedIsNotDone(t *testing.T) {
 	if status, done, _ := w.checkStorage(context.Background()); done || !strings.Contains(status, "not created yet") {
 		t.Fatalf("status %q done %v", status, done)
 	}
-	_ = os.MkdirAll(filepath.Join(p.Home, "TelegramBackup"), 0o700)
-	_ = os.WriteFile(filepath.Join(p.Home, "TelegramBackup", "config"), nil, 0o600)
+	_ = os.MkdirAll(filepath.Join(p.Home, "Tgbup", "backup"), 0o700)
+	_ = os.WriteFile(filepath.Join(p.Home, "Tgbup", "backup", "config"), nil, 0o600)
 	if _, done, _ := w.checkStorage(context.Background()); !done {
 		t.Fatal("created repository not seen")
 	}

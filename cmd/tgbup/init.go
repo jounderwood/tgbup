@@ -499,14 +499,14 @@ func isDir(p string) bool {
 	return err == nil && st.IsDir()
 }
 
-// defaultBackupDir keeps the first backup on this Mac, outside the archive.
-const defaultBackupDir = "~/TelegramBackup"
+// defaultBackupDir keeps the first backup on this Mac, next to the archive.
+const defaultBackupDir = "~/Tgbup/backup"
 
 // backupDirDefault is defaultBackupDir, or a folder next to the test config
 // on Telegram's test servers.
 func backupDirDefault(st setup) string {
 	if st.testDC {
-		return tildePath(filepath.Join(filepath.Dir(st.paths.Config), "TelegramBackup"), st.paths.Home)
+		return tildePath(filepath.Join(filepath.Dir(st.paths.Config), "backup"), st.paths.Home)
 	}
 	return defaultBackupDir
 }
@@ -1332,7 +1332,7 @@ func (w *wizard) finish(ctx context.Context, skipped []string) {
 	if _, err := os.Stat(index); err == nil {
 		fmt.Fprintf(w.out, "  read it:   open %s\n", tildePath(index, st.paths.Home))
 	}
-	fmt.Fprintf(w.out, "  schedule:  tgbup schedule status · log %s\n", tildePath(filepath.Join(st.paths.StateDir, "logs", "run.log"), st.paths.Home))
+	fmt.Fprintf(w.out, "  schedule:  tgbup schedule status · log %s\n", tildePath(st.paths.RunLog(), st.paths.Home))
 	fmt.Fprintln(w.out, "  web page:  tgbup serve --open (status, update now, chat list)")
 	fmt.Fprintln(w.out, "  settings:  tgbup init again, or tgbup setup for the chat list")
 	if _, err := os.Stat(index); err == nil && w.canOpen() {

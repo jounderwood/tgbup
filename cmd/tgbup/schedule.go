@@ -148,7 +148,7 @@ func newLaunchdJob(p config.Paths, env Env) (launchdJob, error) {
 	}
 	return launchdJob{
 		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.Home, "Library", "LaunchAgents"),
-		LogPath: filepath.Join(p.StateDir, "logs", "run.log"), UID: os.Getuid(), Env: jobEnv(env.Getenv),
+		LogPath: p.RunLog(), UID: os.Getuid(), Env: jobEnv(env.Getenv),
 		retryDelay: time.Second,
 		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
 	}, nil

@@ -31,7 +31,7 @@ func optionsReference() string {
 		{"  run_time_budget: " + shortDuration(d.Sync.RunTimeBudget.D()), "stop reading old history after this per run"},
 		{"  max_flood_wait: " + shortDuration(d.Sync.MaxFloodWait.D()), "wait out Telegram flood limits up to this, else defer the chat"},
 		{"backup:", "restic snapshots after every run; tgbup init sets this up"},
-		{`  repositories: ["~/TelegramBackup", "rclone:gdrive:TelegramBackup"]`, "every run snapshots into each"},
+		{`  repositories: ["~/Tgbup/backup", "rclone:gdrive:TelegramBackup"]`, "every run snapshots into each"},
 		{fmt.Sprintf("  retention: {last: %d, daily: %d, weekly: %d, monthly: %d}", r.Last, r.Daily, r.Weekly, r.Monthly), ""},
 		{"  prune_every: " + shortDuration(d.Backup.PruneEvery.D()), ""},
 		{"  check_every: " + shortDuration(d.Backup.CheckEvery.D()), ""},

@@ -69,8 +69,8 @@ func resolveSetup(env Env, requireConfig bool) (setup, error) {
 		if env.Getenv("TGBUP_TEST_DC") == "1" {
 			// Never the real archive. The config is written now: a later write of
 			// any other setting would otherwise create it from the template, whose
-			// archive_dir is the real ~/TelegramArchive.
-			cfg.ArchiveDir = filepath.Join(filepath.Dir(p.Config), "TelegramArchive")
+			// archive_dir is the real ~/Tgbup/archive.
+			cfg.ArchiveDir = filepath.Join(filepath.Dir(p.Config), "archive")
 			if err := config.SetValue(p.Config, []string{"archive_dir"}, cfg.ArchiveDir); err != nil {
 				return setup{}, err
 			}

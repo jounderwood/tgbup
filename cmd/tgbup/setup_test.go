@@ -48,8 +48,8 @@ func TestTestDCUsesSeparateSession(t *testing.T) {
 	}
 	// Before the test config exists, the default archive is next to it, never the
 	// real one, and it is written down at once: a later write of another setting
-	// would otherwise start from the template with the real ~/TelegramArchive.
-	want := filepath.Join(home, "test", "TelegramArchive")
+	// would otherwise start from the template with the real ~/Tgbup/archive.
+	want := filepath.Join(home, "test", "archive")
 	if test.cfg.ArchiveDir != want {
 		t.Errorf("test-server archive = %s, want %s", test.cfg.ArchiveDir, want)
 	}

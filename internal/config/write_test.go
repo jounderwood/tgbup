@@ -89,7 +89,7 @@ func TestWriteTargetsCreatesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := includeIDs(t, cfg); !slices.Equal(got, []int64{5}) || cfg.ArchiveDir != "/home/u/TelegramArchive" {
+	if got := includeIDs(t, cfg); !slices.Equal(got, []int64{5}) || cfg.ArchiveDir != "/home/u/Tgbup/archive" {
 		t.Fatalf("new config = %+v", cfg)
 	}
 }

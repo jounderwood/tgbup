@@ -71,7 +71,7 @@ var MediaKinds = []string{"photo", "video", "video_note", "voice", "audio", "doc
 
 func Default() Config {
 	return Config{
-		ArchiveDir: "~/TelegramArchive",
+		ArchiveDir: "~/Tgbup/archive",
 		Media:      Media{Workers: 4},
 		Sync:       Sync{RunTimeBudget: Duration(2 * time.Hour), MaxFloodWait: Duration(5 * time.Minute)},
 		Backup: Backup{
