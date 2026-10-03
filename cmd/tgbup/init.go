@@ -482,7 +482,8 @@ func (w *wizard) checkStorage(context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if len(st.cfg.Backup.Repositories) == 0 {
+	// Places without a password: a restored config on a new Mac.
+	if len(st.cfg.Backup.Repositories) == 0 || st.secrets.ResticPassword == "" {
 		return "", false, nil
 	}
 	var names []string

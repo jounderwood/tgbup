@@ -548,3 +548,21 @@ func TestBackupsCanBeTurnedOff(t *testing.T) {
 		t.Fatalf("repos = %q", repos)
 	}
 }
+
+// A config restored on a new Mac lists the places but secrets.env has no
+// password: the step is not done, and the old password can be typed in.
+func TestRestoredConfigAsksForTheExistingPassword(t *testing.T) {
+	w, out, p := testWizard(t, "\n\n\nn\nthe old password 1\nthe old password 1\nsaved\n")
+	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{"~/TelegramBackup"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, done, _ := w.checkStorage(context.Background()); done {
+		t.Fatal("places without a password counted as done")
+	}
+	if err := w.setBackup(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, sec := backupConfig(t, p); sec.ResticPassword != "the old password 1" {
+		t.Fatalf("password = %q", sec.ResticPassword)
+	}
+}
