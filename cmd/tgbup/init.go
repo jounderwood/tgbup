@@ -55,6 +55,9 @@ type wizard struct {
 	out io.Writer
 	// initRepos creates or checks the backup repositories; tests replace it.
 	initRepos func(context.Context) error
+	// assumeYes answers every yes/no question with yes and gives rclone no
+	// terminal: the web setup runs steps this way after the person chose.
+	assumeYes bool
 }
 
 func (w *wizard) ask(ctx context.Context, prompt string) (string, bool) {
@@ -68,6 +71,9 @@ func (w *wizard) ask(ctx context.Context, prompt string) (string, bool) {
 
 // yes asks a yes/no question; Enter takes def. It fails only when input ends.
 func (w *wizard) yes(ctx context.Context, prompt string, def bool) (bool, error) {
+	if w.assumeYes {
+		return true, nil
+	}
 	hint := " [y/N]: "
 	if def {
 		hint = " [Y/n]: "
@@ -275,7 +281,7 @@ func (w *wizard) setArchiveDir(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	def := config.Default().ArchiveDir
+	def := tildePath(st.cfg.ArchiveDir, st.paths.Home) // the default until a config sets one
 	dir, err := w.askValid(ctx, fmt.Sprintf("  Where to keep the archive? [%s]: ", def), func(v string) error {
 		if v == "" {
 			return nil
@@ -490,9 +496,19 @@ func (w *wizard) checkStorage(context.Context) (string, bool, error) {
 	}
 	var names []string
 	for _, r := range st.cfg.Backup.Repositories {
+		// A folder repository shows whether it was created; remote ones are
+		// checked when used.
+		if filepath.IsAbs(r) && !strings.HasPrefix(r, "/Volumes/") && !isFile(filepath.Join(r, "config")) {
+			return tildePath(r, st.paths.Home) + " is not created yet", false, nil
+		}
 		names = append(names, tildePath(r, st.paths.Home))
 	}
 	return strings.Join(names, "\n    "), true, nil
+}
+
+func isFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
 }
 
 func isDir(p string) bool {
@@ -650,8 +666,8 @@ func splitRepos(repos []string, home string) (local string, others []string) {
 
 // storageChoice is one more place backups can go.
 type storageChoice struct {
-	Label string
-	Repo  string // "" asks for a path
+	Label string `json:"label"`
+	Repo  string `json:"repo"` // "" asks for a path
 }
 
 const repoDirName = "TelegramBackup"
@@ -772,7 +788,8 @@ func parseChoice(s string, n int) ([]int, error) {
 }
 
 func (w *wizard) createRepos(ctx context.Context) error {
-	st, err := loadLocalSetup(w.env, true)
+	// Repositories need no chats: the web setup may set backups up first.
+	st, err := loadLocalSetup(w.env, false)
 	if err != nil {
 		return err
 	}
@@ -833,7 +850,10 @@ func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remot
 	// interactive lets rclone show its sign-in link and ask what it needs.
 	interactive := func(args ...string) error {
 		cmd := rclone(ctx, args...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = w.env.Stdin, w.out, w.env.Stderr
+		cmd.Stdout, cmd.Stderr = w.out, w.env.Stderr
+		if !w.assumeYes {
+			cmd.Stdin = w.env.Stdin
+		}
 		return cmd.Run()
 	}
 	listed := func() (bool, error) {

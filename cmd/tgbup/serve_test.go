@@ -50,7 +50,7 @@ func TestNextRun(t *testing.T) {
 func TestSetupProblems(t *testing.T) {
 	st := setup{cfg: config.Default()}
 	got := setupProblems(st, serve.Status{})
-	if len(got) != 3 || !strings.Contains(got[0], "tgbup init") {
+	if len(got) != 3 || !strings.Contains(got[0], "Telegram is not connected") {
 		t.Errorf("empty setup: %q", got)
 	}
 	// Cloud backup is optional: not having it is not a problem.

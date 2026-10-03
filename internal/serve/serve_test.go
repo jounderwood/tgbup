@@ -15,6 +15,7 @@ import (
 )
 
 type fakeBackend struct {
+	actions []string
 	busy  bool
 	runs  int
 	saved *Selection
@@ -54,6 +55,18 @@ func (f *fakeBackend) Topics(context.Context, int64) ([]Topic, error) {
 
 func (f *fakeBackend) Preview(_ context.Context, sel Selection) (Preview, error) {
 	return Preview{Report: "would archive 1 chat", Config: "targets: …"}, nil
+}
+
+func (f *fakeBackend) SetupState(context.Context) (any, error) {
+	return map[string]any{"complete": false}, nil
+}
+
+func (f *fakeBackend) SetupAction(_ context.Context, name string, body []byte) (any, error) {
+	if name == "keys" && !strings.Contains(string(body), "api_id") {
+		return nil, fmt.Errorf("%w: api_id is a number", ErrBadRequest)
+	}
+	f.actions = append(f.actions, name)
+	return nil, nil
 }
 
 func (f *fakeBackend) Save(_ context.Context, sel Selection) error {
@@ -325,5 +338,25 @@ func TestSymlinkOutOfTheArchiveIsRefused(t *testing.T) {
 	}
 	if w := do(t, s, "GET", "/html/db.html", archiveHost, "", ""); w.Code == http.StatusOK {
 		t.Error("followed a symlink out of html/")
+	}
+}
+
+func TestSetupRoutes(t *testing.T) {
+	s, f, _ := testServer(t)
+	tok := token(t, s)
+	if w := do(t, s, "GET", "/setup", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "setup.js") {
+		t.Fatalf("setup page: %d", w.Code)
+	}
+	if w := do(t, s, "GET", "/api/setup", host, tok, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "complete") {
+		t.Fatalf("state: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, s, "POST", "/api/setup/keys", host, "", `{"api_id":"1"}`); w.Code != 403 {
+		t.Fatalf("setup action without the token: %d", w.Code)
+	}
+	if w := do(t, s, "POST", "/api/setup/keys", host, tok, `{}`); w.Code != 400 || !strings.Contains(w.Body.String(), "api_id is a number") {
+		t.Fatalf("bad input: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, s, "POST", "/api/setup/login/code", host, tok, `{"phone":"+1"}`); w.Code != 200 || f.actions[len(f.actions)-1] != "login/code" {
+		t.Fatalf("nested action name: %d %v", w.Code, f.actions)
 	}
 }

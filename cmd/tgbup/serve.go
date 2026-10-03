@@ -86,6 +86,10 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	url := "http://" + net.JoinHostPort(shown, port) + "/"
 	fmt.Fprintf(env.Stdout, "tgbup is at %s (this computer only). Ctrl+C stops it.\n", url)
 	if *open && runtime.GOOS == "darwin" {
+		// Until the archive can be filled, the page to start from is Setup.
+		if s, err := b.SetupState(ctx); err == nil && !s.(setupState).Complete {
+			url += "setup"
+		}
 		openURL(url)
 	}
 	if err := srv.Serve(ctx, ln, archiveLn); err != nil {
@@ -121,6 +125,9 @@ type serveBackend struct {
 	dialogs   []tgclient.Dialog
 	folders   []tgclient.Folder
 	dialogsAt time.Time
+	// login is a web sign-in in progress; loggedIn caches a session known to work.
+	login    *webLogin
+	loggedIn bool
 }
 
 const dialogsTTL = 5 * time.Minute
@@ -223,7 +230,7 @@ func setupProblems(st setup, s serve.Status) []string {
 	var out []string
 	add := func(ok bool, what string) {
 		if !ok {
-			out = append(out, what+": run tgbup init in Terminal")
+			out = append(out, what+".")
 		}
 	}
 	add(st.secrets.APIID != 0 && st.secrets.APIHash != "", "Telegram is not connected")
@@ -263,7 +270,11 @@ func lockHeld(path string) bool {
 	return false
 }
 
-func (b *serveBackend) StartRun() error {
+func (b *serveBackend) StartRun() error { return b.startProcess("run") }
+
+// startProcess runs tgbup with args as its own process, writing to run.log
+// like the schedule does; one at a time, and not while a run holds run.lock.
+func (b *serveBackend) startProcess(args ...string) error {
 	st, err := b.load()
 	if err != nil {
 		return err
@@ -282,8 +293,8 @@ func (b *serveBackend) StartRun() error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "\n── started from tgbup serve at %s ──\n", time.Now().Format("2006-01-02 15:04:05"))
-	cmd := exec.Command(b.exe, "run")
+	fmt.Fprintf(f, "\n── tgbup %s, started from tgbup serve at %s ──\n", strings.Join(args, " "), time.Now().Format("2006-01-02 15:04:05"))
+	cmd := exec.Command(b.exe, args...)
 	cmd.Stdout, cmd.Stderr = f, f
 	// Its own process group: Ctrl+C on serve must not stop a run half-way.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

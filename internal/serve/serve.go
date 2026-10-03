@@ -42,6 +42,10 @@ type Backend interface {
 	Topics(ctx context.Context, chat int64) ([]Topic, error)
 	Preview(ctx context.Context, sel Selection) (Preview, error)
 	Save(ctx context.Context, sel Selection) error
+	// SetupState and SetupAction drive the setup page: the steps' state, and
+	// one step's action with the form the page sent (JSON in, JSON out).
+	SetupState(ctx context.Context) (any, error)
+	SetupAction(ctx context.Context, name string, body []byte) (any, error)
 }
 
 type Status struct {
@@ -187,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page("overview.html"))
 	mux.HandleFunc("GET /chats", s.page("chats.html"))
+	mux.HandleFunc("GET /setup", s.page("setup.html"))
 	static, _ := fs.Sub(webFS, "web/static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 
@@ -198,6 +203,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{id}/topics", s.topics)
 	mux.HandleFunc("POST /api/chats/preview", s.preview)
 	mux.HandleFunc("POST /api/chats", s.save)
+	mux.HandleFunc("GET /api/setup", s.setupState)
+	mux.HandleFunc("POST /api/setup/{action...}", s.setupAction)
 	return s.guard(mux, s.port, true)
 }
 
@@ -396,6 +403,24 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
+	st, err := s.backend.SetupState(r.Context())
+	reply(w, st, err)
+}
+
+func (s *Server) setupAction(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res, err := s.backend.SetupAction(r.Context(), r.PathValue("action"), body)
+	if err == nil && res == nil {
+		res = map[string]bool{"ok": true}
+	}
+	reply(w, res, err)
 }
 
 func reply(w http.ResponseWriter, v any, err error) {

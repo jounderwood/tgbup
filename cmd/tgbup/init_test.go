@@ -511,6 +511,11 @@ func TestBackupChangeKeepsThePasswordAndAddsPlaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, sec := backupConfig(t, p)
+	// The fake initRepos creates nothing; the folder repository must look created to count as done.
+	if err := os.MkdirAll(filepath.Join(p.Home, "TelegramBackup"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(p.Home, "TelegramBackup", "config"), nil, 0o600)
 	w.in = newLineReader(strings.NewReader("y\n\n\n1\n\n"), nil) // change, keep backing up, keep folder, add Google Drive, keep password
 	if err := runStep(context.Background(), w, initStep{name: "Backups", check: w.checkStorage, change: "Change?", run: w.setBackup}); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -564,5 +569,20 @@ func TestRestoredConfigAsksForTheExistingPassword(t *testing.T) {
 	}
 	if _, sec := backupConfig(t, p); sec.ResticPassword != "the old password 1" {
 		t.Fatalf("password = %q", sec.ResticPassword)
+	}
+}
+
+func TestBackupFolderNotCreatedIsNotDone(t *testing.T) {
+	w, _, p := testWizard(t, "\n\n\n\nsaved\n")
+	if err := w.setBackup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status, done, _ := w.checkStorage(context.Background()); done || !strings.Contains(status, "not created yet") {
+		t.Fatalf("status %q done %v", status, done)
+	}
+	_ = os.MkdirAll(filepath.Join(p.Home, "TelegramBackup"), 0o700)
+	_ = os.WriteFile(filepath.Join(p.Home, "TelegramBackup", "config"), nil, 0o600)
+	if _, done, _ := w.checkStorage(context.Background()); !done {
+		t.Fatal("created repository not seen")
 	}
 }

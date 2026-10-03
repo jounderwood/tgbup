@@ -65,15 +65,8 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 		}
 	}
 	repo = expandTilde(repo, home)
-	if remote, ok := rcloneRemote(repo); ok {
-		rclone, err := deps.NewFinder(st.paths.StateDir, st.cfg.Deps.Rclone).Ensure(ctx, deps.Rclone)
-		if err != nil {
-			return err
-		}
-		o := backup.Options{Rclone: rclone, RcloneConfigPass: st.secrets.RcloneConfigPass}
-		if err := w.ensureRcloneRemote(ctx, o, remote); err != nil {
-			return err
-		}
+	if err := ensureRcloneFor(ctx, st, repo, w); err != nil {
+		return err
 	}
 	password := st.secrets.ResticPassword
 	var snaps []backup.Snapshot
@@ -144,6 +137,20 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	}
 	fmt.Fprintln(w.out, "  the pages and files/ are rebuilt; log in to Telegram to keep the archive growing")
 	return nil
+}
+
+// ensureRcloneFor connects the rclone remote of an rclone: repository (on a
+// new Mac, Google Drive is signed into again in the browser).
+func ensureRcloneFor(ctx context.Context, st setup, repo string, w *wizard) error {
+	remote, ok := rcloneRemote(expandTilde(repo, st.paths.Home))
+	if !ok {
+		return nil
+	}
+	rclone, err := deps.NewFinder(st.paths.StateDir, st.cfg.Deps.Rclone).Ensure(ctx, deps.Rclone)
+	if err != nil {
+		return err
+	}
+	return w.ensureRcloneRemote(ctx, backup.Options{Rclone: rclone, RcloneConfigPass: st.secrets.RcloneConfigPass}, remote)
 }
 
 // askBackupPlace offers the places a backup may be in on this Mac.

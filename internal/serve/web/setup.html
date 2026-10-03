@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="tgbup-token" content="{{.Token}}">
+<title>Setup · tgbup</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/common.js" defer></script>
+<script src="/static/setup.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <b class="logo">tgbup</b>
+  <nav><a href="/setup" class="on">Setup</a><a href="/">Overview</a><a href="/chats">Chats</a><a href="{{.Archive}}">Archive</a></nav>
+</header>
+<main>
+  <p class="muted">Each step shows a ✓ when it is done; you can come back any time to change something. The same steps exist in Terminal as <code>tgbup init</code>.</p>
+  <div id="steps" class="steps"><p class="muted">Loading…</p></div>
+  <div id="toast" class="toast" hidden></div>
+</main>
+</body>
+</html>

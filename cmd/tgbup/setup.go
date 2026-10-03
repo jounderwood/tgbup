@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
@@ -52,6 +53,10 @@ func resolveSetup(env Env, requireConfig bool) (setup, error) {
 	case errors.Is(err, fs.ErrNotExist):
 		cfg = config.Default()
 		cfg.ArchiveDir = expandTilde(cfg.ArchiveDir, p.Home)
+		if env.Getenv("TGBUP_TEST_DC") == "1" {
+			// Never the real archive, even before the test config is written.
+			cfg.ArchiveDir = filepath.Join(filepath.Dir(p.Config), "TelegramArchive")
+		}
 	case err != nil:
 		return setup{}, err
 	}

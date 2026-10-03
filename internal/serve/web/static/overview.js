@@ -12,7 +12,7 @@ function renderStatus(s) {
   document.title = "tgbup · " + s.host;
 
   const problems = $("problems");
-  problems.replaceChildren(...(s.problems || []).map((p) => el("li", {}, p)));
+  problems.replaceChildren(...(s.problems || []).map((p) => el("li", {}, p + " ", el("a", { href: "/setup" }, "Open Setup"))));
   problems.hidden = !(s.problems || []).length;
 
   const last = (s.runs || [])[0];

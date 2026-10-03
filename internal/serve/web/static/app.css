@@ -57,3 +57,25 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 dialog .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 16px; border-radius: 10px; }
 @media (max-width: 600px) { .chatlist th:nth-child(3), .chatlist td:nth-child(3) { display: none; } }
+.steps { display: grid; gap: 12px; }
+.step { background: var(--card); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
+.step > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.step h3 { margin: 0; font-size: 16px; }
+.step .mark { font-weight: 700; width: 1.2em; }
+.step .mark.ok { color: var(--ok); }
+.step .mark.todo { color: var(--muted); }
+.step .state { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.step .opt { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
+.form { display: grid; gap: 8px; max-width: 560px; }
+.form label { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+.form input[type=text], .form input[type=password], .form input[type=tel], .form select {
+  font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); width: 100%; }
+.form .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.form .row input[type=text] { flex: 1; min-width: 180px; width: auto; }
+.form .check { display: flex; gap: 8px; align-items: baseline; color: var(--fg); font-size: 14px; }
+.form .err { color: var(--bad); font-size: 13px; }
+.form .hint { color: var(--muted); font-size: 13px; }
+.secret { font: 15px/1.4 ui-monospace, Menlo, monospace; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: 8px 12px; letter-spacing: .03em; overflow-wrap: anywhere; }
+.choices { display: grid; gap: 4px; }
+code { font: 12px ui-monospace, Menlo, monospace; }
+section.step { margin: 0; }

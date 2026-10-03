@@ -35,10 +35,14 @@ func TestTestDCUsesSeparateSession(t *testing.T) {
 	if _, err := resolveSetup(e, false); err != nil {
 		t.Fatalf("login (session only) on test servers: %v", err)
 	}
-	env["TGBUP_CONFIG"] = filepath.Join(home, "test.yaml")
+	env["TGBUP_CONFIG"] = filepath.Join(home, "test", "config.yaml")
 	test, err := loadSetup(e, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Before the test config exists, the default archive is next to it, never the real one.
+	if want := filepath.Join(home, "test", "TelegramArchive"); test.cfg.ArchiveDir != want {
+		t.Errorf("test-server archive = %s, want %s", test.cfg.ArchiveDir, want)
 	}
 	if o := test.clientOptions(); !o.TestDC || filepath.Base(o.SessionPath) != "session-test" {
 		t.Fatalf("test-DC options = %+v", o)

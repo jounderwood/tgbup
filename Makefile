@@ -1,4 +1,4 @@
-.PHONY: build install setup test test-backup lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
+.PHONY: build install setup setup-cli test test-backup lint e2e e2e-seed e2e-run e2e-clean e2e-show e2e-takeout
 
 build:
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$$(git describe --tags --always --dirty)" -o bin/tgbup ./cmd/tgbup
@@ -9,8 +9,12 @@ install: build
 	install -m 0755 bin/tgbup $$HOME/.local/bin/tgbup
 	@echo "installed $$HOME/.local/bin/tgbup"
 
-# Installs and walks through the whole setup; run again any time to continue or change it.
+# Installs and opens the setup page in the browser; run again any time to continue or change it.
 setup: install
+	$$HOME/.local/bin/tgbup serve --open
+
+# The same setup in Terminal.
+setup-cli: install
 	$$HOME/.local/bin/tgbup init
 
 test:
