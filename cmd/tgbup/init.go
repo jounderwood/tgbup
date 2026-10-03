@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -142,11 +143,12 @@ func runStep(ctx context.Context, w *wizard, s initStep) error {
 
 func (w *wizard) steps() []initStep {
 	return []initStep{
-		{name: "Telegram API keys", check: w.checkKeys, run: w.setKeys},
+		{name: "Telegram API keys", check: w.checkKeys, change: "Enter different API keys?", run: w.setKeys},
 		{name: "Telegram login", check: w.checkLogin, run: w.login},
 		{name: "Archive folder", check: w.checkArchiveDir, run: w.setArchiveDir},
 		{name: "Chats to archive", check: w.checkChats, change: "Change the chat list?", run: w.chooseChats},
-		{name: "Backup password", check: w.checkPassword, run: w.setPassword},
+		{name: "Backup password", check: w.checkPassword,
+			change: "Replace it? (only when your repositories were made with another password)", run: w.setPassword},
 		{name: "Backup storage", check: w.checkStorage, change: "Change where backups go?", run: w.chooseStorage},
 		{name: "Backup repositories", run: w.initRepos},
 		{name: "Alerts bot (optional)", check: w.checkBot, run: w.setBot, optional: true},
@@ -158,6 +160,9 @@ func (w *wizard) steps() []initStep {
 
 func (w *wizard) checkKeys(context.Context) (string, bool, error) {
 	st, err := w.load()
+	if errors.Is(err, config.ErrBadAPIID) {
+		return "", false, nil
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -170,7 +175,8 @@ func (w *wizard) checkKeys(context.Context) (string, bool, error) {
 var apiHashRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func (w *wizard) setKeys(ctx context.Context) error {
-	st, err := w.load()
+	// Not w.load: it fails on the broken keys this step is here to replace.
+	paths, err := config.ResolvePaths(w.env.Getenv)
 	if err != nil {
 		return err
 	}
@@ -208,10 +214,10 @@ func (w *wizard) setKeys(ctx context.Context) error {
 		}
 		fmt.Fprintln(w.out, "  api_hash is 32 characters 0-9 and a-f")
 	}
-	if err := config.SetSecrets(st.paths.Secrets, map[string]string{"TG_API_ID": id, "TG_API_HASH": hash}); err != nil {
+	if err := config.SetSecrets(paths.Secrets, map[string]string{"TG_API_ID": id, "TG_API_HASH": hash}); err != nil {
 		return err
 	}
-	fmt.Fprintf(w.out, "  saved to %s\n", st.paths.Secrets)
+	fmt.Fprintf(w.out, "  saved to %s\n", paths.Secrets)
 	return nil
 }
 
@@ -222,6 +228,9 @@ func (w *wizard) checkLogin(ctx context.Context) (string, bool, error) {
 	}
 	ok, err := telegramAuthorized(ctx, st)
 	if err != nil {
+		if strings.Contains(err.Error(), "API_ID") {
+			return "", false, fmt.Errorf("the API keys are not accepted (%w): run tgbup init and enter them again", err)
+		}
 		return "", false, fmt.Errorf("connect to Telegram: %w", err)
 	}
 	return "logged in", ok, nil
@@ -233,7 +242,7 @@ func (w *wizard) login(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintln(w.out, "  Telegram sends a login code to your Telegram app.")
-	return loginTelegram(ctx, st, w.in, w.out)
+	return loginTelegram(ctx, st, w.in.buffered(), w.out)
 }
 
 func (w *wizard) checkArchiveDir(context.Context) (string, bool, error) {
@@ -253,15 +262,19 @@ func (w *wizard) setArchiveDir(ctx context.Context) error {
 		return err
 	}
 	def := config.Default().ArchiveDir
-	dir, ok := w.ask(ctx, fmt.Sprintf("  Where to keep the archive? [%s]: ", def))
-	if !ok {
-		return errStopped
-	}
-	if dir == "" {
-		dir = def
-	}
-	if !strings.HasPrefix(dir, "~") && !filepath.IsAbs(dir) {
-		return fmt.Errorf("%q: give a full path or one starting with ~/", dir)
+	var dir string
+	for {
+		var ok bool
+		if dir, ok = w.ask(ctx, fmt.Sprintf("  Where to keep the archive? [%s]: ", def)); !ok {
+			return errStopped
+		}
+		if dir == "" {
+			dir = def
+		}
+		if strings.HasPrefix(dir, "~/") || dir == "~" || filepath.IsAbs(dir) {
+			break
+		}
+		fmt.Fprintln(w.out, "  give a full path or one starting with ~/")
 	}
 	if err := config.SetValue(st.paths.Config, []string{"archive_dir"}, dir); err != nil {
 		return err
@@ -327,15 +340,21 @@ func (w *wizard) setPassword(ctx context.Context) error {
 		return err
 	}
 	var pass string
+	copied := false
 	if gen {
 		pass = newPassword()
-		copied := ""
-		if isTerminal(w.out) && copyToClipboard(pass) == nil {
-			copied = " (copied to the clipboard)"
+		copied = isTerminal(w.out) && copyToClipboard(pass) == nil
+		note := ""
+		if copied {
+			note = " (copied to the clipboard)"
 		}
-		fmt.Fprintf(w.out, "\n  Password%s:\n\n      %s\n\n", copied, pass)
+		fmt.Fprintf(w.out, "\n  Password%s:\n\n      %s\n\n", note, pass)
 	} else if pass, err = w.ownPassword(ctx); err != nil {
 		return err
+	}
+	if copied {
+		// Universal Clipboard would otherwise keep it on every Apple device.
+		defer func() { _ = copyToClipboard("") }()
 	}
 	for {
 		ans, ok := w.ask(ctx, `  Save it in your password manager (e.g. 1Password, item "tgbup backups"), then type "saved": `)
@@ -357,9 +376,7 @@ func (w *wizard) ownPassword(ctx context.Context) (string, error) {
 	read := func(prompt string) (string, error) {
 		fmt.Fprint(w.out, prompt)
 		if f, ok := w.env.Stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-			b, err := term.ReadPassword(int(f.Fd()))
-			fmt.Fprintln(w.out)
-			return string(b), err
+			return w.readHidden(ctx, int(f.Fd()))
 		}
 		s, ok := w.in.next(ctx)
 		if !ok {
@@ -372,8 +389,12 @@ func (w *wizard) ownPassword(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if len([]rune(p1)) < 12 || strings.ContainsAny(p1, "\r\n") {
+		switch {
+		case len([]rune(p1)) < 12:
 			fmt.Fprintln(w.out, "  too short")
+			continue
+		case !config.SecretRoundTrips(p1) || strings.ContainsAny(p1, "\r\n"):
+			fmt.Fprintln(w.out, "  it must not start or end with a space or a quote")
 			continue
 		}
 		p2, err := read("  Once more: ")
@@ -384,6 +405,34 @@ func (w *wizard) ownPassword(ctx context.Context) (string, error) {
 			return p1, nil
 		}
 		fmt.Fprintln(w.out, "  the two do not match")
+	}
+}
+
+// readHidden reads a line without echo; Ctrl+C gives up the read and puts
+// the terminal back, which term.ReadPassword alone would not do.
+func (w *wizard) readHidden(ctx context.Context, fd int) (string, error) {
+	saved, _ := term.GetState(fd)
+	type result struct {
+		s   string
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		b, err := term.ReadPassword(fd)
+		ch <- result{string(b), err}
+	}()
+	select {
+	case r := <-ch:
+		fmt.Fprintln(w.out)
+		return r.s, r.err
+	case <-ctx.Done():
+		if saved != nil {
+			_ = term.Restore(fd, saved)
+		}
+		// The abandoned read still owns stdin.
+		w.in.stopped = true
+		fmt.Fprintln(w.out)
+		return "", errStopped
 	}
 }
 
@@ -577,8 +626,8 @@ func (w *wizard) initRepos(ctx context.Context) error {
 		fmt.Fprintf(w.out, "  %s: ready\n", tildePath(r.Repo, st.paths.Home))
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("could not open or create %s (a wrong RESTIC_PASSWORD for an existing repository fails here too)",
-			strings.Join(failed, ", "))
+		return fmt.Errorf("could not open or create %s. If a repository already exists from an earlier setup, "+
+			"run tgbup init again and replace the backup password with the one it was made with", strings.Join(failed, ", "))
 	}
 	return nil
 }
@@ -593,8 +642,10 @@ func rcloneRemote(repo string) (string, bool) {
 	return remote, ok && remote != ""
 }
 
+// ensureRcloneRemote makes sure the rclone remote exists and works,
+// connecting Google Drive (or reconnecting it) through the browser.
 func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remote string) error {
-	rclone := func(args ...string) *exec.Cmd {
+	rclone := func(ctx context.Context, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, o.Rclone, args...)
 		cmd.Env = os.Environ()
 		if o.RcloneConfigPass != "" {
@@ -602,34 +653,78 @@ func (w *wizard) ensureRcloneRemote(ctx context.Context, o backup.Options, remot
 		}
 		return cmd
 	}
-	out, err := rclone("listremotes").Output()
-	if err != nil {
-		return fmt.Errorf("rclone listremotes: %w", err)
+	// interactive lets rclone show its sign-in link and ask what it needs.
+	interactive := func(args ...string) error {
+		cmd := rclone(ctx, args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = w.env.Stdin, w.out, w.env.Stderr
+		return cmd.Run()
 	}
-	if slices.Contains(strings.Fields(string(out)), remote+":") {
+	listed := func() (bool, error) {
+		out, err := rclone(ctx, "listremotes").Output()
+		if err != nil {
+			return false, fmt.Errorf("rclone listremotes: %w", err)
+		}
+		return slices.Contains(strings.Fields(string(out)), remote+":"), nil
+	}
+	works := func() error {
+		c, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		out, err := rclone(c, "lsd", remote+":").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %s", remote, lastLine(string(out)))
+		}
 		return nil
 	}
-	if remote != "gdrive" {
-		return fmt.Errorf("rclone remote %q is not set up: run %s config", remote, o.Rclone)
-	}
-	fmt.Fprintln(w.out, "  Google Drive is not connected yet. A browser window opens: sign in and allow access.")
-	fmt.Fprintln(w.out, "  rclone gets access only to the files it creates itself.")
-	if ok, err := w.yes(ctx, "  Connect Google Drive now?", true); err != nil {
+
+	ok, err := listed()
+	if err != nil {
 		return err
-	} else if !ok {
-		return errors.New("not connected to Google Drive: choose other storage or run tgbup init again")
 	}
-	cmd := rclone("config", "create", remote, "drive", "scope=drive.file")
-	cmd.Stdout, cmd.Stderr = io.Discard, w.env.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("connect Google Drive: %w", err)
+	if ok {
+		err := works()
+		if err == nil {
+			return nil
+		}
+		fmt.Fprintf(w.out, "  rclone cannot reach %s: %v\n", remote, err)
+		if remote != "gdrive" {
+			return fmt.Errorf("fix the rclone remote %q with %s config", remote, o.Rclone)
+		}
+		if ok, err := w.yes(ctx, "  Sign in to Google Drive again? A browser window opens.", true); err != nil {
+			return err
+		} else if !ok {
+			return errors.New("no access to Google Drive: sign in again or choose other storage in tgbup init")
+		}
+		if err := interactive("config", "reconnect", remote+":"); err != nil {
+			return fmt.Errorf("reconnect Google Drive: %w", err)
+		}
+	} else {
+		if remote != "gdrive" {
+			return fmt.Errorf("rclone remote %q is not set up: run %s config", remote, o.Rclone)
+		}
+		fmt.Fprintln(w.out, "  Google Drive is not connected yet. A browser window opens: sign in and allow access.")
+		fmt.Fprintln(w.out, "  rclone gets access only to the files it creates itself.")
+		if ok, err := w.yes(ctx, "  Connect Google Drive now?", true); err != nil {
+			return err
+		} else if !ok {
+			return errors.New("not connected to Google Drive: choose other storage or run tgbup init again")
+		}
+		if err := interactive("config", "create", remote, "drive", "scope=drive.file"); err != nil {
+			return fmt.Errorf("connect Google Drive: %w", err)
+		}
+		if ok, err := listed(); err != nil || !ok {
+			return errors.New("the connection to Google Drive was not saved")
+		}
 	}
-	out, err = rclone("listremotes").Output()
-	if err != nil || !slices.Contains(strings.Fields(string(out)), remote+":") {
-		return errors.New("the connection to Google Drive was not saved")
+	if err := works(); err != nil {
+		return fmt.Errorf("still no access to Google Drive: %w", err)
 	}
 	fmt.Fprintln(w.out, "  Google Drive connected")
 	return nil
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func (w *wizard) checkBot(context.Context) (string, bool, error) {
@@ -795,6 +890,10 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	if st.testDC {
+		// The job is one per Mac and runs the real archive.
+		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
+	}
 	j, err := newLaunchdJob(st.paths, w.env)
 	if err != nil {
 		return "", false, err
@@ -803,28 +902,28 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 		return "", false, nil
 	}
 	// launchd forgets exit codes on reboot; the archive keeps every run.
-	if ok, err := lastRunOK(ctx, st.cfg.ArchiveDir); err != nil || !ok {
+	if r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); err != nil || !ok || !r.OK {
 		return "", false, err
 	}
 	return "runs at " + strings.Join(runTimes(), ", ") + "; the last run worked", true, nil
 }
 
-// lastRunOK reports whether the latest tgbup run recorded in the archive succeeded.
-func lastRunOK(ctx context.Context, archiveDir string) (bool, error) {
+// lastRun returns the latest tgbup run recorded in the archive.
+func lastRun(ctx context.Context, archiveDir string) (store.Run, bool, error) {
 	path := filepath.Join(archiveDir, "archive.sqlite")
 	if _, err := os.Stat(path); err != nil {
-		return false, nil
+		return store.Run{}, false, nil
 	}
 	db, err := store.Open(path)
 	if err != nil {
-		return false, err
+		return store.Run{}, false, err
 	}
 	defer db.Close()
 	runs, err := db.RunsSince(ctx, time.Time{})
 	if err != nil || len(runs) == 0 {
-		return false, err
+		return store.Run{}, false, err
 	}
-	return runs[len(runs)-1].OK, nil
+	return runs[len(runs)-1], true, nil
 }
 
 func runTimes() []string {
@@ -860,15 +959,21 @@ func (w *wizard) schedule(ctx context.Context) error {
 	} else if !ok {
 		return errSkipped
 	}
-	return w.watchRun(ctx, j, 2*time.Second, 30*time.Minute)
+	st, err := w.load()
+	if err != nil {
+		return err
+	}
+	return w.watchRun(ctx, j, st.cfg.ArchiveDir, 2*time.Second, 30*time.Minute)
 }
 
-// watchRun starts the job and waits for it to end.
-func (w *wizard) watchRun(ctx context.Context, j launchdJob, every, limit time.Duration) error {
+// watchRun starts the job, waits for it to end and reports the run it
+// recorded in the archive.
+func (w *wizard) watchRun(ctx context.Context, j launchdJob, archiveDir string, every, limit time.Duration) error {
+	// Runs are stored with second precision.
+	start := time.Now().Truncate(time.Second)
 	if err := j.kickstart(); err != nil {
 		return err
 	}
-	start := time.Now()
 	seen := false
 	tty := isTerminal(w.out)
 	for {
@@ -883,8 +988,8 @@ func (w *wizard) watchRun(ctx context.Context, j launchdJob, every, limit time.D
 			break
 		}
 		if elapsed > limit {
-			fmt.Fprintf(w.out, "\n  still running after %s; check later with tgbup schedule status\n", limit)
-			return nil
+			fmt.Fprintf(w.out, "\n  still running after %s; tgbup init checks the result next time\n", limit)
+			return errSkipped
 		}
 		if tty {
 			fmt.Fprintf(w.out, "\r\033[K  running… %s (log: %s)", elapsed.Round(time.Second), j.LogPath)
@@ -896,13 +1001,31 @@ func (w *wizard) watchRun(ctx context.Context, j launchdJob, every, limit time.D
 		case <-time.After(every):
 		}
 	}
-	s := j.state()
-	if s.LastExit == "0" {
-		fmt.Fprintln(w.out, "  ✓ the scheduled run worked")
-		return nil
+	r, found, err := lastRun(ctx, archiveDir)
+	if err != nil {
+		return err
+	}
+	if found && !r.Started.Before(start) {
+		if r.OK {
+			fmt.Fprintln(w.out, "  ✓ the scheduled run worked")
+			return nil
+		}
+		var rec runRecord
+		_ = json.Unmarshal([]byte(r.Summary), &rec)
+		fmt.Fprintln(w.out, "  the scheduled run had errors:")
+		for _, e := range append(rec.SyncErrors, rec.BackupErrors...) {
+			fmt.Fprintf(w.out, "    %s\n", e)
+		}
+	} else {
+		// It ended before recording a run: a broken setup, a crash or a signal.
+		why := "ended without a result"
+		if code := j.state().LastExit; code != "" && code != "0" {
+			why = "failed with exit code " + code
+		}
+		fmt.Fprintf(w.out, "  the scheduled run %s\n", why)
 	}
 	tail := lastLogLines(j.LogPath, 15)
-	fmt.Fprintf(w.out, "  the scheduled run failed (exit code %s). End of %s:\n%s\n", s.LastExit, j.LogPath, indent(tail, "    "))
+	fmt.Fprintf(w.out, "  End of %s:\n%s\n", j.LogPath, indent(tail, "    "))
 	if strings.Contains(strings.ToLower(tail), "operation not permitted") {
 		fmt.Fprintf(w.out, "  macOS blocked file access: System Settings → Privacy & Security → Full Disk Access → + → %s\n", j.Exe)
 	}
@@ -923,6 +1046,9 @@ func indent(s, prefix string) string {
 }
 
 func (w *wizard) checkPath(context.Context) (string, bool, error) {
+	if w.env.Getenv("TGBUP_TEST_DC") == "1" {
+		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
+	}
 	j, err := w.job()
 	if err != nil {
 		return "", false, err

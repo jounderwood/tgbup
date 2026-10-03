@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// ErrBadAPIID is returned for a TG_API_ID that is not a number.
+var ErrBadAPIID = errors.New("TG_API_ID must be a number")
+
 type Secrets struct {
 	APIID            int
 	APIHash          string
@@ -52,12 +55,15 @@ func LoadSecrets(path string, getenv func(string) string) (Secrets, error) {
 	if v := get("TG_API_ID"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			errs = append(errs, errors.New("TG_API_ID must be a number"))
+			errs = append(errs, ErrBadAPIID)
 		}
 		s.APIID = n
 	}
 	return s, errors.Join(errs...)
 }
+
+// SecretRoundTrips reports whether v reads back unchanged from the secrets file.
+func SecretRoundTrips(v string) bool { return strings.Trim(strings.TrimSpace(v), `"'`) == v }
 
 func (s Secrets) RequireTelegram() error {
 	if s.APIID == 0 || s.APIHash == "" {
@@ -103,6 +109,10 @@ func SetSecrets(path string, values map[string]string) error {
 	for k, v := range values {
 		if strings.ContainsAny(k+v, "\r\n") || strings.Contains(k, "=") || k == "" {
 			return fmt.Errorf("secret %s: invalid key or value", k)
+		}
+		// The file format trims these, so the value read back would differ.
+		if !SecretRoundTrips(v) {
+			return fmt.Errorf("secret %s: must not start or end with a space or a quote", k)
 		}
 	}
 	if _, err := readEnvFile(path); err != nil {

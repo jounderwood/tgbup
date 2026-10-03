@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.com/joeunderwood/tgbup/internal/backup"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 // testWizard runs against files in a temp home, reading input from a string.
@@ -304,24 +306,155 @@ func (f *launchdRun) launchctl(args ...string) ([]byte, error) {
 
 func TestWatchRun(t *testing.T) {
 	for _, tc := range []struct {
+		name    string
+		record  *store.Run // the run the job records, if any
 		code    string
 		wantErr bool
 		want    string
 	}{
-		{"0", false, "the scheduled run worked"},
-		{"1", true, "Full Disk Access"},
+		{"ok", &store.Run{OK: true}, "0", false, "the scheduled run worked"},
+		{"errors", &store.Run{OK: false, Summary: `{"backup_errors":["restic backup icloud: disk full"]}`}, "1", true, "disk full"},
+		{"no record", nil, "1", true, "Full Disk Access"},
 	} {
 		w, out, _ := testWizard(t, "")
+		archive := t.TempDir()
 		f := &launchdRun{runFor: 3, code: tc.code}
 		j, _ := testSchedule(t)
-		j.launchctl = f.launchctl
+		j.launchctl = func(args ...string) ([]byte, error) {
+			if args[0] == "kickstart" && tc.record != nil {
+				db, err := store.Open(filepath.Join(archive, "archive.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				r := *tc.record
+				r.Started, r.Finished = time.Now(), time.Now()
+				if err := db.AddRun(context.Background(), r); err != nil {
+					t.Fatal(err)
+				}
+				db.Close()
+			}
+			return f.launchctl(args...)
+		}
 		if err := os.MkdirAll(filepath.Dir(j.LogPath), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		_ = os.WriteFile(j.LogPath, []byte("level=ERROR msg=backup err=\"open iCloud: operation not permitted\"\n"), 0o600)
-		err := w.watchRun(context.Background(), j, time.Millisecond, time.Minute)
+		err := w.watchRun(context.Background(), j, archive, time.Millisecond, time.Minute)
 		if (err != nil) != tc.wantErr || !strings.Contains(out.String(), tc.want) {
-			t.Errorf("code %s: err=%v output:\n%s", tc.code, err, out.String())
+			t.Errorf("%s: err=%v output:\n%s", tc.name, err, out.String())
+		}
+	}
+}
+
+func TestWatchRunGivesUpAsSkipped(t *testing.T) {
+	w, _, _ := testWizard(t, "")
+	j, _ := testSchedule(t)
+	j.launchctl = (&launchdRun{runFor: 1 << 30}).launchctl
+	if err := w.watchRun(context.Background(), j, t.TempDir(), time.Millisecond, 20*time.Millisecond); !errors.Is(err, errSkipped) {
+		t.Fatalf("err = %v: an unchecked run must not count as done", err)
+	}
+}
+
+func TestTestServersLeaveScheduleAndPathAlone(t *testing.T) {
+	w, _, _ := testWizard(t, "")
+	getenv := w.env.Getenv
+	w.env.Getenv = func(k string) string {
+		if k == "TGBUP_TEST_DC" {
+			return "1"
+		}
+		return getenv(k)
+	}
+	for name, check := range map[string]func(context.Context) (string, bool, error){"schedule": w.checkSchedule, "path": w.checkPath} {
+		status, done, err := check(context.Background())
+		if err != nil || !done || !strings.Contains(status, "test servers") {
+			t.Errorf("%s: %q %v %v", name, status, done, err)
+		}
+	}
+	var out bytes.Buffer
+	if code := cmdSchedule([]string{"install"}, Env{Stdout: &out, Stderr: &out, Getenv: w.env.Getenv}); code == 0 || !strings.Contains(out.String(), "TGBUP_TEST_DC") {
+		t.Errorf("schedule install on test servers: code %d, %s", code, out.String())
+	}
+}
+
+func TestKeysCanBeReplacedWhenBroken(t *testing.T) {
+	w, _, p := testWizard(t, "777\n0123456789abcdef0123456789abcdef\n")
+	if err := os.MkdirAll(filepath.Dir(p.Secrets), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Secrets, []byte("TG_API_ID=12a\nTG_API_HASH=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, done, err := w.checkKeys(context.Background()); done || err != nil {
+		t.Fatalf("broken api_id: done=%v err=%v, want a step to fix it", done, err)
+	}
+	if err := w.setKeys(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status, done, _ := w.checkKeys(context.Background()); !done || !strings.Contains(status, "777") {
+		t.Fatalf("after fixing: %q %v", status, done)
+	}
+}
+
+func TestOwnPasswordMustReadBackTheSame(t *testing.T) {
+	w, out, _ := testWizard(t, "\" quoted password\"\n trailing space pw \ngood password 1\ngood password 1\n")
+	got, err := w.ownPassword(context.Background())
+	if err != nil || got != "good password 1" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if strings.Count(out.String(), "must not start or end") != 2 {
+		t.Errorf("output:\n%s", out.String())
+	}
+}
+
+// fakeRclone writes a shell script standing in for rclone: remotes live in a
+// file, "lsd" fails while the remote is marked broken.
+func fakeRclone(t *testing.T, remotes string, broken bool) (path, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "remotes"), []byte(remotes), 0o600)
+	if broken {
+		_ = os.WriteFile(filepath.Join(dir, "broken"), nil, 0o600)
+	}
+	script := `#!/bin/sh
+d=` + dir + `
+echo "$@" >> $d/calls
+case "$1" in
+listremotes) cat $d/remotes ;;
+lsd) if [ -e $d/broken ]; then echo "Failed to lsd: couldn't fetch token: invalid_grant" >&2; exit 1; fi ;;
+config) if [ "$2" = create ]; then echo "$3:" >> $d/remotes; fi; rm -f $d/broken ;;
+esac
+`
+	path = filepath.Join(dir, "rclone")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path, dir
+}
+
+func TestEnsureRcloneRemote(t *testing.T) {
+	for _, tc := range []struct {
+		name, remotes, input string
+		broken               bool
+		wantCalls            string
+		wantErr              bool
+	}{
+		{"works", "gdrive:\n", "", false, "listremotes|lsd gdrive:", false},
+		{"missing, connect", "", "\n", false, "listremotes|config create gdrive drive scope=drive.file|listremotes|lsd gdrive:", false},
+		{"missing, declined", "", "n\n", false, "listremotes", true},
+		{"broken token, reconnect", "gdrive:\n", "\n", true, "listremotes|lsd gdrive:|config reconnect gdrive:|lsd gdrive:", false},
+		{"other remote missing", "", "", false, "listremotes", true},
+	} {
+		w, out, _ := testWizard(t, tc.input)
+		bin, dir := fakeRclone(t, tc.remotes, tc.broken)
+		remote := "gdrive"
+		if tc.name == "other remote missing" {
+			remote = "b2"
+		}
+		err := w.ensureRcloneRemote(context.Background(), backup.Options{Rclone: bin}, remote)
+		calls, _ := os.ReadFile(filepath.Join(dir, "calls"))
+		got := strings.ReplaceAll(strings.TrimSpace(string(calls)), "\n", "|")
+		if (err != nil) != tc.wantErr || got != tc.wantCalls {
+			t.Errorf("%s: err=%v calls=%q\n%s", tc.name, err, got, out.String())
 		}
 	}
 }

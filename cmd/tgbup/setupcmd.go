@@ -92,8 +92,9 @@ func (l *lineReader) next(ctx context.Context) (string, bool) {
 	}
 }
 
-// Read lets the Telegram login read through the same buffer.
-func (l *lineReader) Read(p []byte) (int, error) { return l.r.Read(p) }
+// buffered is the reader for the Telegram login: bufio.NewReader returns it
+// as is, so nothing gets buffered twice.
+func (l *lineReader) buffered() *bufio.Reader { return l.r }
 
 // ask returns false on EOF (Ctrl+D) or interrupt (Ctrl+C cancels ctx), which
 // always means "leave without saving".

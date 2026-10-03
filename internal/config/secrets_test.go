@@ -85,3 +85,19 @@ func TestSetSecretsCreatesFileAndRejectsNewlines(t *testing.T) {
 		t.Fatalf("stat: %v %v", st, err)
 	}
 }
+
+func TestSetSecretsRefusesValuesThatWouldReadBackDifferently(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.env")
+	for _, v := range []string{`"quoted"`, " lead", "trail ", "it's'"} {
+		if err := config.SetSecrets(path, map[string]string{"RESTIC_PASSWORD": v}); err == nil {
+			t.Errorf("%q accepted: it would read back as %q", v, strings.Trim(strings.TrimSpace(v), `"'`))
+		}
+	}
+	if err := config.SetSecrets(path, map[string]string{"RESTIC_PASSWORD": `in "the" middle's fine`}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := config.LoadSecrets(path, func(string) string { return "" })
+	if s.ResticPassword != `in "the" middle's fine` {
+		t.Errorf("read back %q", s.ResticPassword)
+	}
+}

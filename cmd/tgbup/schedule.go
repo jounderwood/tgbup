@@ -217,6 +217,10 @@ func cmdSchedule(args []string, env Env) int {
 	}
 	switch args[0] {
 	case "install":
+		if p.testDC {
+			fmt.Fprintln(env.Stderr, "tgbup schedule: not with TGBUP_TEST_DC=1: the scheduled job runs the real archive")
+			return 1
+		}
 		err = j.install()
 	case "uninstall":
 		err = j.uninstall()
