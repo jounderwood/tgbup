@@ -175,7 +175,7 @@ func (w *wizard) steps() []initStep {
 		{name: "Alerts bot (optional)", check: w.checkBot, run: w.setBot, optional: true},
 		{name: "First download", check: w.checkArchive, run: w.firstSync},
 		// Optional so that a failed check run reports and still lets init finish.
-		{name: "Schedule", check: w.checkSchedule, run: w.schedule, optional: true},
+		{name: "Schedule", check: w.checkSchedule, change: "Change the times or turn the schedule off?", run: w.schedule, optional: true},
 		{name: "Command in PATH", check: w.checkPath, run: w.addPath, optional: true},
 	}
 }
@@ -1074,7 +1074,7 @@ func (w *wizard) job() (launchdJob, error) {
 	if err != nil {
 		return launchdJob{}, err
 	}
-	return newLaunchdJob(st.paths, w.env)
+	return newLaunchdJob(st, w.env)
 }
 
 func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
@@ -1089,14 +1089,14 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 		// The job is one per Mac and runs the real archive.
 		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
 	}
-	j, err := newLaunchdJob(st.paths, w.env)
+	j, err := newLaunchdJob(st, w.env)
 	if err != nil {
 		return "", false, err
 	}
 	if !j.installedHere() || !j.state().Loaded {
 		return "", false, nil
 	}
-	status := "runs at " + strings.Join(runTimes(), ", ")
+	status := "runs at " + clockList(st.cfg.Schedule.Clocks())
 	// launchd forgets exit codes on reboot; the archive keeps every run.
 	switch r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); {
 	case err != nil:
@@ -1129,12 +1129,28 @@ func lastRun(ctx context.Context, archiveDir string) (store.Run, bool, error) {
 	return runs[len(runs)-1], true, nil
 }
 
-func runTimes() []string {
-	out := make([]string, len(runHours))
-	for i, h := range runHours {
-		out[i] = fmt.Sprintf("%02d:30", h)
+// askTimes asks when to run; Enter keeps the times in the config. It returns
+// the job with the times chosen.
+func (w *wizard) askTimes(ctx context.Context, j launchdJob) (launchdJob, error) {
+	st, err := w.load()
+	if err != nil {
+		return j, err
 	}
-	return out
+	current := clockList(st.cfg.Schedule.Clocks())
+	ans, err := w.askValid(ctx, fmt.Sprintf("  Run at (HH:MM, comma-separated) [%s]: ", current), func(v string) error {
+		if v == "" {
+			return nil
+		}
+		_, err := config.ParseTimes(strings.Split(v, ","))
+		return err
+	})
+	if err != nil || ans == "" {
+		return j, err
+	}
+	if err := saveScheduleTimes(st, ans); err != nil {
+		return j, err
+	}
+	return w.job()
 }
 
 func (w *wizard) schedule(ctx context.Context) error {
@@ -1142,7 +1158,29 @@ func (w *wizard) schedule(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !j.installedHere() || !j.state().Loaded {
+	installed := j.installedHere() && j.state().Loaded
+	if installed {
+		if keep, err := w.yes(ctx, "  Keep the schedule on?", true); err != nil {
+			return err
+		} else if !keep {
+			if err := j.uninstall(); err != nil {
+				return err
+			}
+			fmt.Fprintln(w.out, "  turned off: the archive updates only when you run tgbup run or press Update now")
+			return errDeclined
+		}
+	}
+	if j, err = w.askTimes(ctx, j); err != nil {
+		return err
+	}
+	if installed {
+		if err := j.install(); err != nil {
+			return err
+		}
+		fmt.Fprintln(w.out, "  saved")
+		return nil
+	}
+	if !installed {
 		st, err := w.load()
 		if err != nil {
 			return err
@@ -1154,7 +1192,7 @@ func (w *wizard) schedule(ctx context.Context) error {
 		if st.secrets.BotToken != "" {
 			what += " and alerts on errors"
 		}
-		fmt.Fprintf(w.out, "  tgbup run %s, at %s.\n", what, strings.Join(runTimes(), ", "))
+		fmt.Fprintf(w.out, "  tgbup run %s, at %s.\n", what, clockList(st.cfg.Schedule.Clocks()))
 		fmt.Fprintln(w.out, "  A run missed while the Mac sleeps starts on wake-up.")
 		if ok, err := w.yes(ctx, "  Install the schedule?", true); err != nil {
 			return err

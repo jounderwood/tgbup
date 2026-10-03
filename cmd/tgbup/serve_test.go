@@ -41,7 +41,7 @@ func TestNextRun(t *testing.T) {
 		"2026-10-03 19:00": "2026-10-04 00:30",
 	} {
 		n, _ := time.ParseInLocation("2006-01-02 15:04", now, loc)
-		if got := nextRun(n).Format("2006-01-02 15:04"); got != want {
+		if got := nextRun(n, config.Default().Schedule.Clocks()).Format("2006-01-02 15:04"); got != want {
 			t.Errorf("%s: %s, want %s", now, got, want)
 		}
 	}

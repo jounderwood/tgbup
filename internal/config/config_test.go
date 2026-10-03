@@ -167,3 +167,18 @@ func TestLoadExcludeTopics(t *testing.T) {
 		t.Fatalf("exclude_topics = %v", cfg.Targets.ExcludeTopics)
 	}
 }
+
+func TestParseTimes(t *testing.T) {
+	got, err := config.ParseTimes([]string{"18:30", " 6:05", "06:05", "0:00"})
+	if err != nil || len(got) != 3 || got[0].String() != "00:00" || got[1].String() != "06:05" || got[2].String() != "18:30" {
+		t.Fatalf("times = %v %v", got, err)
+	}
+	for _, bad := range [][]string{{}, {"24:00"}, {"6"}, {"06:60"}, {"6:30pm"}, {"x"}} {
+		if _, err := config.ParseTimes(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if c := config.Default().Schedule.Clocks(); len(c) != 4 || c[1].String() != "06:30" {
+		t.Errorf("default = %v", c)
+	}
+}

@@ -20,10 +20,6 @@ import (
 
 const launchdLabel = "com.gitlab.joeunderwood.tgbup"
 
-// runHours are when the schedule starts tgbup run; launchd runs a missed
-// start once after the Mac wakes up.
-var runHours = []int{0, 6, 12, 18}
-
 type launchdJob struct {
 	Label     string
 	Exe       string
@@ -31,6 +27,9 @@ type launchdJob struct {
 	LogPath   string
 	UID       int
 	Env       map[string]string
+	// Times are when launchd starts tgbup run (schedule.times); a start
+	// missed while the Mac sleeps runs once on wake-up.
+	Times     []config.Clock
 	launchctl func(args ...string) ([]byte, error)
 	// retryDelay is the pause between bootstrap attempts while launchd is still
 	// tearing down the job that was just booted out.
@@ -51,8 +50,8 @@ func (j launchdJob) plist() []byte {
 	fmt.Fprintf(&b, "<key>Label</key><string>%s</string>\n", esc(j.Label))
 	fmt.Fprintf(&b, "<key>ProgramArguments</key><array><string>%s</string><string>run</string></array>\n", esc(j.Exe))
 	b.WriteString("<key>StartCalendarInterval</key><array>\n")
-	for _, h := range runHours {
-		fmt.Fprintf(&b, "<dict><key>Hour</key><integer>%d</integer><key>Minute</key><integer>30</integer></dict>\n", h)
+	for _, t := range j.Times {
+		fmt.Fprintf(&b, "<dict><key>Hour</key><integer>%d</integer><key>Minute</key><integer>%d</integer></dict>\n", t.Hour, t.Minute)
 	}
 	b.WriteString("</array>\n")
 	if len(j.Env) > 0 {
@@ -107,11 +106,7 @@ func (j launchdJob) status() string {
 	if _, err := os.Stat(j.path()); err != nil {
 		return "not installed"
 	}
-	hours := make([]string, len(runHours))
-	for i, h := range runHours {
-		hours[i] = fmt.Sprintf("%02d:30", h)
-	}
-	s := fmt.Sprintf("installed: %s runs at %s; log %s", j.Exe, strings.Join(hours, ", "), j.LogPath)
+	s := fmt.Sprintf("installed: %s runs at %s; log %s", j.Exe, clockList(j.Times), j.LogPath)
 	out, err := j.launchctl("print", j.target())
 	if err != nil {
 		return s + "\nlaunchd: not loaded (run tgbup schedule install again)"
@@ -138,7 +133,17 @@ func jobEnv(getenv func(string) string) map[string]string {
 }
 
 // newLaunchdJob describes the job for this tgbup binary.
-func newLaunchdJob(p config.Paths, env Env) (launchdJob, error) {
+// clockList is "00:30, 06:30".
+func clockList(times []config.Clock) string {
+	out := make([]string, len(times))
+	for i, t := range times {
+		out[i] = t.String()
+	}
+	return strings.Join(out, ", ")
+}
+
+func newLaunchdJob(st setup, env Env) (launchdJob, error) {
+	p := st.paths
 	exe, err := os.Executable()
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
@@ -148,7 +153,7 @@ func newLaunchdJob(p config.Paths, env Env) (launchdJob, error) {
 	}
 	return launchdJob{
 		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.Home, "Library", "LaunchAgents"),
-		LogPath: p.RunLog(), UID: os.Getuid(), Env: jobEnv(env.Getenv),
+		LogPath: p.RunLog(), UID: os.Getuid(), Env: jobEnv(env.Getenv), Times: st.cfg.Schedule.Clocks(),
 		retryDelay: time.Second,
 		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
 	}, nil
@@ -210,7 +215,7 @@ func cmdSchedule(args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
 		return 1
 	}
-	j, err := newLaunchdJob(p.paths, env)
+	j, err := newLaunchdJob(p, env)
 	if err != nil {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
 		return 1

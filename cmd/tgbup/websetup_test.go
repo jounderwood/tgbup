@@ -202,3 +202,58 @@ func TestAdoptRestoredConfig(t *testing.T) {
 		t.Fatalf("archive_dir moved to %s", cfg.ArchiveDir)
 	}
 }
+
+// The page saves the times and installs the job again with them, or turns it off.
+func TestWebScheduleTimesAndOff(t *testing.T) {
+	b, home := webBackend(t)
+	ctx := context.Background()
+	fake := &fakeLaunchctl{}
+	var installed launchdJob
+	b.newJob = func(st setup) (launchdJob, error) {
+		j, _ := testSchedule(t)
+		j.Exe, j.AgentsDir, j.Times = "/usr/local/bin/tgbup", filepath.Join(home, "LaunchAgents"), st.cfg.Schedule.Clocks()
+		j.launchctl = fake.run
+		installed = j
+		return j, nil
+	}
+	if _, err := b.SetupAction(ctx, "archive", []byte(`{"dir":"~/Arch"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.SetupAction(ctx, "schedule/install", []byte(`{"times":"25:00"}`)); !errors.Is(err, serve.ErrBadRequest) {
+		t.Fatalf("bad time: %v", err)
+	}
+	if _, err := b.SetupAction(ctx, "schedule/install", []byte(`{"times":"19:40, 7:05"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := clockList(installed.Times); got != "07:05, 19:40" {
+		t.Errorf("installed with %s", got)
+	}
+	st, err := b.load()
+	if err != nil || clockList(st.cfg.Schedule.Clocks()) != "07:05, 19:40" {
+		t.Errorf("config times = %v %v", st.cfg.Schedule.Times, err)
+	}
+	if !strings.Contains(strings.Join(fake.calls, "\n"), "bootstrap") {
+		t.Errorf("not installed: %q", fake.calls)
+	}
+	if _, err := b.SetupAction(ctx, "schedule/off", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(installed.path()); err == nil {
+		t.Error("turned off, but the job file stays")
+	}
+}
+
+func TestWizardAsksForTimes(t *testing.T) {
+	w, out, _ := testWizard(t, "25:00\n7:05, 19:40\n")
+	j, err := w.askTimes(context.Background(), launchdJob{})
+	if err != nil || clockList(j.Times) != "07:05, 19:40" {
+		t.Fatalf("times = %v %v\n%s", j.Times, err, out)
+	}
+	if !strings.Contains(out.String(), "not a time") {
+		t.Errorf("no explanation:\n%s", out)
+	}
+	w.in = newLineReader(strings.NewReader("\n"), nil)
+	if j, err := w.askTimes(context.Background(), j); err != nil || clockList(j.Times) != "07:05, 19:40" {
+		t.Fatalf("Enter changed the times: %v %v", j.Times, err)
+	}
+}

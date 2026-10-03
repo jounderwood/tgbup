@@ -182,6 +182,16 @@ func checkOpens(ctx context.Context, st setup, repos []string, password string) 
 	return nil
 }
 
+// saveScheduleTimes writes schedule.times from "06:30, 18:30"; the job must
+// then be installed again to use them.
+func saveScheduleTimes(st setup, times string) error {
+	clocks, err := config.ParseTimes(strings.Split(times, ","))
+	if err != nil {
+		return badInput("%v", err)
+	}
+	return config.SetValue(st.paths.Config, []string{"schedule", "times"}, strings.Split(clockList(clocks), ", "))
+}
+
 // disableBackup forgets the places; the snapshots made so far stay.
 func disableBackup(st setup) error {
 	return config.SetValue(st.paths.Config, []string{"backup", "repositories"}, []string{})

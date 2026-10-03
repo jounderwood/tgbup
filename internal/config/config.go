@@ -14,14 +14,52 @@ import (
 )
 
 type Config struct {
-	ArchiveDir string  `yaml:"archive_dir"`
-	Targets    Targets `yaml:"targets"`
-	Media      Media   `yaml:"media"`
-	Sync       Sync    `yaml:"sync"`
-	Backup     Backup  `yaml:"backup"`
-	Deps       Deps    `yaml:"deps"`
-	Notify     Notify  `yaml:"notify"`
-	Log        Log     `yaml:"log"`
+	ArchiveDir string   `yaml:"archive_dir"`
+	Targets    Targets  `yaml:"targets"`
+	Media      Media    `yaml:"media"`
+	Sync       Sync     `yaml:"sync"`
+	Backup     Backup   `yaml:"backup"`
+	Deps       Deps     `yaml:"deps"`
+	Notify     Notify   `yaml:"notify"`
+	Log        Log      `yaml:"log"`
+	Schedule   Schedule `yaml:"schedule"`
+}
+
+// Schedule is when the scheduled job starts tgbup run, as "HH:MM" on this Mac.
+type Schedule struct {
+	Times []string `yaml:"times"`
+}
+
+// Clock is a time of day.
+type Clock struct{ Hour, Minute int }
+
+func (c Clock) String() string { return fmt.Sprintf("%02d:%02d", c.Hour, c.Minute) }
+
+// ParseTimes reads "6:30, 18:00"-style times, sorted and without repeats.
+func ParseTimes(times []string) ([]Clock, error) {
+	var out []Clock
+	for _, t := range times {
+		var c Clock
+		var rest string
+		if n, _ := fmt.Sscanf(strings.TrimSpace(t)+" x", "%d:%d %s", &c.Hour, &c.Minute, &rest); n != 3 ||
+			c.Hour < 0 || c.Hour > 23 || c.Minute < 0 || c.Minute > 59 {
+			return nil, fmt.Errorf("schedule: %q is not a time like 06:30", t)
+		}
+		if !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 || len(out) > 24 {
+		return nil, errors.New("schedule: give 1 to 24 times, like 06:30, 18:30")
+	}
+	slices.SortFunc(out, func(a, b Clock) int { return (a.Hour*60 + a.Minute) - (b.Hour*60 + b.Minute) })
+	return out, nil
+}
+
+// Clocks is Schedule.Times, checked when the config was loaded.
+func (s Schedule) Clocks() []Clock {
+	c, _ := ParseTimes(s.Times)
+	return c
 }
 
 // Log says whether every command's log also goes to logs/tgbup.log; the
@@ -87,8 +125,9 @@ func Default() Config {
 			CheckEvery:      Duration(30 * 24 * time.Hour),
 			CheckReadSubset: "5%",
 		},
-		Notify: Notify{SummaryEvery: Duration(7 * 24 * time.Hour)},
-		Log:    Log{File: true},
+		Notify:   Notify{SummaryEvery: Duration(7 * 24 * time.Hour)},
+		Log:      Log{File: true},
+		Schedule: Schedule{Times: []string{"00:30", "06:30", "12:30", "18:30"}},
 	}
 }
 
@@ -143,6 +182,9 @@ func (c Config) validate(requireTargets bool) error {
 				errs = append(errs, fmt.Errorf("targets: exclude_topics %d: invalid topic id %d", chat, id))
 			}
 		}
+	}
+	if _, err := ParseTimes(c.Schedule.Times); err != nil {
+		errs = append(errs, err)
 	}
 	if c.Media.Workers < 1 || c.Media.Workers > 16 {
 		errs = append(errs, fmt.Errorf("media.workers must be 1..16, got %d", c.Media.Workers))

@@ -271,14 +271,27 @@ const forms = {
   schedule(step) {
     const s = state.schedule;
     const f = el("div", { class: "form" });
+    const times = el("input", { type: "text", value: draft.schedTimes ?? s.times.join(", "), "aria-label": "Run at", autocomplete: "off",
+      oninput: (e) => { draft.schedTimes = e.target.value; } });
+    f.append(el("p", { class: "hint" }, "tgbup run downloads what is new, backs up and alerts at these times. A run missed while the Mac sleeps starts on wake-up."),
+      el("label", {}, "Run at (HH:MM, comma-separated)", times));
     if (!step.done) {
-      f.append(el("p", { class: "hint" }, "tgbup run downloads what is new, backs up and alerts at " + s.times.join(", ") + ". A run missed while the Mac sleeps starts on wake-up."),
-        el("div", {}, el("button", { type: "button", onclick: async () => { if (await action(f, "schedule/install", {}, "Schedule installed")) load(); } }, "Install")));
+      f.append(el("div", {}, el("button", { type: "button", onclick: async () => {
+        if (await action(f, "schedule/install", { times: times.value }, "Schedule installed")) { delete draft.schedTimes; load(); }
+      } }, "Install")));
       return f;
     }
-    f.append(el("p", { class: "hint" }, s.last_run ? "Last run " + when(s.last_run.started) + ": " + (s.last_run.ok ? "worked" : "had errors (see Overview)") : "No run yet."),
+    f.append(el("div", { class: "row" },
+      el("button", { type: "button", onclick: async () => {
+        if (await action(f, "schedule/install", { times: times.value }, "Schedule saved")) { delete draft.schedTimes; open.delete("schedule"); load(); }
+      } }, "Save the times"),
+      el("button", { type: "button", class: "secondary", onclick: async () => {
+        if (!confirm("Turn the schedule off? The archive stops updating by itself until it is installed again.")) return;
+        if (await action(f, "schedule/off", {}, "Schedule turned off")) { open.delete("schedule"); load(); }
+      } }, "Turn off")),
+      el("p", { class: "hint" }, s.last_run ? "Last run " + when(s.last_run.started) + ": " + (s.last_run.ok ? "worked" : "had errors (see Overview)") : "No run yet."),
       el("p", { class: "hint" }, "A check run works exactly like a scheduled one; macOS may ask to let tgbup access iCloud or other folders — allow it."),
-      el("div", {}, el("button", { type: "button", onclick: async () => { if (await action(f, "schedule/check", {}, "Check run started: see Overview")) load(); } }, "Run a check now")));
+      el("div", {}, el("button", { type: "button", class: "secondary", onclick: async () => { if (await action(f, "schedule/check", {}, "Check run started: see Overview")) load(); } }, "Run a check now")));
     return f;
   },
 };

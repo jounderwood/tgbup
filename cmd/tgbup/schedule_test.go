@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,7 @@ func testSchedule(t *testing.T) (launchdJob, *fakeLaunchctl) {
 	return launchdJob{
 		Label: "com.example.tgbup", Exe: "/Users/me/.local/bin/tgbup", AgentsDir: filepath.Join(dir, "LaunchAgents"),
 		LogPath: filepath.Join(dir, "state", "logs", "run.log"), UID: 501, Env: map[string]string{"TGBUP_CONFIG": "/c.yaml"},
+		Times:     config.Default().Schedule.Clocks(),
 		launchctl: f.run,
 	}, f
 }
@@ -98,5 +100,22 @@ func TestScheduleKeepsPathOverrides(t *testing.T) {
 	got := jobEnv(func(k string) string { return env[k] })
 	if len(got) != 3 || got["XDG_CONFIG_HOME"] != "/x/config" || got["XDG_STATE_HOME"] != "/x/state" || got["TGBUP_SECRETS"] != "/s.env" {
 		t.Fatalf("job env = %v", got)
+	}
+}
+
+func TestLaunchdPlistUsesTheChosenTimes(t *testing.T) {
+	j, _ := testSchedule(t)
+	j.Times, _ = config.ParseTimes([]string{"7:05", "19:40"})
+	got := string(j.plist())
+	for _, want := range []string{
+		"<dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>",
+		"<dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plist lacks %s:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "<key>Hour</key>") != 2 {
+		t.Errorf("plist has other times:\n%s", got)
 	}
 }

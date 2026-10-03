@@ -153,11 +153,11 @@ type Preview struct {
 type Server struct {
 	// Log, when set, gets a line for each action taken on the page and each
 	// failed request; request bodies (passwords, codes, tokens) never.
-	Log         *slog.Logger
-	backend     Backend
-	token       string
-	port        string
-	pages       *template.Template
+	Log     *slog.Logger
+	backend Backend
+	token   string
+	port    string
+	pages   *template.Template
 }
 
 //go:embed web

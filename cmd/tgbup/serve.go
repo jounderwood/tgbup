@@ -111,6 +111,7 @@ type serveBackend struct {
 	loginMu   sync.Mutex
 	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
 	log       *slog.Logger                                           // nil in tests
+	newJob    func(setup) (launchdJob, error)                        // tests replace launchctl
 }
 
 const dialogsTTL = 5 * time.Minute
@@ -190,22 +191,23 @@ func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Sta
 }
 
 func scheduleStatus(st setup, env Env, now time.Time) serve.Schedule {
-	sc := serve.Schedule{Times: runTimes(), Next: nextRun(now)}
+	times := st.cfg.Schedule.Clocks()
+	sc := serve.Schedule{Times: strings.Split(clockList(times), ", "), Next: nextRun(now, times)}
 	if runtime.GOOS != "darwin" {
 		sc.Note = "Not on macOS: start tgbup run from cron or systemd"
 		return sc
 	}
-	if j, err := newLaunchdJob(st.paths, env); err == nil {
+	if j, err := newLaunchdJob(st, env); err == nil {
 		sc.Installed = j.installedHere() && j.state().Loaded
 	}
 	return sc
 }
 
 // nextRun is the next scheduled start after now.
-func nextRun(now time.Time) time.Time {
+func nextRun(now time.Time, times []config.Clock) time.Time {
 	for day := 0; day < 2; day++ {
-		for _, h := range runHours {
-			t := time.Date(now.Year(), now.Month(), now.Day()+day, h, 30, 0, 0, now.Location())
+		for _, c := range times {
+			t := time.Date(now.Year(), now.Month(), now.Day()+day, c.Hour, c.Minute, 0, 0, now.Location())
 			if t.After(now) {
 				return t
 			}

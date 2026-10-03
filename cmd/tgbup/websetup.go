@@ -156,7 +156,7 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 		s.Login = loginForm{CodeSent: b.login.hash != "", PasswordNeeded: b.login.password}
 	}
 	b.mu.Unlock()
-	s.Schedule.Times = runTimes()
+	s.Schedule.Times = strings.Split(clockList(st.cfg.Schedule.Clocks()), ", ")
 	if r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); err == nil && ok {
 		s.Schedule.LastRun = &runInfo{Started: r.Started, OK: r.OK}
 	}
@@ -200,6 +200,7 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		Token    string   `json:"token"`
 		ChatID   string   `json:"chat_id"`
 		Takeout  bool     `json:"takeout"`
+		Times    string   `json:"times"`
 		Repo     string   `json:"repo"`
 		Snapshot string   `json:"snapshot"`
 	}
@@ -273,9 +274,30 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		}
 		return nil, b.startProcess(args...)
 	case "schedule/install":
+		// With times: save them, then (re)install the job so launchd uses them.
+		if req.Times != "" {
+			if st.testDC {
+				return nil, badInput("not on Telegram's test servers: the scheduled job runs the real archive")
+			}
+			if err := saveScheduleTimes(st, req.Times); err != nil {
+				return nil, err
+			}
+			if st, err = b.load(); err != nil {
+				return nil, err
+			}
+		}
 		return nil, b.installSchedule(st)
+	case "schedule/off":
+		if st.testDC {
+			return nil, badInput("not on Telegram's test servers: the scheduled job runs the real archive")
+		}
+		j, err := b.launchd(st)
+		if err != nil {
+			return nil, err
+		}
+		return nil, j.uninstall()
 	case "schedule/check":
-		j, err := newLaunchdJob(st.paths, b.env)
+		j, err := b.launchd(st)
 		if err != nil {
 			return nil, err
 		}
@@ -307,11 +329,19 @@ func (b *serveBackend) installSchedule(st setup) error {
 	if st.testDC {
 		return badInput("not on Telegram's test servers: the scheduled job runs the real archive")
 	}
-	j, err := newLaunchdJob(st.paths, b.env)
+	j, err := b.launchd(st)
 	if err != nil {
 		return err
 	}
 	return j.install()
+}
+
+// launchd is the scheduled job; tests give one with a fake launchctl.
+func (b *serveBackend) launchd(st setup) (launchdJob, error) {
+	if b.newJob != nil {
+		return b.newJob(st)
+	}
+	return newLaunchdJob(st, b.env)
 }
 
 // saveBackupForm applies the backup card: places and password, then creates
