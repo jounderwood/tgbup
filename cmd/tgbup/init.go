@@ -349,7 +349,7 @@ func (w *wizard) setPassword(ctx context.Context) error {
 	var pass string
 	if gen {
 		pass = newPassword()
-		if err := w.confirmSaved(ctx, pass, "New backup password."); err != nil {
+		if err := w.confirmSaved(ctx, pass); err != nil {
 			return err
 		}
 	} else {
@@ -368,7 +368,7 @@ func (w *wizard) setPassword(ctx context.Context) error {
 }
 
 // confirmSaved shows the password and waits until the person has saved it.
-func (w *wizard) confirmSaved(ctx context.Context, pass, why string) error {
+func (w *wizard) confirmSaved(ctx context.Context, pass string) error {
 	copied := isTerminal(w.out) && copyToClipboard(pass) == nil
 	note := ""
 	if copied {
@@ -376,7 +376,7 @@ func (w *wizard) confirmSaved(ctx context.Context, pass, why string) error {
 		// Universal Clipboard would otherwise keep it on every Apple device.
 		defer func() { _ = copyToClipboard("") }()
 	}
-	fmt.Fprintf(w.out, "  %s\n\n  Backup password%s:\n\n      %s\n\n", why, note, pass)
+	fmt.Fprintf(w.out, "\n  Backup password%s:\n\n      %s\n\n", note, pass)
 	return w.waitSaved(ctx)
 }
 
@@ -499,9 +499,7 @@ func isDir(p string) bool {
 const defaultBackupDir = "~/TelegramBackup"
 
 // setBackup sets up restic backups: a folder on this Mac by default, plus any
-// other places; every run snapshots into all of them. The password is
-// generated, and the person must save it elsewhere once a copy leaves this
-// disk, as only then does it outlive the Mac.
+// other places; every run snapshots into all of them.
 func (w *wizard) setBackup(ctx context.Context) error {
 	st, err := w.load()
 	if err != nil {
@@ -536,21 +534,11 @@ func (w *wizard) setBackup(ctx context.Context) error {
 		return errors.New("no backup place chosen")
 	}
 
-	pass := st.secrets.ResticPassword
-	leaves, left := anyOffDisk(repos, home), anyOffDisk(current, home)
+	// The password is always chosen and saved by the person: whatever the
+	// places, a lost password makes every copy unreadable.
 	switch {
-	case pass == "":
-		pass = newPassword()
-		if leaves {
-			if err := w.confirmSaved(ctx, pass, "Backups are encrypted with this password; without it they cannot be read back."); err != nil {
-				return err
-			}
-		} else {
-			fmt.Fprintln(w.out, "  A strong password was generated for the backups and kept in secrets.env;")
-			fmt.Fprintln(w.out, "  tgbup init asks you to save it elsewhere when a backup place outside this Mac is added.")
-		}
-	case leaves && !left:
-		if err := w.confirmSaved(ctx, pass, "Backups now also leave this Mac: keep their password outside it too."); err != nil {
+	case st.secrets.ResticPassword == "":
+		if err := w.setPassword(ctx); err != nil {
 			return err
 		}
 	case len(current) > 0:
@@ -560,15 +548,6 @@ func (w *wizard) setBackup(ctx context.Context) error {
 			if err := w.setPassword(ctx); err != nil {
 				return err
 			}
-			if st, err = w.load(); err != nil {
-				return err
-			}
-			pass = st.secrets.ResticPassword
-		}
-	}
-	if pass != st.secrets.ResticPassword {
-		if err := config.SetSecrets(st.paths.Secrets, map[string]string{"RESTIC_PASSWORD": pass}); err != nil {
-			return err
 		}
 	}
 	shown := make([]string, len(repos))
@@ -645,10 +624,6 @@ func offDisk(repo, home string) bool {
 		}
 	}
 	return false
-}
-
-func anyOffDisk(repos []string, home string) bool {
-	return slices.ContainsFunc(repos, func(r string) bool { return offDisk(r, home) })
 }
 
 // splitRepos separates the first folder on this Mac from the other places.

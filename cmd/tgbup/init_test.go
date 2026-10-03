@@ -471,10 +471,10 @@ func backupConfig(t *testing.T, p config.Paths) ([]string, config.Secrets) {
 	return cfg.Backup.Repositories, sec
 }
 
-// Enter at every question: a folder on this Mac, no extra places, and no
-// password chore, as the password does not leave the Mac yet.
+// Enter at every question: a folder on this Mac, no extra places, a
+// generated password that is shown and must be confirmed as saved.
 func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
-	w, out, p := testWizard(t, "\n\n\n")
+	w, out, p := testWizard(t, "\n\n\n\nok\nsaved\n")
 	inited := false
 	w.initRepos = func(context.Context) error { inited = true; return nil }
 	if err := w.setBackup(context.Background()); err != nil {
@@ -484,38 +484,37 @@ func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
 	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup")}) || len(sec.ResticPassword) != 35 || !inited {
 		t.Fatalf("repos %q, password %d chars, inited %v\n%s", repos, len(sec.ResticPassword), inited, out)
 	}
-	if strings.Contains(out.String(), "type \"saved\"") || strings.Contains(out.String(), sec.ResticPassword) {
-		t.Errorf("asked to save or showed a password that stays on this Mac:\n%s", out)
+	if !strings.Contains(out.String(), sec.ResticPassword) || strings.Count(out.String(), `then type "saved"`) != 2 {
+		t.Errorf("the password must be shown and confirmed as saved:\n%s", out)
 	}
 }
 
-func TestBackupToAnotherPlaceAsksToSaveThePassword(t *testing.T) {
-	w, out, p := testWizard(t, "\n/Volumes/Ext/tg\n0\nsaved\n")
-	// The chosen folder is on an external disk: it outlives this Mac.
+func TestBackupPasswordIsNeverSetSilently(t *testing.T) {
+	w, _, p := testWizard(t, "\n\n\n\n") // Enter everywhere, then input ends at "saved"
+	if err := w.setBackup(context.Background()); !errors.Is(err, errStopped) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(p.Secrets); err == nil {
+		t.Fatal("a password nobody confirmed was written")
+	}
+	if _, err := os.Stat(p.Config); err == nil {
+		t.Fatal("backup places written before the password was settled")
+	}
+}
+
+func TestBackupChangeKeepsThePasswordAndAddsPlaces(t *testing.T) {
+	w, out, p := testWizard(t, "\n\n\n\nsaved\n")
 	if err := w.setBackup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	repos, sec := backupConfig(t, p)
-	if !slices.Equal(repos, []string{"/Volumes/Ext/tg"}) || !strings.Contains(out.String(), sec.ResticPassword) {
-		t.Fatalf("repos %q\n%s", repos, out)
-	}
-
-	// Later adding Google Drive to a Mac-only setup asks to save the existing password.
-	w, out, p = testWizard(t, "\n\n\nsaved\n")
-	if err := w.setBackup(context.Background()); err != nil { // first: folder on this Mac only
-		t.Fatal(err)
-	}
-	_, sec = backupConfig(t, p)
-	w.in = newLineReader(strings.NewReader("y\n\n1\nsaved\n"), nil) // change settings, keep folder, add Google Drive
+	_, sec := backupConfig(t, p)
+	w.in = newLineReader(strings.NewReader("y\n\n1\n\n"), nil) // change settings, keep folder, add Google Drive, keep password
 	if err := runStep(context.Background(), w, initStep{name: "Backups", check: w.checkStorage, change: "Change?", run: w.setBackup}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, out)
 	}
 	repos, sec2 := backupConfig(t, p)
-	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup"}) {
-		t.Errorf("repos = %q", repos)
-	}
-	if sec2.ResticPassword != sec.ResticPassword || !strings.Contains(out.String(), "also leave this Mac") {
-		t.Errorf("password changed or not shown for saving:\n%s", out)
+	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup"}) || sec2.ResticPassword != sec.ResticPassword {
+		t.Errorf("repos = %q, password kept %v", repos, sec2.ResticPassword == sec.ResticPassword)
 	}
 }
 
