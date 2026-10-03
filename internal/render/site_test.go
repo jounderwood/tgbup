@@ -65,13 +65,21 @@ func read(t *testing.T, p string) string {
 func TestRenderSite(t *testing.T) {
 	db, dir := siteFixture(t)
 	ctx := context.Background()
-	opts := Options{OutDir: dir, Track: true, Loc: time.UTC}
+	now := time.Date(2026, 10, 4, 6, 31, 0, 0, time.UTC)
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC, Now: func() time.Time { return now }}
 	res, err := Render(ctx, db, opts)
 	if err != nil || len(res.Errors) != 0 {
 		t.Fatalf("render = %+v %v", res, err)
 	}
 	if res.Pages != 4 {
 		t.Fatalf("pages = %d, want 4", res.Pages)
+	}
+	// When the archive was drawn comes from one file, so unchanged pages stay as they are.
+	if u := read(t, filepath.Join(dir, "html/assets/updated.js")); !strings.Contains(u, `"2026-10-04T06:31:00Z"`) {
+		t.Errorf("updated.js = %s", u)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "html/assets/local.js")); err != nil {
+		t.Error(err)
 	}
 	for _, p := range []string{
 		"html/index.html", "html/assets/style.css", "html/assets/search.js",

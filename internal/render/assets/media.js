@@ -115,15 +115,22 @@ window.tgbupMedia = {
     } else {
       a.append(Object.assign(document.createElement('span'), { className: 'play', textContent: '▶ ' + it.k }));
     }
-    div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'));
+    div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'), this.local(it.f));
     return div;
+  },
+
+  // local marks a file on this Mac with its path (see local.js).
+  local(href) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'local', textContent: '💾' });
+    return window.tgbupLocal ? window.tgbupLocal(b, href) : b;
   },
 
   row(it) {
     const div = document.createElement('div');
     div.className = 'row-item';
     div.append(Object.assign(document.createElement('span'), { className: 'kind', textContent: it.k }));
-    div.append(it.f ? this.link(it.f, it.n || it.f, 'name') : Object.assign(document.createElement('span'), { className: 'name', textContent: it.n || it.k }));
+    div.append(it.f ? this.link(it.f, it.n || it.f, 'name') : Object.assign(document.createElement('span'), { className: 'name', textContent: (it.x ? '⏳ ' : '') + (it.n || it.k) }));
+    if (it.f) div.append(this.local(it.f));
     const meta = [it.s, it.x, it.t, it.d].filter(Boolean).join(' · ');
     div.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: meta }));
     div.append(this.link(it.m, 'message', 'when'));

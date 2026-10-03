@@ -5,10 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <link rel="stylesheet" href="{{.Root}}assets/style.css">
+<script src="{{.Root}}assets/updated.js" defer></script>
+<script src="{{.Root}}assets/local.js" defer></script>
 <script src="{{.Root}}assets/page.js" defer></script>
 </head>
 <body>
-<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}} · <a href="{{.Root}}media.html#chat={{.ChatID}}{{with .Topic}}&topic={{.}}{{end}}">media</a></nav>
+<nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}} · <a href="{{.Root}}media.html#chat={{.ChatID}}{{with .Topic}}&topic={{.}}{{end}}">media</a> <span class="asof"></span></nav>
 {{template "pager" .}}
 <main>
 {{- range .Days}}
@@ -33,7 +35,7 @@
 {{- end}}
 {{- with .Media}}
 {{- if not .Href}}
-<div class="missing">{{.Note}}</div>
+<div class="missing" title="{{.State}}">{{if eq .State "failed"}}⚠️{{else if eq .State "skipped"}}⛔{{else}}⏳{{end}} {{.Note}}</div>
 {{- else if or (eq .Kind "photo") (eq .Kind "sticker")}}
 <a class="media" href="{{.Href}}"><img loading="lazy" src="{{.Href}}" alt="{{.Name}}"></a>
 {{- else if or (eq .Kind "video") (eq .Kind "video_note") (eq .Kind "animation")}}
@@ -43,6 +45,7 @@
 {{- else}}
 <a class="file" href="{{.Href}}">📄 {{.Name}}</a> <span class="size">{{.Size}}</span>
 {{- end}}
+{{- if .Href}} <button type="button" class="local" data-href="{{.Href}}">💾</button>{{end}}
 {{- end}}
 {{- if .HTML}}
 <div class="text">{{.HTML}}</div>

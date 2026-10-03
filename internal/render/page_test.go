@@ -85,8 +85,10 @@ func TestPageHTML(t *testing.T) {
 		`href="../../../media/document/9.pdf"`, "lease 2026.pdf", "2.0 MB",
 		`<video controls preload="none" src="../../../media/video/8.mp4">`,
 		`<audio controls preload="none" src="../../../media/voice/9.ogg">`,
-		"video not downloaded: larger than max_file_size",
-		"photo not downloaded yet",
+		"⛔ video not downloaded: larger than max_file_size",
+		"⏳ photo not downloaded yet",
+		`<button type="button" class="local" data-href="../../../media/document/9.pdf">💾</button>`,
+		`<script src="../../assets/updated.js" defer></script>`, `<span class="asof"></span>`,
 		"created topic «Recipes»", "pinned a message",
 		"👍 3", "★ 2",
 	} {

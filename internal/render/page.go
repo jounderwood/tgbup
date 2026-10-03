@@ -77,6 +77,8 @@ type PageMedia struct {
 	Name string
 	Size string
 	Note string // why the file is not there
+	// State is why it is not there: pending, skipped or failed.
+	State string
 }
 
 type pageInput struct {
@@ -268,11 +270,11 @@ func media(m *store.RenderMedia, archive string) *PageMedia {
 	case m.Status == "done" && m.LocalPath != "":
 		pm.Href = archive + escapePath(m.LocalPath)
 	case m.Status == "skipped":
-		pm.Note = label + " not downloaded: " + orDefault(m.Error, "skipped")
+		pm.Note, pm.State = label+" not downloaded: "+orDefault(m.Error, "skipped"), "skipped"
 	case m.Status == "failed":
-		pm.Note = label + " download failed: " + orDefault(m.Error, "unknown error")
+		pm.Note, pm.State = label+" download failed: "+orDefault(m.Error, "unknown error"), "failed"
 	default:
-		pm.Note = label + " not downloaded yet"
+		pm.Note, pm.State = label+" not downloaded yet", "pending"
 	}
 	return pm
 }
