@@ -60,18 +60,14 @@ func TestWebSetupKeysArchiveAndBackupPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	pw := res.(map[string]string)["password"]
-	// A generated password is kept only once the person said it is saved.
-	body := `{"enabled":true,"local":"~/TelegramBackup","password":"` + pw + `","password_saved":false}`
-	if _, err := b.SetupAction(ctx, "backup", []byte(body)); err == nil || !strings.Contains(err.Error(), "tick the box") {
-		t.Fatalf("unsaved password: %v", err)
+	// Generating only shows a password; it is kept when the form with it is saved.
+	if sec := readSecrets(t, home); strings.Contains(sec, pw) {
+		t.Fatal("generated password written before the form was saved")
 	}
-	if _, err := os.Stat(filepath.Join(home, ".config", "tgbup", "secrets.env")); err != nil {
-		t.Fatal(err)
+	if _, err := b.SetupAction(ctx, "backup", []byte(`{"enabled":true,"local":"~/TelegramBackup"}`)); err == nil || !strings.Contains(err.Error(), "set the backup password") {
+		t.Fatalf("backup without a password: %v", err)
 	}
-	if sec := readSecrets(t, home); sec != "" && strings.Contains(sec, pw) {
-		t.Fatal("password written before it was confirmed")
-	}
-	if _, err := b.SetupAction(ctx, "backup", []byte(`{"enabled":true,"local":"~/Arch/inside","password":"`+pw+`","password_saved":true}`)); !errors.Is(err, serve.ErrBadRequest) {
+	if _, err := b.SetupAction(ctx, "backup", []byte(`{"enabled":true,"local":"~/Arch/inside","password":"`+pw+`"}`)); !errors.Is(err, serve.ErrBadRequest) {
 		t.Fatalf("backup inside the archive: %v", err)
 	}
 	if _, err := b.SetupAction(ctx, "nope", nil); !errors.Is(err, serve.ErrBadRequest) {

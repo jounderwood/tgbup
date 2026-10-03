@@ -153,7 +153,7 @@ const forms = {
     const b = state.backup;
     const d = draft.backup || (draft.backup = {
       enabled: true, local: b.local || b.default_dir, extras: new Set(b.extras || []), custom: "",
-      password: "", saved: false, own: false, replace: !b.has_password,
+      password: "", own: false, replace: !b.has_password,
     });
     const f = el("div", { class: "form" });
     f.append(el("p", { class: "hint" }, "Backups keep earlier versions of the archive (encrypted restic snapshots after every run). Every place gets each snapshot."),
@@ -179,22 +179,21 @@ const forms = {
     } else if (d.own) {
       const p1 = el("input", { type: "password", autocomplete: "new-password", "aria-label": "Password" });
       const p2 = el("input", { type: "password", autocomplete: "new-password", "aria-label": "Password again" });
-      p1.addEventListener("input", () => { d.password = p1.value === p2.value ? p1.value : ""; d.saved = true; });
-      p2.addEventListener("input", () => { d.password = p1.value === p2.value ? p1.value : ""; d.saved = true; });
+      p1.addEventListener("input", () => { d.password = p1.value === p2.value ? p1.value : ""; });
+      p2.addEventListener("input", () => { d.password = p1.value === p2.value ? p1.value : ""; });
       pw.append(el("label", {}, "Your password (at least 12 characters; for existing repositories, the one they were made with)", p1),
         el("label", {}, "Once more", p2),
         el("button", { type: "button", class: "link", onclick: () => { d.own = false; d.password = ""; render(); } }, "generate one instead"));
     } else if (d.password) {
-      pw.append(el("p", { class: "hint" }, "Backups are encrypted with this password. Without it they cannot be read back:"),
+      pw.append(el("p", { class: "hint" }, "Backups are encrypted with this password. Without it they cannot be read back, so keep a copy outside this Mac:"),
         el("div", { class: "row" }, el("div", { class: "secret" }, d.password),
-          el("button", { type: "button", class: "secondary", onclick: () => navigator.clipboard.writeText(d.password).then(() => toast("Copied"), () => toast("Select it and copy")) }, "Copy")),
-        el("label", { class: "check" }, el("input", { type: "checkbox", checked: d.saved, onchange: (e) => { d.saved = e.target.checked; render(); } }),
-          "I saved it in my password manager (e.g. 1Password, item “tgbup backups”)"));
+          el("button", { type: "button", class: "secondary", onclick: () => navigator.clipboard.writeText(d.password).then(() => toast("Copied"), () => toast("Select it and copy")) }, "Copy"),
+          el("button", { type: "button", class: "link", onclick: () => { d.password = ""; render(); } }, "another one")));
     } else {
       pw.append(el("div", { class: "row" },
         el("button", { type: "button", onclick: async () => {
           const res = await action(f, "password/new");
-          if (res) { d.password = res.password; d.saved = false; render(); }
+          if (res) { d.password = res.password; render(); }
         } }, "Generate a password"),
         el("button", { type: "button", class: "secondary", onclick: () => { d.own = true; render(); } }, "Use my own (or the existing one)")));
     }
@@ -204,7 +203,7 @@ const forms = {
       if (d.custom.trim()) extras.push(d.custom.trim());
       const needsPw = !b.has_password || d.replace;
       if (needsPw && !d.password) { f.querySelector(".err") || f.append(el("div", { class: "err" })); f.querySelector(".err").textContent = d.own ? "Type the same password twice" : "Generate a password or use your own"; return; }
-      const res = await action(f, "backup", { enabled: true, local: d.local, extras, password: needsPw ? d.password : "", password_saved: d.saved },
+      const res = await action(f, "backup", { enabled: true, local: d.local, extras, password: needsPw ? d.password : "" },
         "Backups are set up");
       if (res) {
         delete draft.backup;
@@ -309,7 +308,7 @@ function restoreForm(f, dir) {
   // A list found with other inputs must not be restored from.
   if (d.repo === "other") f.append(el("input", { type: "text", placeholder: "folder or restic repository", value: d.custom, oninput: (e) => { d.custom = e.target.value; d.snapshots = null; } }));
   const pw = el("input", { type: "password", autocomplete: "current-password", value: d.password, oninput: (e) => { d.password = e.target.value; d.snapshots = null; } });
-  f.append(el("label", {}, "Backup password (from your password manager)", pw));
+  f.append(el("label", {}, "Backup password", pw));
   const repo = () => (d.repo === "other" ? d.custom.trim() : d.repo);
   f.append(el("div", {}, el("button", { type: "button", onclick: async () => {
     const res = await action(f, "restore/snapshots", { repo: repo(), password: d.password });

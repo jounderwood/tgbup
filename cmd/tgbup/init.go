@@ -341,35 +341,33 @@ func (w *wizard) chooseChats(ctx context.Context) error {
 	return nil
 }
 
-// choosePassword gets a backup password the person has saved elsewhere:
-// generated and shown, or typed.
+// choosePassword gets a backup password the person has seen: generated and
+// shown, or typed. Keeping it is up to them.
 func (w *wizard) choosePassword(ctx context.Context) (string, error) {
+	if w.assumeYes {
+		return "", errors.New("the backup password needs a person to see or type it")
+	}
 	fmt.Fprintln(w.out, `  Backups are encrypted with a password. Without it they cannot be read back,
-  so it must also be kept outside this Mac, in a password manager.`)
+  so keep a copy outside this Mac.`)
 	fmt.Fprintln(w.out, "  Restoring, or the repositories already exist? Answer n and type the password they were made with.")
 	gen, err := w.yes(ctx, "  Generate a new strong password?", true)
 	if err != nil {
 		return "", err
 	}
-	var pass string
-	if gen {
-		pass = newPassword()
-		if err := w.confirmSaved(ctx, pass); err != nil {
-			return "", err
-		}
-	} else {
-		if pass, err = w.ownPassword(ctx); err != nil {
-			return "", err
-		}
-		if err := w.waitSaved(ctx); err != nil {
-			return "", err
+	if !gen {
+		return w.ownPassword(ctx)
+	}
+	for {
+		pass := newPassword()
+		ok, err := w.showPassword(ctx, pass)
+		if err != nil || ok {
+			return pass, err
 		}
 	}
-	return pass, nil
 }
 
-// confirmSaved shows the password and waits until the person has saved it.
-func (w *wizard) confirmSaved(ctx context.Context, pass string) error {
+// showPassword shows a generated password and asks whether to use it.
+func (w *wizard) showPassword(ctx context.Context, pass string) (bool, error) {
 	copied := isTerminal(w.out) && copyToClipboard(pass) == nil
 	note := ""
 	if copied {
@@ -378,19 +376,7 @@ func (w *wizard) confirmSaved(ctx context.Context, pass string) error {
 		defer func() { _ = copyToClipboard("") }()
 	}
 	fmt.Fprintf(w.out, "\n  Backup password%s:\n\n      %s\n\n", note, pass)
-	return w.waitSaved(ctx)
-}
-
-func (w *wizard) waitSaved(ctx context.Context) error {
-	for {
-		ans, ok := w.ask(ctx, `  Save it in your password manager (e.g. 1Password, item "tgbup backups"), then type "saved": `)
-		if !ok {
-			return errStopped
-		}
-		if a := strings.ToLower(ans); a == "saved" || a == "сохранил" || a == "сохранила" {
-			return nil
-		}
-	}
+	return w.yes(ctx, "  Use this password? (n: another one)", true)
 }
 
 // readSecret reads a line without echo on a terminal.

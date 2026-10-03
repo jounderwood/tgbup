@@ -189,7 +189,6 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		Enabled       bool     `json:"enabled"`
 		Local         string   `json:"local"`
 		Extras        []string `json:"extras"`
-		PasswordSaved bool     `json:"password_saved"`
 		Token         string   `json:"token"`
 		ChatID        string   `json:"chat_id"`
 		Takeout       bool     `json:"takeout"`
@@ -238,7 +237,7 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 	case "password/new":
 		return map[string]string{"password": newPassword()}, nil
 	case "backup":
-		return b.saveBackupForm(ctx, st, req.Enabled, req.Local, req.Extras, req.Password, req.PasswordSaved)
+		return b.saveBackupForm(ctx, st, req.Enabled, req.Local, req.Extras, req.Password)
 	case "bot/check":
 		name, err := (notify.Bot{Token: strings.TrimSpace(req.Token)}).Me(ctx)
 		if err != nil {
@@ -308,9 +307,9 @@ func (b *serveBackend) installSchedule(st setup) error {
 }
 
 // saveBackupForm applies the backup card: places and password, then creates
-// or checks the repositories. A password the page generated is kept only
-// once the person said it is saved.
-func (b *serveBackend) saveBackupForm(ctx context.Context, st setup, enabled bool, local string, extras []string, password string, saved bool) (any, error) {
+// or checks the repositories. The password comes from the form: shown on the
+// page when generated, typed twice otherwise.
+func (b *serveBackend) saveBackupForm(ctx context.Context, st setup, enabled bool, local string, extras []string, password string) (any, error) {
 	if !enabled {
 		return nil, disableBackup(st)
 	}
@@ -326,9 +325,6 @@ func (b *serveBackend) saveBackupForm(ctx context.Context, st setup, enabled boo
 		if e = strings.TrimSpace(e); e != "" {
 			repos = append(repos, expandTilde(e, st.paths.Home))
 		}
-	}
-	if password != "" && !saved {
-		return nil, badInput("save the password in your password manager and tick the box first")
 	}
 	if err := saveBackup(ctx, st, repos, password); err != nil {
 		return nil, err

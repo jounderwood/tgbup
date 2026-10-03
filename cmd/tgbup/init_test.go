@@ -105,8 +105,8 @@ func TestSetKeysValidatesAndSaves(t *testing.T) {
 	}
 }
 
-func TestChoosePasswordGeneratesAndWaitsForSaved(t *testing.T) {
-	w, out, _ := testWizard(t, "\nok\nsaved\n")
+func TestChoosePasswordShowsAndAsks(t *testing.T) {
+	w, out, _ := testWizard(t, "\nn\n\n") // generate, refuse the first, take the second
 	pass, err := w.choosePassword(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -114,8 +114,16 @@ func TestChoosePasswordGeneratesAndWaitsForSaved(t *testing.T) {
 	if !strings.Contains(out.String(), pass) || len(pass) != 35 {
 		t.Fatalf("password %q not shown or wrong length:\n%s", pass, out.String())
 	}
-	if strings.Count(out.String(), "then type \"saved\"") != 2 {
-		t.Errorf("\"ok\" accepted as saved:\n%s", out.String())
+	if n := strings.Count(out.String(), "Use this password?"); n != 2 {
+		t.Errorf("asked %d times:\n%s", n, out.String())
+	}
+}
+
+func TestChoosePasswordNeedsAPerson(t *testing.T) {
+	w, _, _ := testWizard(t, "")
+	w.assumeYes = true
+	if _, err := w.choosePassword(context.Background()); err == nil {
+		t.Fatal("a password was chosen with nobody to see it")
 	}
 }
 
@@ -127,7 +135,7 @@ func TestChoosePasswordStopsWhenUnconfirmed(t *testing.T) {
 }
 
 func TestChoosePasswordOwn(t *testing.T) {
-	w, out, _ := testWizard(t, "n\nshort\nlong enough pass\nother one here\nlong enough pass\nlong enough pass\nsaved\n")
+	w, out, _ := testWizard(t, "n\nshort\nlong enough pass\nother one here\nlong enough pass\nlong enough pass\n")
 	pass, err := w.choosePassword(context.Background())
 	if err != nil || pass != "long enough pass" {
 		t.Fatalf("password = %q, %v", pass, err)
@@ -473,9 +481,9 @@ func backupConfig(t *testing.T, p config.Paths) ([]string, config.Secrets) {
 }
 
 // Enter at every question: a folder on this Mac, no extra places, a
-// generated password that is shown and must be confirmed as saved.
+// generated password that is shown and accepted.
 func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
-	w, out, p := testWizard(t, "\n\n\n\nok\nsaved\n")
+	w, out, p := testWizard(t, "\n\n\n\n\n")
 	inited := false
 	w.initRepos = func(context.Context) error { inited = true; return nil }
 	if err := w.setBackup(context.Background()); err != nil {
@@ -485,13 +493,13 @@ func TestBackupDefaultsToAFolderOnThisMac(t *testing.T) {
 	if !slices.Equal(repos, []string{filepath.Join(p.Home, "TelegramBackup")}) || len(sec.ResticPassword) != 35 || !inited {
 		t.Fatalf("repos %q, password %d chars, inited %v\n%s", repos, len(sec.ResticPassword), inited, out)
 	}
-	if !strings.Contains(out.String(), sec.ResticPassword) || strings.Count(out.String(), `then type "saved"`) != 2 {
-		t.Errorf("the password must be shown and confirmed as saved:\n%s", out)
+	if !strings.Contains(out.String(), sec.ResticPassword) || !strings.Contains(out.String(), "Use this password?") {
+		t.Errorf("the password must be shown and accepted:\n%s", out)
 	}
 }
 
 func TestBackupPasswordIsNeverSetSilently(t *testing.T) {
-	w, _, p := testWizard(t, "\n\n\n\n") // Enter everywhere, then input ends at "saved"
+	w, _, p := testWizard(t, "\n\n\n\n") // Enter everywhere, then input ends at "Use this password?"
 	if err := w.setBackup(context.Background()); !errors.Is(err, errStopped) {
 		t.Fatalf("err = %v", err)
 	}
@@ -504,7 +512,7 @@ func TestBackupPasswordIsNeverSetSilently(t *testing.T) {
 }
 
 func TestBackupChangeKeepsThePasswordAndAddsPlaces(t *testing.T) {
-	w, out, p := testWizard(t, "\n\n\n\nsaved\n")
+	w, out, p := testWizard(t, "\n\n\n\n\n")
 	if err := w.setBackup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +547,7 @@ func TestBackupCanBeDeclinedAndRejectsFoldersInTheArchive(t *testing.T) {
 }
 
 func TestBackupsCanBeTurnedOff(t *testing.T) {
-	w, _, p := testWizard(t, "\n\n\n\nsaved\n")
+	w, _, p := testWizard(t, "\n\n\n\n\n")
 	if err := w.setBackup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +563,7 @@ func TestBackupsCanBeTurnedOff(t *testing.T) {
 // A config restored on a new Mac lists the places but secrets.env has no
 // password: the step is not done, and the old password can be typed in.
 func TestRestoredConfigAsksForTheExistingPassword(t *testing.T) {
-	w, out, p := testWizard(t, "\n\n\nn\nthe old password 1\nthe old password 1\nsaved\n")
+	w, out, p := testWizard(t, "\n\n\nn\nthe old password 1\nthe old password 1\n")
 	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{"~/TelegramBackup"}); err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +579,7 @@ func TestRestoredConfigAsksForTheExistingPassword(t *testing.T) {
 }
 
 func TestBackupFolderNotCreatedIsNotDone(t *testing.T) {
-	w, _, p := testWizard(t, "\n\n\n\nsaved\n")
+	w, _, p := testWizard(t, "\n\n\n\n\n")
 	if err := w.setBackup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
