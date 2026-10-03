@@ -174,7 +174,7 @@ const forms = {
     f.append(el("div", { class: "choices" }, el("span", { class: "hint" }, "Also back up to:"),
       ...b.choices.filter((c) => c.repo).map((c) => el("label", { class: "check" },
         el("input", { type: "checkbox", checked: d.extras.has(c.repo), onchange: (e) => { e.target.checked ? d.extras.add(c.repo) : d.extras.delete(c.repo); } }), c.label)),
-      el("input", { type: "text", placeholder: "another folder or restic repository (sftp:, s3:, rclone:…)", value: d.custom, oninput: (e) => { d.custom = e.target.value; } })));
+      el("input", { type: "text", autocomplete: "off", spellcheck: false, placeholder: "another folder or restic repository (sftp:, s3:, rclone:…)", value: d.custom, oninput: (e) => { d.custom = e.target.value; } })));
 
     const pw = el("div", { class: "form" });
     if (b.has_password && !d.replace) {

@@ -107,12 +107,41 @@ func checkPassword(p string) error {
 	return nil
 }
 
+// resticSchemes are the repository addresses restic understands besides a folder.
+var resticSchemes = []string{"sftp:", "rest:", "s3:", "azure:", "gs:", "b2:", "swift:", "rclone:"}
+
+// errNotAPlace is deliberately without the value: what was typed may be the
+// password, pasted into the wrong field.
+var errNotAPlace = badInput("a backup place is a full path (/… or ~/…) or a restic repository (sftp:, s3:, rclone:…)")
+
+// checkRepo accepts a place restic finds from any folder. Anything else would
+// be a folder relative to wherever tgbup runs, created there by restic.
+func checkRepo(repo, password string) error {
+	if repo == "" || password != "" && strings.Contains(repo, password) {
+		return errNotAPlace
+	}
+	if filepath.IsAbs(repo) {
+		return nil
+	}
+	for _, s := range resticSchemes {
+		if len(repo) > len(s) && strings.HasPrefix(repo, s) {
+			return nil
+		}
+	}
+	return errNotAPlace
+}
+
 // saveBackup writes the backup places and, when given, a new password. A
 // password replacing one in use must open the repositories that already
 // exist: a typo would otherwise replace the working password.
 func saveBackup(ctx context.Context, st setup, repos []string, password string) error {
 	if len(repos) == 0 {
 		return badInput("choose at least one backup place")
+	}
+	for _, r := range repos {
+		if err := errors.Join(checkRepo(r, password), checkRepo(r, st.secrets.ResticPassword)); err != nil {
+			return errNotAPlace
+		}
 	}
 	if password == "" && st.secrets.ResticPassword == "" {
 		return badInput("set the backup password")

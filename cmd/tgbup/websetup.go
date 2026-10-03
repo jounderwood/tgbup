@@ -130,7 +130,15 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 	if n, err := archivedMessages(ctx, st.cfg.ArchiveDir); err == nil {
 		s.Archive.HasMessages = n > 0
 	}
-	local, extras := splitRepos(st.cfg.Backup.Repositories, home)
+	// A place that is not one (a password pasted by mistake) is left out:
+	// saving the form drops it.
+	var places []string
+	for _, r := range st.cfg.Backup.Repositories {
+		if checkRepo(r, st.secrets.ResticPassword) == nil {
+			places = append(places, r)
+		}
+	}
+	local, extras := splitRepos(places, home)
 	s.Backup = backupForm{Local: tildePath(local, home), DefaultDir: backupDirDefault(st), HasPassword: st.secrets.ResticPassword != "",
 		Choices: storageChoices(home, "/Volumes")}
 	for _, e := range extras {

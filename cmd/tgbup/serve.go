@@ -168,7 +168,11 @@ func (b *serveBackend) Status(ctx context.Context) (serve.Status, error) {
 
 func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Status) error {
 	for _, r := range st.cfg.Backup.Repositories {
-		s.Backups = append(s.Backups, serve.Backup{Repo: tildePath(r, st.paths.Home)})
+		shown := tildePath(r, st.paths.Home)
+		if checkRepo(r, st.secrets.ResticPassword) != nil {
+			shown = "a place that is not a full path (fix it in Setup → Backups)" // may be a pasted password
+		}
+		s.Backups = append(s.Backups, serve.Backup{Repo: shown})
 	}
 	path := filepath.Join(st.cfg.ArchiveDir, "archive.sqlite")
 	if _, err := os.Stat(path); err != nil {

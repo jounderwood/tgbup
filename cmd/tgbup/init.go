@@ -476,6 +476,9 @@ func (w *wizard) checkStorage(context.Context) (string, bool, error) {
 	}
 	var names []string
 	for _, r := range st.cfg.Backup.Repositories {
+		if checkRepo(r, st.secrets.ResticPassword) != nil {
+			return "one backup place is not a full path or repository address (a password pasted by mistake?): change it", false, nil
+		}
 		// A folder repository shows whether it was created; remote ones are
 		// checked when used.
 		if filepath.IsAbs(r) && !strings.HasPrefix(r, "/Volumes/") && !isFile(filepath.Join(r, "config")) {
@@ -715,6 +718,7 @@ func (w *wizard) chooseExtras(ctx context.Context, home string, current []string
 	if len(current) > 0 {
 		hint = "keep the current ones"
 	}
+choose:
 	for {
 		ans, ok := w.ask(ctx, fmt.Sprintf("  Choose, e.g. 1,2 [Enter = %s, 0 = none]: ", hint))
 		if !ok {
@@ -742,6 +746,10 @@ func (w *wizard) chooseExtras(ctx context.Context, home string, current []string
 					continue
 				}
 				repo = expandTilde(repo, home)
+				if err := checkRepo(repo, ""); err != nil {
+					fmt.Fprintf(w.out, "  %v\n", err)
+					continue choose
+				}
 			}
 			repos = append(repos, repo)
 		}

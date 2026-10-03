@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -590,5 +591,70 @@ func TestBackupFolderNotCreatedIsNotDone(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(p.Home, "TelegramBackup", "config"), nil, 0o600)
 	if _, done, _ := w.checkStorage(context.Background()); !done {
 		t.Fatal("created repository not seen")
+	}
+}
+
+func TestCheckRepo(t *testing.T) {
+	const pw = "abcde-fghij-klmno-pqrst-uvwxy-z0123"
+	for repo, ok := range map[string]bool{
+		"/Users/me/TelegramBackup": true, "sftp:nas:/backup": true, "rclone:gdrive:TelegramBackup": true,
+		"s3:s3.amazonaws.com/bucket": true,
+		pw:                           false, "TelegramBackup": false, "./backup": false, "": false, "sftp:": false,
+		"/Users/me/" + pw: false, // a password pasted after a path
+	} {
+		err := checkRepo(repo, pw)
+		if (err == nil) != ok {
+			t.Errorf("checkRepo(%q) = %v", repo, err)
+		}
+		if err != nil && strings.Contains(err.Error(), pw) {
+			t.Errorf("the error shows the input: %v", err)
+		}
+	}
+}
+
+// A password pasted into "Folder or repository" (it is on the clipboard) is
+// refused, and the question comes again.
+func TestPastedPasswordIsNotABackupPlace(t *testing.T) {
+	w, out, p := testWizard(t, "")
+	other := 0
+	for i, c := range storageChoices(p.Home, "/Volumes") {
+		if c.Repo == "" {
+			other = i + 1
+		}
+	}
+	if other == 0 {
+		t.Fatal("no choice for another place")
+	}
+	n := strconv.Itoa(other)
+	w.in = newLineReader(strings.NewReader(n+"\nabcde-fghij-klmno-pqrst-uvwxy-z0123\n"+n+"\n~/Elsewhere\n"), nil)
+	repos, err := w.chooseExtras(context.Background(), p.Home, nil)
+	if err != nil || !slices.Equal(repos, []string{filepath.Join(p.Home, "Elsewhere")}) {
+		t.Fatalf("repos = %q, %v\n%s", repos, err, out)
+	}
+	if !strings.Contains(out.String(), "a backup place is a full path") {
+		t.Errorf("no explanation:\n%s", out)
+	}
+}
+
+func TestBackupPlaceThatIsThePasswordIsRefused(t *testing.T) {
+	w, _, p := testWizard(t, "")
+	st := setup{paths: p}
+	const pw = "abcde-fghij-klmno-pqrst-uvwxy-z0123"
+	if err := saveBackup(context.Background(), st, []string{filepath.Join(p.Home, "TelegramBackup"), pw}, pw); !errors.Is(err, errNotAPlace) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(p.Secrets); err == nil {
+		t.Error("written although a place was refused")
+	}
+	// One already in the config: the step is not done, and it does not show it.
+	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{pw}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetSecrets(p.Secrets, map[string]string{"RESTIC_PASSWORD": pw}); err != nil {
+		t.Fatal(err)
+	}
+	status, done, err := w.checkStorage(context.Background())
+	if err != nil || done || strings.Contains(status, pw) {
+		t.Fatalf("status %q done %v err %v", status, done, err)
 	}
 }

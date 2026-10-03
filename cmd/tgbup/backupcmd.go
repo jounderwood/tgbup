@@ -33,6 +33,11 @@ func backupOptions(ctx context.Context, st setup) (backup.Options, error) {
 	if st.secrets.ResticPassword == "" {
 		return backup.Options{}, errors.New("RESTIC_PASSWORD is not set in secrets.env: without it the backups cannot be read back")
 	}
+	for _, r := range b.Repositories {
+		if checkRepo(r, st.secrets.ResticPassword) != nil {
+			return backup.Options{}, fmt.Errorf("%w; one in the config is not: remove it in tgbup init or on the Setup page (Backups → change)", errNotAPlace)
+		}
+	}
 	o := backup.Options{
 		Repos: b.Repositories, Retention: b.Retention, PruneEvery: b.PruneEvery.D(), CheckEvery: b.CheckEvery.D(),
 		CheckSubset: b.CheckReadSubset, Password: st.secrets.ResticPassword, RcloneConfigPass: st.secrets.RcloneConfigPass,
