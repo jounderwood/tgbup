@@ -37,12 +37,14 @@ type setupDialog struct {
 	cfgPath  string
 	rowStats func([]tgclient.Dialog) map[int64]rowInfo
 	details  func([]stats.Item) []stats.ChatStats
+	// topicList lists a forum's topics with one request, uncounted.
+	topicList func(tgclient.Dialog) ([]stats.TopicStats, error)
 	// preview renders the config file that would be written.
 	preview func(config.Selected) (string, error)
 
 	rows map[int64]rowInfo
-	// last holds the stats shown at confirmation; their topic titles go into config comments.
-	last []stats.ChatStats
+	// topics are the forums' topics seen so far; their titles go into config comments.
+	topics map[int64][]stats.TopicStats
 }
 
 // lineReader reads input a line at a time, only when asked: a reader running
@@ -110,7 +112,7 @@ func (s *setupDialog) ask(prompt string) (string, bool) {
 // russianLayout maps keys typed in the Russian layout to the commands on the
 // same keys, so switching layout is not needed.
 var russianLayout = map[string]string{
-	"б": "<", "ю": ">", "ф": "a", "т": "n", "Ф": "A", "Т": "N", "е": "t", "з": "p", "ы": "s", "в": "d", "й": "q",
+	"б": "<", "ю": ">", "ф": "a", "т": "n", "Ф": "A", "Т": "N", "е": "t", "з": "p", "ы": "s", "в": "d", "й": "q", "с": "c",
 }
 
 // normalizeCommand accepts Russian-layout commands and "p2"/"t3" without a space.
@@ -223,6 +225,8 @@ func (s *setupDialog) editList(title string, chats []tgclient.Dialog) bool {
 			s.st.Chats.SetAll(chats[from:to], line == "a")
 		case line == "A" || line == "N":
 			s.st.Chats.SetAll(chats, line == "A")
+		case line == "c":
+			s.loadRows(chats[from:to])
 		case cmd == "t":
 			n, err := strconv.Atoi(strings.TrimSpace(arg))
 			if err != nil || n < 1 || n > len(chats) {
@@ -248,7 +252,6 @@ func (s *setupDialog) editList(title string, chats []tgclient.Dialog) bool {
 }
 
 func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pages int, visible []tgclient.Dialog) {
-	s.loadRows(visible)
 	fmt.Fprintf(s.out, "\n%s · page %d/%d · %s · %d selected\n", title, page+1, pages, plural(len(chats), "chat"), s.st.Chats.Count(chats))
 	if len(chats) == 0 {
 		fmt.Fprintln(s.out, "  (empty)")
@@ -262,20 +265,23 @@ func (s *setupDialog) printPage(title string, chats []tgclient.Dialog, page, pag
 		if s.st.Chats[c.ID] {
 			mark = "[x]"
 		}
-		r := s.rows[c.ID]
+		r, seen := s.rows[c.ID]
 		msgs, topics := "~"+groupDigits(r.Msgs), ""
-		if r.Err != nil {
+		switch {
+		case !seen:
+			msgs = "—" // counted on request: c
+		case r.Err != nil:
 			msgs = "?"
-		} else if c.Type == store.ChatForum {
+		case c.Type == store.ChatForum:
 			topics = strconv.Itoa(r.Topics)
-			if n := len(s.st.ExcludedFor(c.ID)); n > 0 {
-				topics += fmt.Sprintf(" (%d excl)", n)
-			}
+		}
+		if n := len(s.st.ExcludedFor(c.ID)); n > 0 && c.Type == store.ChatForum {
+			topics = strings.TrimSpace(topics + fmt.Sprintf(" (%d excl)", n))
 		}
 		line := fmt.Sprintf("  %4d  %s  %s  %-10s  %-8s  %s", page*pageSize+i+1, mark, padRight(cleanTitle(c.Title, titleWidth), titleWidth), c.Type, msgs, topics)
 		fmt.Fprintln(s.out, strings.TrimRight(line, " "))
 	}
-	fmt.Fprintln(s.out, " 1,3,5-7 toggle · a/n page all/none · A/N whole list · t 3 topics")
+	fmt.Fprintln(s.out, " 1,3,5-7 toggle · a/n page all/none · A/N whole list · t 3 topics · c count messages on this page")
 	fmt.Fprintln(s.out, " > next · < prev · p 5 go to page · Enter back")
 }
 
@@ -300,19 +306,24 @@ func (s *setupDialog) loadRows(visible []tgclient.Dialog) {
 
 // editTopics returns false on EOF or interrupt.
 func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
-	cs := s.details([]stats.Item{s.item(forum)})[0]
-	if cs.Err != nil {
-		fmt.Fprintf(s.out, "could not load topics: %v\n", cs.Err)
-		return true
+	topics, ok := s.topics[forum.ID]
+	if !ok {
+		var err error
+		if topics, err = s.topicList(forum); err != nil {
+			fmt.Fprintf(s.out, "could not load topics: %v\n", err)
+			return true
+		}
+		s.keepTopics(forum.ID, topics)
 	}
-	if len(cs.Topics) == 0 {
+	if len(topics) == 0 {
 		fmt.Fprintln(s.out, "no topics to choose from")
 		return true
 	}
-	ids := make([]int, len(cs.Topics))
-	for i, t := range cs.Topics {
+	ids := make([]int, len(topics))
+	for i, t := range topics {
 		ids[i] = t.ID
 	}
+	cs := stats.ChatStats{Topics: topics}
 	for {
 		fmt.Fprintf(s.out, "\n%s · topics · new topics are archived automatically\n", cleanTitle(forum.Title, titleWidth))
 		fmt.Fprintf(s.out, "  %4s  %-4s  %-*s  %s\n", "#", "arch", titleWidth, "topic", "msgs")
@@ -323,9 +334,13 @@ func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
 				mark = "[x]"
 			}
 			name := cleanTitle(t.Title, titleWidth-8) + " #" + strconv.Itoa(t.ID)
-			fmt.Fprintf(s.out, "  %4d  %-4s  %s  ~%s\n", i+1, mark, padRight(name, titleWidth), groupDigits(t.Count))
+			count := "—"
+			if t.Count >= 0 {
+				count = "~" + groupDigits(t.Count)
+			}
+			fmt.Fprintf(s.out, "  %4d  %-4s  %s  %s\n", i+1, mark, padRight(name, titleWidth), count)
 		}
-		fmt.Fprintln(s.out, " 1,3 toggle · a/n all/none · Enter back")
+		fmt.Fprintln(s.out, " 1,3 toggle · a/n all/none · c count messages per topic · Enter back")
 		line, ok := s.ask("> ")
 		if !ok {
 			return false
@@ -335,6 +350,14 @@ func (s *setupDialog) editTopics(forum tgclient.Dialog) bool {
 			return true
 		case "a", "n":
 			s.st.SetAllTopics(forum.ID, ids, line == "a")
+		case "c":
+			counted := s.details([]stats.Item{s.item(forum)})[0]
+			if counted.Err != nil {
+				fmt.Fprintf(s.out, "could not count: %v\n", counted.Err)
+				continue
+			}
+			cs.Topics = counted.Topics
+			s.keepTopics(forum.ID, counted.Topics)
 		default:
 			idx, err := selector.ParseIndices(line, len(ids))
 			if err != nil {
@@ -350,7 +373,16 @@ func (s *setupDialog) item(d tgclient.Dialog) stats.Item {
 	return stats.Item{ID: d.ID, Type: d.Type, Title: d.Title, Peer: d.Peer, ExcludedTopics: s.st.ExcludedFor(d.ID)}
 }
 
-// confirm shows the dry-run report for the selection; ok is false on EOF or interrupt.
+// keepTopics remembers a forum's topics for later views and config comments.
+func (s *setupDialog) keepTopics(id int64, ts []stats.TopicStats) {
+	if s.topics == nil {
+		s.topics = map[int64][]stats.TopicStats{}
+	}
+	s.topics[id] = ts
+}
+
+// confirm shows what would be written, with message counts only on request;
+// ok is false on EOF or interrupt.
 func (s *setupDialog) confirm() (save, ok bool) {
 	var items []stats.Item
 	for _, d := range s.dialogs {
@@ -362,9 +394,8 @@ func (s *setupDialog) confirm() (save, ok bool) {
 		fmt.Fprintln(s.out, "nothing selected")
 		return false, true
 	}
-	s.last = s.details(items)
 	fmt.Fprintln(s.out)
-	printReport(s.out, s.last)
+	printSelection(s.out, items, s.selected().TopicTitles)
 	text, err := s.preview(s.selected())
 	if err != nil {
 		fmt.Fprintf(s.out, "cannot write the config: %v\n", err)
@@ -372,16 +403,28 @@ func (s *setupDialog) confirm() (save, ok bool) {
 	}
 	rule := strings.Repeat("─", headerWidth)
 	fmt.Fprintf(s.out, "\nConfig to write to %s:\n%s\n%s%s\n", s.cfgPath, rule, text, rule)
-	ans, ok := s.ask(fmt.Sprintf("Write to %s (%s)? [y/N]: ", s.cfgPath, plural(len(items), "chat")))
-	if !ok {
-		return false, false
+	for {
+		ans, ok := s.ask(fmt.Sprintf("Write to %s (%s)? [y/N, c = count messages first]: ", s.cfgPath, plural(len(items), "chat")))
+		if !ok {
+			return false, false
+		}
+		switch strings.ToLower(normalizeCommand(ans)) {
+		case "y", "yes", "д", "да":
+			return true, true
+		case "c":
+			counted := s.details(items)
+			for _, cs := range counted {
+				if cs.Err == nil && cs.Item.Type == store.ChatForum {
+					s.keepTopics(cs.Item.ID, cs.Topics)
+				}
+			}
+			fmt.Fprintln(s.out)
+			printReport(s.out, counted)
+			continue
+		}
+		fmt.Fprintln(s.out, "not written")
+		return false, true
 	}
-	switch strings.ToLower(ans) {
-	case "y", "yes", "д", "да":
-		return true, true
-	}
-	fmt.Fprintln(s.out, "not written")
-	return false, true
 }
 
 // selected turns the dialog state into what the config gets.
@@ -400,12 +443,12 @@ func (s *setupDialog) selected() config.Selected {
 			out.ExcludeTopics[id] = ex
 		}
 	}
-	for _, cs := range s.last {
-		for _, t := range cs.Topics {
-			if out.TopicTitles[cs.Item.ID] == nil {
-				out.TopicTitles[cs.Item.ID] = map[int]string{}
+	for id, ts := range s.topics {
+		for _, t := range ts {
+			if out.TopicTitles[id] == nil {
+				out.TopicTitles[id] = map[int]string{}
 			}
-			out.TopicTitles[cs.Item.ID][t.ID] = t.Title
+			out.TopicTitles[id][t.ID] = t.Title
 		}
 	}
 	return out
@@ -454,8 +497,9 @@ func chooseChats(ctx context.Context, st setup, in *lineReader, out, errOut io.W
 		d := &setupDialog{
 			ctx: ctx, out: out, in: in,
 			groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: state, cfgPath: st.paths.Config,
-			rowStats: func(ds []tgclient.Dialog) map[int64]rowInfo { return listRowStats(ctx, api, ds, progress) },
-			details:  func(items []stats.Item) []stats.ChatStats { return stats.Collect(ctx, api, items, progress) },
+			rowStats:  func(ds []tgclient.Dialog) map[int64]rowInfo { return listRowStats(ctx, api, ds, progress) },
+			details:   func(items []stats.Item) []stats.ChatStats { return stats.Collect(ctx, api, items, progress) },
+			topicList: func(d tgclient.Dialog) ([]stats.TopicStats, error) { return topicTitles(ctx, api, d) },
 			preview: func(sel config.Selected) (string, error) {
 				b, err := config.RenderTargets(st.paths.Config, sel)
 				return string(b), err

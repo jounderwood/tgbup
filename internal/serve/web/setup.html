@@ -26,7 +26,7 @@
       <span id="selected" class="muted"></span>
       <button id="review" type="button">Review and save…</button>
     </div>
-    <div class="bulk"><button type="button" id="all" class="link">select all in this list</button> · <button type="button" id="none" class="link">clear all in this list</button></div>
+    <div class="bulk"><button type="button" id="all" class="link">select all in this list</button> · <button type="button" id="none" class="link">clear all in this list</button> · <button type="button" id="count" class="link">count messages of the chats shown</button></div>
     <ul class="problems" id="warnings" hidden></ul>
     <div id="loading" class="muted">Loading your chats from Telegram…</div>
     <table class="chatlist" hidden>
@@ -37,6 +37,7 @@
     <dialog id="confirm">
       <h2>Save this chat list?</h2>
       <pre id="report" class="log"></pre>
+      <p class="hint">Message counts take a few Telegram requests per chat. <button type="button" id="count-all" class="link">Count messages</button></p>
       <details><summary>Config file that will be written</summary><pre id="config" class="log"></pre></details>
       <div class="actions"><button type="button" id="cancel" class="secondary">Back</button><button type="button" id="save">Save</button></div>
     </dialog>

@@ -25,6 +25,23 @@ const (
 	lineWidth   = 100
 )
 
+// printSelection lists what would be archived without asking Telegram
+// anything: counting takes several requests per chat, so it is on request.
+func printSelection(w io.Writer, items []stats.Item, topicTitles map[int64]map[int]string) {
+	fmt.Fprintf(w, "would archive %s:\n", plural(len(items), "chat"))
+	for i, it := range items {
+		fmt.Fprintf(w, "  %d. %s · %s · %d\n", i+1, it.Title, it.Type, it.ID)
+		if len(it.ExcludedTopics) == 0 {
+			continue
+		}
+		names := make([]string, len(it.ExcludedTopics))
+		for k, id := range it.ExcludedTopics {
+			names[k] = strings.TrimSpace(topicTitles[it.ID][id] + " #" + strconv.Itoa(id))
+		}
+		fmt.Fprintf(w, "     topics left out: %s\n", strings.Join(names, " · "))
+	}
+}
+
 func printReport(w io.Writer, chats []stats.ChatStats) {
 	saved := 0
 	var types tgclient.TypeCounts

@@ -36,8 +36,12 @@ type Backend interface {
 	RunLog() (string, error)
 	Chats(ctx context.Context) (ChatList, error)
 	Counts(ctx context.Context, ids []int64) (map[int64]Count, error)
-	Topics(ctx context.Context, chat int64) ([]Topic, error)
-	Preview(ctx context.Context, sel Selection) (Preview, error)
+	// Topics lists a forum's topics; counting their messages takes a request
+	// per topic, so it happens only when asked (counts).
+	Topics(ctx context.Context, chat int64, counts bool) ([]Topic, error)
+	// Preview shows what Save would write; the per-chat message counts, which
+	// take several requests per chat, only when asked (counts).
+	Preview(ctx context.Context, sel Selection, counts bool) (Preview, error)
 	Save(ctx context.Context, sel Selection) error
 	// SetupState and SetupAction drive the setup page: the steps' state, and
 	// one step's action with the form the page sent (JSON in, JSON out).
@@ -132,9 +136,10 @@ type Count struct {
 }
 
 type Topic struct {
-	ID       int    `json:"id"`
-	Title    string `json:"title"`
-	Messages int    `json:"messages"`
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	// Messages is -1 until counted.
+	Messages int `json:"messages"`
 }
 
 // Selection is the chat list to save: chat ids and, per forum, excluded topics.
@@ -363,7 +368,7 @@ func (s *Server) topics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chat id", http.StatusBadRequest)
 		return
 	}
-	ts, err := s.backend.Topics(r.Context(), id)
+	ts, err := s.backend.Topics(r.Context(), id, r.URL.Query().Get("counts") == "1")
 	reply(w, ts, err)
 }
 
@@ -385,7 +390,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := s.backend.Preview(r.Context(), sel)
+	p, err := s.backend.Preview(r.Context(), sel, r.URL.Query().Get("counts") == "1")
 	reply(w, p, err)
 }
 

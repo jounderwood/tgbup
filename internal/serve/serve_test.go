@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,7 @@ func (f *fakeBackend) Snapshots(_ context.Context, place int) ([]Snapshot, error
 
 type fakeBackend struct {
 	opened  int
+	counted []bool // the counts flag of each Topics and Preview call
 	actions []string
 	busy    bool
 	runs    int
@@ -58,11 +60,13 @@ func (f *fakeBackend) Counts(_ context.Context, ids []int64) (map[int64]Count, e
 	return out, nil
 }
 
-func (f *fakeBackend) Topics(context.Context, int64) ([]Topic, error) {
+func (f *fakeBackend) Topics(_ context.Context, _ int64, counts bool) ([]Topic, error) {
+	f.counted = append(f.counted, counts)
 	return []Topic{{ID: 1, Title: "General", Messages: 3}}, nil
 }
 
-func (f *fakeBackend) Preview(_ context.Context, sel Selection) (Preview, error) {
+func (f *fakeBackend) Preview(_ context.Context, sel Selection, counts bool) (Preview, error) {
+	f.counted = append(f.counted, counts)
 	return Preview{Report: "would archive 1 chat", Config: "targets: …"}, nil
 }
 
@@ -321,5 +325,18 @@ func TestLogShowsActionsWithoutTheirInput(t *testing.T) {
 	}
 	if strings.Contains(out, "SECRET-VALUE") || strings.Contains(out, "favicon") {
 		t.Errorf("log shows input or noise:\n%s", out)
+	}
+}
+
+// Counting is asked for explicitly; a plain request does not count.
+func TestCountsOnlyWhenAsked(t *testing.T) {
+	s, f, _ := testServer(t)
+	tok := token(t, s)
+	do(t, s, "GET", "/api/chats/5/topics", host, tok, "")
+	do(t, s, "GET", "/api/chats/5/topics?counts=1", host, tok, "")
+	do(t, s, "POST", "/api/chats/preview", host, tok, `{"chats":[1]}`)
+	do(t, s, "POST", "/api/chats/preview?counts=1", host, tok, `{"chats":[1]}`)
+	if want := []bool{false, true, false, true}; !slices.Equal(f.counted, want) {
+		t.Fatalf("counts = %v, want %v", f.counted, want)
 	}
 }

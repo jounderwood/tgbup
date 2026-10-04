@@ -28,21 +28,28 @@ function filtered() {
 function topicLabel(c) {
   const n = counts.get(c.id);
   const ex = (excluded.get(c.id) || new Set()).size;
-  let text = n && !n.error ? plural(n.topics, "topic") : "topics";
+  let text = n && !n.error && !n.loading ? plural(n.topics, "topic") : "topics";
   if (ex) text += " · " + ex + " left out";
   return el("button", { type: "button", class: "link", onclick: () => toggleTopics(c) }, (open.has(c.id) ? "▾ " : "▸ ") + text);
 }
 
-function row(c) {
+// Counting takes Telegram requests per chat, so it happens only when asked.
+function countCell(c) {
   const n = counts.get(c.id);
-  const msgs = !n ? "…" : n.error ? "?" : num(n.messages);
+  if (!n) return el("button", { type: "button", class: "link", title: "Count this chat's messages", onclick: () => loadCounts([c]) }, "count");
+  if (n.loading) return "…";
+  if (n.error) return el("span", { title: n.error }, "?");
+  return num(n.messages);
+}
+
+function row(c) {
   const cells = [
     el("td", {}, el("input", { type: "checkbox", checked: selected.has(c.id), "aria-label": c.title,
       onchange: (e) => { e.target.checked ? selected.add(c.id) : selected.delete(c.id); render(); } })),
     el("td", { class: "title" }, c.title, c.username ? el("span", { class: "user" }, " @" + c.username) : null,
       c.type === "forum" && open.has(c.id) ? topicList(c) : null),
     el("td", {}, c.type),
-    el("td", { class: "num", title: n && n.error ? n.error : "" }, msgs),
+    el("td", { class: "num" }, countCell(c)),
     el("td", {}, c.type === "forum" ? topicLabel(c) : ""),
   ];
   return el("tr", { class: selected.has(c.id) ? "sel" : "" }, cells);
@@ -53,22 +60,27 @@ function topicList(c) {
   if (!ts) return el("div", { class: "muted" }, "loading topics…");
   if (!ts.length) return el("div", { class: "muted" }, "no topics");
   const ex = excluded.get(c.id) || new Set();
-  return el("ul", { class: "topics" }, ts.map((t) => el("li", {}, el("label", {},
+  const uncounted = ts.some((t) => t.messages < 0);
+  const more = uncounted ? el("li", {}, el("button", { type: "button", class: "link", onclick: () => toggleTopics(c, true) }, "count messages per topic")) : null;
+  return el("ul", { class: "topics" }, more, ts.map((t) => el("li", {}, el("label", {},
     el("input", { type: "checkbox", checked: !ex.has(t.id), onchange: (e) => {
       const set = excluded.get(c.id) || new Set();
       e.target.checked ? set.delete(t.id) : set.add(t.id);
       excluded.set(c.id, set);
       render();
     } }),
-    el("span", {}, t.title + " #" + t.id), el("span", { class: "n" }, num(t.messages))))));
+    el("span", {}, t.title + " #" + t.id), el("span", { class: "n" }, t.messages < 0 ? "" : num(t.messages))))));
 }
 
-async function toggleTopics(c) {
-  if (open.has(c.id)) { open.delete(c.id); render(); return; }
+// toggleTopics opens a forum's topic list (titles only, one request); with
+// count it reloads the list with each topic's message count.
+async function toggleTopics(c, count) {
+  if (!count && open.has(c.id)) { open.delete(c.id); render(); return; }
   open.add(c.id);
+  if (count) topics.delete(c.id);
   render();
   if (!topics.has(c.id)) {
-    try { topics.set(c.id, await api("GET", "/api/chats/" + c.id + "/topics")); }
+    try { topics.set(c.id, await api("GET", "/api/chats/" + c.id + "/topics" + (count ? "?counts=1" : ""))); }
     catch (e) { open.delete(c.id); toast("Could not load topics: " + e.message); }
     render();
   }
@@ -81,21 +93,26 @@ function render() {
   $("more").hidden = list.length <= limit;
   $("more").textContent = "Show more (" + num(list.length - limit) + " left)";
   $("selected").textContent = num(selected.size) + " selected";
-  loadCounts(shown);
 }
 
-// loadCounts asks for message counts of the rows on screen, a batch at a time:
-// Telegram limits how fast they can be read.
-async function loadCounts(shown) {
-  if (loadingCounts) return;
-  const missing = shown.filter((c) => !counts.has(c.id)).map((c) => c.id).slice(0, 20);
+// loadCounts counts the messages of the given chats, 20 at a time: Telegram
+// limits how fast they can be read.
+async function loadCounts(chats) {
+  if (loadingCounts) { toast("Already counting; wait for it to finish"); return; }
+  const missing = chats.filter((c) => !counts.has(c.id) || counts.get(c.id).error).map((c) => c.id);
   if (!missing.length) return;
   loadingCounts = true;
-  try {
-    const got = await api("POST", "/api/chats/counts", { ids: missing });
-    for (const [id, n] of Object.entries(got)) counts.set(Number(id), n);
-  } catch (e) {
-    for (const id of missing) counts.set(id, { error: e.message });
+  for (let i = 0; i < missing.length; i += 20) {
+    const batch = missing.slice(i, i + 20);
+    for (const id of batch) counts.set(id, { loading: true });
+    render();
+    try {
+      const got = await api("POST", "/api/chats/counts", { ids: batch });
+      for (const id of batch) counts.delete(id);
+      for (const [id, n] of Object.entries(got)) counts.set(Number(id), n);
+    } catch (e) {
+      for (const id of batch) counts.set(id, { error: e.message });
+    }
   }
   loadingCounts = false;
   render();
@@ -137,6 +154,13 @@ $("search").addEventListener("input", () => { limit = PAGE; render(); });
 $("more").addEventListener("click", () => { limit += PAGE; render(); });
 $("all").addEventListener("click", () => { filtered().forEach((c) => selected.add(c.id)); render(); });
 $("none").addEventListener("click", () => { filtered().forEach((c) => selected.delete(c.id)); render(); });
+$("count").addEventListener("click", () => loadCounts(filtered().slice(0, limit)));
+$("count-all").addEventListener("click", async () => {
+  $("count-all").disabled = true;
+  try { $("report").textContent = (await api("POST", "/api/chats/preview?counts=1", selection())).report; }
+  catch (e) { toast("Could not count: " + e.message); }
+  $("count-all").disabled = false;
+});
 
 $("review").addEventListener("click", async () => {
   if (!selected.size) { toast("Choose at least one chat"); return; }

@@ -471,7 +471,7 @@ func (b *serveBackend) Counts(ctx context.Context, ids []int64) (map[int64]serve
 	return out, nil
 }
 
-func (b *serveBackend) Topics(ctx context.Context, id int64) ([]serve.Topic, error) {
+func (b *serveBackend) Topics(ctx context.Context, id int64, counts bool) ([]serve.Topic, error) {
 	_, api, err := b.chatData(ctx)
 	if err != nil {
 		return nil, err
@@ -479,16 +479,20 @@ func (b *serveBackend) Topics(ctx context.Context, id int64) ([]serve.Topic, err
 	b.mu.Lock()
 	ts, ok := b.topics[id]
 	b.mu.Unlock()
-	if !ok {
+	if !ok || counts && !counted(ts) {
 		d, found := b.dialog(id)
 		if !found || d.Type != store.ChatForum {
 			return nil, fmt.Errorf("chat %d is not a forum", id)
 		}
-		cs := stats.Collect(ctx, api, []stats.Item{{ID: d.ID, Type: d.Type, Title: d.Title, Peer: d.Peer}}, func(int, int) {})[0]
-		if cs.Err != nil {
-			return nil, cs.Err
+		if counts {
+			cs := stats.Collect(ctx, api, []stats.Item{{ID: d.ID, Type: d.Type, Title: d.Title, Peer: d.Peer}}, func(int, int) {})[0]
+			if cs.Err != nil {
+				return nil, cs.Err
+			}
+			ts = cs.Topics
+		} else if ts, err = topicTitles(ctx, api, d); err != nil {
+			return nil, err
 		}
-		ts = cs.Topics
 		b.mu.Lock()
 		if b.topics == nil {
 			b.topics = map[int64][]stats.TopicStats{}
@@ -501,6 +505,28 @@ func (b *serveBackend) Topics(ctx context.Context, id int64) ([]serve.Topic, err
 		out[i] = serve.Topic{ID: t.ID, Title: t.Title, Messages: t.Count}
 	}
 	return out, nil
+}
+
+// topicTitles lists a forum's topics with one request, uncounted (Count -1).
+func topicTitles(ctx context.Context, api *tgclient.API, d tgclient.Dialog) ([]stats.TopicStats, error) {
+	topics, err := api.ForumTopics(ctx, d.Peer)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]stats.TopicStats, len(topics))
+	for i, t := range topics {
+		out[i] = stats.TopicStats{ID: t.ID, Title: t.Title, Count: -1}
+	}
+	return out, nil
+}
+
+func counted(ts []stats.TopicStats) bool {
+	for _, t := range ts {
+		if t.Count < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // selected turns a page selection into what the config gets, rejecting chats
@@ -536,7 +562,7 @@ func (b *serveBackend) selected(sel serve.Selection) (config.Selected, []stats.I
 	return out, items, nil
 }
 
-func (b *serveBackend) Preview(ctx context.Context, sel serve.Selection) (serve.Preview, error) {
+func (b *serveBackend) Preview(ctx context.Context, sel serve.Selection, counts bool) (serve.Preview, error) {
 	st, api, err := b.chatData(ctx)
 	if err != nil {
 		return serve.Preview{}, err
@@ -545,24 +571,49 @@ func (b *serveBackend) Preview(ctx context.Context, sel serve.Selection) (serve.
 	if err != nil {
 		return serve.Preview{}, err
 	}
-	collected := stats.Collect(ctx, api, items, func(int, int) {})
-	// Their topic titles become comments in the config Save writes.
-	b.mu.Lock()
-	for _, cs := range collected {
-		if cs.Err == nil && cs.Item.Type == store.ChatForum {
-			if b.topics == nil {
-				b.topics = map[int64][]stats.TopicStats{}
+	var report bytes.Buffer
+	if counts {
+		collected := stats.Collect(ctx, api, items, func(int, int) {})
+		b.mu.Lock()
+		for _, cs := range collected {
+			if cs.Err == nil && cs.Item.Type == store.ChatForum {
+				if b.topics == nil {
+					b.topics = map[int64][]stats.TopicStats{}
+				}
+				b.topics[cs.Item.ID] = cs.Topics
 			}
-			b.topics[cs.Item.ID] = cs.Topics
+		}
+		b.mu.Unlock()
+		printReport(&report, collected)
+	} else {
+		// Left-out topics are named in the config by their titles: one request
+		// per forum whose topics were not listed yet.
+		for _, it := range items {
+			b.mu.Lock()
+			_, known := b.topics[it.ID]
+			b.mu.Unlock()
+			if len(it.ExcludedTopics) == 0 || known {
+				continue
+			}
+			if d, ok := b.dialog(it.ID); ok {
+				if ts, err := topicTitles(ctx, api, d); err == nil {
+					b.mu.Lock()
+					if b.topics == nil {
+						b.topics = map[int64][]stats.TopicStats{}
+					}
+					b.topics[it.ID] = ts
+					b.mu.Unlock()
+				}
+			}
 		}
 	}
-	b.mu.Unlock()
 	cfgSel, _, err := b.selected(sel)
 	if err != nil {
 		return serve.Preview{}, err
 	}
-	var report bytes.Buffer
-	printReport(&report, collected)
+	if !counts {
+		printSelection(&report, items, cfgSel.TopicTitles)
+	}
 	text, err := config.RenderTargets(st.paths.Config, cfgSel)
 	if err != nil {
 		return serve.Preview{}, err

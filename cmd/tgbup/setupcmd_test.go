@@ -28,6 +28,7 @@ var (
 
 type fakeSetup struct {
 	asked      []int64 // chat ids whose row stats were requested
+	counted    int     // details calls: message counts asked of Telegram
 	noTopics   bool
 	previewErr error
 }
@@ -48,7 +49,16 @@ func (f *fakeSetup) rowStats(ds []tgclient.Dialog) map[int64]rowInfo {
 	return out
 }
 
+// topicList is the forum's topics without counts.
+func (f *fakeSetup) topicList(d tgclient.Dialog) ([]stats.TopicStats, error) {
+	if f.noTopics {
+		return nil, nil
+	}
+	return []stats.TopicStats{{ID: 1, Title: "General", Count: -1}, {ID: 5, Title: "Flood", Count: -1}}, nil
+}
+
 func (f *fakeSetup) details(items []stats.Item) []stats.ChatStats {
+	f.counted++
 	var out []stats.ChatStats
 	for _, it := range items {
 		cs := stats.ChatStats{Item: it, Total: 5}
@@ -70,7 +80,7 @@ func newDialogOver(input string, st *selector.State, dialogs []tgclient.Dialog, 
 	return &setupDialog{
 		ctx: context.Background(), in: newLineReader(strings.NewReader(input), nil), out: &out,
 		groups: selector.Groups(dialogs, folders), dialogs: dialogs, st: st, cfgPath: "/c.yaml",
-		rowStats: f.rowStats, details: f.details,
+		rowStats: f.rowStats, details: f.details, topicList: f.topicList,
 		preview: func(sel config.Selected) (string, error) {
 			if f.previewErr != nil {
 				return "", f.previewErr
@@ -118,10 +128,27 @@ func TestSetupSelectsAcrossGroupsAndSaves(t *testing.T) {
 }
 
 func TestSetupListShowsCountsAndTopics(t *testing.T) {
-	d, out := newDialog("1\n\nq\n", state())
+	d, out := newDialog("1\nc\n\nq\n", state())
 	d.run()
 	wantOutput(t, out.String(), "All chats · page 1/1 · 4 chats · 0 selected",
 		"forum       ~4 812    2", "private     ~5", "group       ?")
+}
+
+// Counting asks Telegram several times per chat: only on request.
+func TestSetupCountsOnlyWhenAsked(t *testing.T) {
+	d, out, f := newDialogOver("1\nt 1\n\n\nd\nc\ny\n", state(sForum.ID), []tgclient.Dialog{sForum, sMama}, nil)
+	if !d.run() {
+		t.Fatalf("not saved:\n%s", out)
+	}
+	if len(f.asked) != 0 {
+		t.Errorf("rows counted without c: %v", f.asked)
+	}
+	// c at the confirmation counts once; the topic list itself needed no counts.
+	if f.counted != 1 {
+		t.Errorf("counted %d times, want 1", f.counted)
+	}
+	wantOutput(t, out.String(), "msgs", "—", "[x]   General #1  ", "c count messages per topic",
+		"would archive 1 chat:", "c = count messages first", "would archive 1 chat, ~30 messages")
 }
 
 func TestSetupStartsFromCurrentSelection(t *testing.T) {
@@ -196,7 +223,7 @@ func TestSetupTopicsScreen(t *testing.T) {
 		t.Fatalf("excluded = %v", got)
 	}
 	wantOutput(t, out.String(), "Family forum · topics · new topics are archived automatically",
-		"[x]   General #1", "[ ]   Flood #5", "excluded:       Flood #5 ~20", "2 (1 excl)")
+		"[x]   General #1", "[ ]   Flood #5", "topics left out: Flood #5", "(1 excl)")
 }
 
 func TestSetupEOFExitsWithoutSaving(t *testing.T) {
@@ -332,7 +359,7 @@ func TestSetupDoesNotOfferAnInvalidConfig(t *testing.T) {
 // "supergroup" is the longest chat type; the msgs column must not move for it.
 func TestSetupListAlignsLongTypes(t *testing.T) {
 	sg := tgclient.Dialog{ID: 5, Type: store.ChatSupergroup, Title: "Big"}
-	d, out, _ := newDialogOver("1\n\nq\n", state(), []tgclient.Dialog{sg, sMama}, nil)
+	d, out, _ := newDialogOver("1\nc\n\nq\n", state(), []tgclient.Dialog{sg, sMama}, nil)
 	d.run()
 	var cols []int
 	for _, line := range strings.Split(out.String(), "\n") {
