@@ -16,6 +16,7 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/diskcrypt"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
 	"gitlab.com/joeunderwood/tgbup/internal/serve"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
@@ -129,6 +130,20 @@ func checkRepo(repo, password string) error {
 		}
 	}
 	return errNotAPlace
+}
+
+// diskWarning is what to say when the disk holding the archive is not
+// encrypted; "" when it is, or when that cannot be told.
+func diskWarning(ctx context.Context, archiveDir string) string {
+	dir := archiveDir
+	for !isDir(dir) && filepath.Dir(dir) != dir {
+		dir = filepath.Dir(dir) // not created yet: the disk it will be on
+	}
+	r := diskcrypt.Check(ctx, dir)
+	if r.State != diskcrypt.Plain {
+		return ""
+	}
+	return "The disk with the archive is not encrypted: anyone who gets hold of it can read your chats. To fix: " + r.Hint + "."
 }
 
 // splitPlaces separates the configured places restic can use from those that

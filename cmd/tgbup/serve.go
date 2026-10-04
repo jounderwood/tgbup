@@ -112,6 +112,10 @@ type serveBackend struct {
 	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
 	log       *slog.Logger                                           // nil in tests
 	newJob    func(setup) (launchdJob, error)                        // tests replace launchctl
+	disk      struct {
+		dir, warning string
+		at           time.Time
+	}
 }
 
 const dialogsTTL = 5 * time.Minute
@@ -138,6 +142,9 @@ func (b *serveBackend) Status(ctx context.Context) (serve.Status, error) {
 	}
 	s.Schedule = scheduleStatus(st, b.env, time.Now())
 	s.Problems = setupProblems(st, s)
+	if w := b.diskWarning(ctx, st.cfg.ArchiveDir); w != "" {
+		s.Problems = append(s.Problems, w)
+	}
 	return s, nil
 }
 
@@ -734,4 +741,15 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 		out[i] = serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host}
 	}
 	return out, nil
+}
+
+// diskWarning is cached: the page asks for the status every half minute, and
+// whether the disk is encrypted changes rarely.
+func (b *serveBackend) diskWarning(ctx context.Context, archiveDir string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.disk.dir != archiveDir || time.Since(b.disk.at) > 10*time.Minute {
+		b.disk.dir, b.disk.at, b.disk.warning = archiveDir, time.Now(), diskWarning(ctx, archiveDir)
+	}
+	return b.disk.warning
 }

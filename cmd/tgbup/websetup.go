@@ -45,6 +45,8 @@ type setupState struct {
 	Backup   backupForm   `json:"backup"`
 	Login    loginForm    `json:"login"`
 	Schedule scheduleForm `json:"schedule"`
+	// Warnings are shown above the steps (an unencrypted disk).
+	Warnings []string `json:"warnings"`
 }
 
 type archiveForm struct {
@@ -157,6 +159,9 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 	}
 	b.mu.Unlock()
 	s.Schedule.Times = strings.Split(clockList(st.cfg.Schedule.Clocks()), ", ")
+	if w := b.diskWarning(ctx, st.cfg.ArchiveDir); w != "" {
+		s.Warnings = append(s.Warnings, w)
+	}
 	if r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); err == nil && ok {
 		s.Schedule.LastRun = &runInfo{Started: r.Started, OK: r.OK}
 	}

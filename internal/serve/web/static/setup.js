@@ -21,7 +21,8 @@ async function load() {
 }
 
 function render() {
-  $("steps").replaceChildren(...state.steps.map(card));
+  const warnings = (state.warnings || []).map((w) => el("li", {}, w));
+  $("steps").replaceChildren(...(warnings.length ? [el("ul", { class: "problems" }, warnings)] : []), ...state.steps.map(card));
 }
 
 function card(step) {
