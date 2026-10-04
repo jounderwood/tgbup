@@ -267,6 +267,23 @@ func copyFileKeepingTimes(from, to string, info fs.FileInfo) error {
 	return os.Chtimes(to, info.ModTime(), info.ModTime())
 }
 
+// notifySetup tells the bot that tgbup is set up (the schedule, the last
+// step, is in place) and what it will do. Only logged when it fails.
+func notifySetup(ctx context.Context, st setup, log func(error)) {
+	bot := notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID}
+	if !st.cfg.Notify.Progress || !bot.Enabled() {
+		return
+	}
+	places, _ := splitPlaces(st)
+	for i, r := range places {
+		places[i] = tildePath(r, st.paths.Home)
+	}
+	text := notify.SetupText(hostname(), len(st.cfg.Targets.Include), st.cfg.Targets.Folders, places, clockList(st.cfg.Schedule.Clocks()))
+	if err := bot.Send(ctx, text); err != nil {
+		log(err)
+	}
+}
+
 // diskWarning is what to say when the disk holding the archive is not
 // encrypted; "" when it is, or when that cannot be told.
 func diskWarning(ctx context.Context, archiveDir string) string {

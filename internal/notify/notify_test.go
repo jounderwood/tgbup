@@ -150,3 +150,18 @@ func TestPrivateChatStopsWithContext(t *testing.T) {
 		t.Fatal("no error after the context ended")
 	}
 }
+
+func TestProgressTexts(t *testing.T) {
+	if got := StartText("mac", "schedule", false); got != "▶ tgbup on mac: update scheduled" {
+		t.Errorf("start = %q", got)
+	}
+	if got := DoneText("mac", 3, 1, nil); !strings.Contains(got, "no backup set up") {
+		t.Errorf("done without backups = %q", got)
+	}
+	got := SetupText("mac", 4, []string{"Семья"}, []string{"~/Tgbup/backup", "iCloud"}, "06:30, 18:30")
+	for _, want := range []string{"is set up", "4 chats and the folders Семья", "Backups: ~/Tgbup/backup, iCloud", "Runs at: 06:30, 18:30"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("setup text lacks %q:\n%s", want, got)
+		}
+	}
+}

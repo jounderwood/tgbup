@@ -33,6 +33,12 @@ type runParts struct {
 	out          io.Writer
 	log          *slog.Logger
 	warnings     *warnLines // nil in tests that do not look at them
+	// progress: tell the bot, quietly, that the run started and finished;
+	// trigger and takeout say what started it.
+	progress bool
+	trigger  string
+	takeout  bool
+	home     string
 }
 
 type runRecord struct {
@@ -51,6 +57,7 @@ const summaryKey = "notify:summary_at"
 // records the run, and tells the bot about errors and, once per interval, sends a summary.
 func runOnce(ctx context.Context, p runParts) int {
 	started := p.now()
+	p.quiet(ctx, notify.StartText(p.host, p.trigger, p.takeout))
 	sum, err := p.sync(ctx)
 	sum.print(p.out)
 	rec := runRecord{NewMessages: sum.sync.NewMessages, NewMedia: sum.media.Done, SyncErrors: sum.problems(err)}
@@ -100,6 +107,14 @@ func runOnce(ctx context.Context, p runParts) int {
 			p.log.Error("notify", "err", err)
 			code = 1
 		}
+	} else {
+		var places []string
+		for _, r := range rep.Repos {
+			if r.Err == nil {
+				places = append(places, tildePath(r.Repo, p.home))
+			}
+		}
+		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.NewMedia, places))
 	}
 	if err := p.maybeSummary(ctx); err != nil {
 		p.log.Error("notify summary", "err", err)
@@ -110,6 +125,17 @@ func runOnce(ctx context.Context, p runParts) int {
 
 // maybeSummary sends the periodic summary when the interval has passed; the
 // first run only starts the interval.
+// quiet sends routine news when the person wants it; a failure to send it is
+// only logged: it must not fail the run.
+func (p runParts) quiet(ctx context.Context, text string) {
+	if !p.progress || !p.bot.Enabled() {
+		return
+	}
+	if err := p.bot.SendQuiet(ctx, text); err != nil {
+		p.log.Warn("notify", "err", err)
+	}
+}
+
 func (p runParts) maybeSummary(ctx context.Context) error {
 	now := p.now()
 	v, found, err := p.db.Meta(ctx, summaryKey)

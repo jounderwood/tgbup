@@ -156,6 +156,7 @@ func cmdRun(ctx context.Context, args []string, env Env) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	takeout := fs.Bool("takeout", false, "download through a Telegram data export (the first, full download)")
+	trigger := fs.String("trigger", "schedule", "what started the run, for the bot: schedule, page or init")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -182,9 +183,11 @@ func cmdRun(ctx context.Context, args []string, env Env) int {
 		return failEarly(ctx, log, bot, "open the archive", err)
 	}
 	defer db.Close()
-	return runOnce(ctx, newRunParts(st, db, bot, log, warnings, env, func(ctx context.Context) (syncSummary, error) {
+	p := newRunParts(st, db, bot, log, warnings, env, func(ctx context.Context) (syncSummary, error) {
 		return syncArchive(ctx, st, db, log, env.Stderr, *takeout)
-	}))
+	})
+	p.trigger, p.takeout = *trigger, *takeout
+	return runOnce(ctx, p)
 }
 
 // newRunParts is a run of tgbup: sync (as given), back up into every place,
@@ -211,6 +214,7 @@ func newRunParts(st setup, db *store.Store, bot notify.Bot, log *slog.Logger, wa
 		host: hostname(), archiveDir: st.cfg.ArchiveDir, repos: st.cfg.Backup.Repositories,
 		summaryEvery: st.cfg.Notify.SummaryEvery.D(), now: time.Now, loc: time.Local,
 		out: env.Stdout, log: log, warnings: warnings,
+		progress: st.cfg.Notify.Progress, home: st.paths.Home,
 	}
 }
 

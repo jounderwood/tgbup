@@ -22,9 +22,10 @@ import (
 )
 
 type fakeBot struct {
-	mu   sync.Mutex
-	sent []string
-	srv  *httptest.Server
+	mu    sync.Mutex
+	sent  []string
+	quiet []bool // disable_notification of each message
+	srv   *httptest.Server
 }
 
 func newFakeBot(t *testing.T) *fakeBot {
@@ -34,6 +35,8 @@ func newFakeBot(t *testing.T) *fakeBot {
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		b.mu.Lock()
 		b.sent = append(b.sent, m["text"].(string))
+		q, _ := m["disable_notification"].(bool)
+		b.quiet = append(b.quiet, q)
 		b.mu.Unlock()
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -199,5 +202,27 @@ func TestPartialSnapshotIsReported(t *testing.T) {
 	}
 	if len(bot.sent) != 1 || !strings.Contains(bot.sent[0], "some files could not be read") {
 		t.Fatalf("sent = %q", bot.sent)
+	}
+}
+
+// With progress on, a run tells the bot quietly that it started and finished;
+// an error still rings.
+func TestRunTellsTheBotItsProgress(t *testing.T) {
+	bot := newFakeBot(t)
+	e := newRunEnv(t, bot.bot())
+	e.parts.progress, e.parts.trigger, e.parts.takeout = true, "page", true
+	if code := runOnce(context.Background(), e.parts); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if len(bot.sent) != 2 || !strings.Contains(bot.sent[0], "▶ tgbup on mac: download through a Telegram data export started from the page") ||
+		!strings.Contains(bot.sent[1], "✓ tgbup on mac: 10 new messages, 0 new files; snapshot in icloud") ||
+		!bot.quiet[0] || !bot.quiet[1] {
+		t.Fatalf("sent %q quiet %v", bot.sent, bot.quiet)
+	}
+	bot.sent, bot.quiet = nil, nil
+	e.syncErr = errors.New("telegram unreachable")
+	runOnce(context.Background(), e.parts)
+	if len(bot.sent) != 2 || !strings.Contains(bot.sent[1], "telegram unreachable") || bot.quiet[1] {
+		t.Fatalf("an error: sent %q quiet %v", bot.sent, bot.quiet)
 	}
 }

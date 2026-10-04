@@ -110,6 +110,9 @@ type Retention struct {
 
 type Notify struct {
 	SummaryEvery Duration `yaml:"summary_every"`
+	// Progress also sends, without a sound, when a run starts and finishes
+	// and when setup is done; errors always come.
+	Progress bool `yaml:"progress"`
 }
 
 var MediaKinds = []string{"photo", "video", "video_note", "voice", "audio", "document", "sticker", "animation"}
@@ -125,7 +128,7 @@ func Default() Config {
 			CheckEvery:      Duration(30 * 24 * time.Hour),
 			CheckReadSubset: "5%",
 		},
-		Notify:   Notify{SummaryEvery: Duration(7 * 24 * time.Hour)},
+		Notify:   Notify{SummaryEvery: Duration(7 * 24 * time.Hour), Progress: true},
 		Log:      Log{File: true},
 		Schedule: Schedule{Times: []string{"00:30", "06:30", "12:30", "18:30"}},
 	}

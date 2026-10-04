@@ -41,6 +41,7 @@ func optionsReference() string {
 		{`  rclone: ""`, ""},
 		{"notify:", "bot: errors right away, a summary every summary_every"},
 		{"  summary_every: " + shortDuration(d.Notify.SummaryEvery.D()), ""},
+		{fmt.Sprintf("  progress: %v", d.Notify.Progress), "also, quietly: a run started, finished; setup done"},
 		{"schedule:", "when tgbup run starts (tgbup init or Setup installs it)"},
 		{"  times: [" + strings.Join(d.Schedule.Times, ", ") + "]", "HH:MM on this Mac"},
 		{"log:", ""},

@@ -279,7 +279,7 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		return nil, saveBot(ctx, st, notify.Bot{Token: strings.TrimSpace(req.Token), ChatID: req.ChatID})
 	case "download":
 		// A whole run: the first download is recorded and backed up like any other.
-		args := []string{"run"}
+		args := []string{"run", "--trigger=page"}
 		if req.Takeout {
 			args = append(args, "--takeout")
 		}
@@ -361,7 +361,11 @@ func (b *serveBackend) installSchedule(st setup) error {
 	if err != nil {
 		return err
 	}
-	return j.install()
+	if err := j.install(); err != nil {
+		return err
+	}
+	notifySetup(context.Background(), st, func(err error) { b.logger().Warn("notify", "err", err) })
+	return nil
 }
 
 // launchd is the scheduled job; tests give one with a fake launchctl.

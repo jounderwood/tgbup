@@ -1122,9 +1122,11 @@ func (w *wizard) firstSync(ctx context.Context) error {
 		bot := notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID}
 		env := w.env
 		env.Stdout = w.out
-		if code := runOnce(ctx, newRunParts(st, db, bot, log, warnings, env, func(context.Context) (syncSummary, error) {
+		p := newRunParts(st, db, bot, log, warnings, env, func(context.Context) (syncSummary, error) {
 			return sum, err
-		})); code != 0 {
+		})
+		p.trigger, p.takeout = "init", takeout
+		if code := runOnce(ctx, p); code != 0 {
 			fmt.Fprintln(w.out, "  some items failed; scheduled runs try them again")
 		}
 		return nil
@@ -1282,6 +1284,7 @@ func (w *wizard) schedule(ctx context.Context) error {
 			return err
 		}
 		fmt.Fprintln(w.out, "  installed")
+		notifySetup(ctx, st, func(err error) { fmt.Fprintf(w.out, "  could not tell the bot: %v\n", err) })
 	}
 	fmt.Fprintln(w.out, "  A first run in the background checks that it all works unattended.")
 	fmt.Fprintln(w.out, "  macOS may ask to let tgbup access iCloud or other folders: allow it.")

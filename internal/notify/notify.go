@@ -1,5 +1,6 @@
-// Package notify sends run errors and periodic summaries through a Telegram
-// bot (Bot API sendMessage); there is no long-running process.
+// Package notify sends run errors, periodic summaries and, quietly, what
+// tgbup is doing (a run started, finished, setup done) through a Telegram bot
+// (Bot API sendMessage); there is no long-running process.
 package notify
 
 import (
@@ -23,12 +24,55 @@ type Bot struct {
 
 func (b Bot) Enabled() bool { return b.Token != "" && b.ChatID != "" }
 
-func (b Bot) Send(ctx context.Context, text string) error {
-	err := b.call(ctx, "sendMessage", map[string]any{"chat_id": b.ChatID, "text": text, "disable_web_page_preview": true}, nil)
+func (b Bot) Send(ctx context.Context, text string) error { return b.send(ctx, text, false) }
+
+// SendQuiet sends without a sound: routine news (a run started or finished)
+// must not ring several times a day.
+func (b Bot) SendQuiet(ctx context.Context, text string) error { return b.send(ctx, text, true) }
+
+func (b Bot) send(ctx context.Context, text string, quiet bool) error {
+	err := b.call(ctx, "sendMessage", map[string]any{"chat_id": b.ChatID, "text": text,
+		"disable_web_page_preview": true, "disable_notification": quiet}, nil)
 	if err != nil {
 		return fmt.Errorf("send to the bot: %w", err)
 	}
 	return nil
+}
+
+// StartText says a run began: by the schedule, from the page, or the first
+// download (through a Telegram data export with takeout).
+func StartText(host, trigger string, takeout bool) string {
+	why := map[string]string{"schedule": "scheduled", "page": "started from the page", "init": "started by tgbup init"}[trigger]
+	if why == "" {
+		why = "started by hand"
+	}
+	what := "update"
+	if takeout {
+		what = "download through a Telegram data export"
+	}
+	return fmt.Sprintf("▶ tgbup on %s: %s %s", host, what, why)
+}
+
+// DoneText says a run finished well: what it added, where the snapshots went.
+func DoneText(host string, newMessages, newMedia int, snapshots []string) string {
+	text := fmt.Sprintf("✓ tgbup on %s: %d new messages, %d new files", host, newMessages, newMedia)
+	if len(snapshots) == 0 {
+		return text + "; no backup set up"
+	}
+	return text + "; snapshot in " + strings.Join(snapshots, ", ")
+}
+
+// SetupText says tgbup is set up and what it will do.
+func SetupText(host string, chats int, folders, places []string, times string) string {
+	what := fmt.Sprintf("%d chats", chats)
+	if len(folders) > 0 {
+		what += " and the folders " + strings.Join(folders, ", ")
+	}
+	backups := "off"
+	if len(places) > 0 {
+		backups = strings.Join(places, ", ")
+	}
+	return fmt.Sprintf("✅ tgbup on %s is set up\nArchiving: %s\nBackups: %s\nRuns at: %s", host, what, backups, times)
 }
 
 // Me checks the token and returns the bot's @username.
