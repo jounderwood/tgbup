@@ -75,7 +75,7 @@ func run(ctx context.Context, args []string, env Env) int {
 	case "sync":
 		return cmdSync(ctx, args[1:], env)
 	case "run":
-		return cmdRun(ctx, env)
+		return cmdRun(ctx, args[1:], env)
 	case "backup":
 		return cmdBackup(ctx, args[1:], env)
 	case "deps":

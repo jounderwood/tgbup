@@ -102,12 +102,15 @@ func (s *Store) RequeueMedia(ctx context.Context, key string) error {
 	return err
 }
 
-func (s *Store) MediaAttemptFailed(ctx context.Context, key, errMsg string, maxAttempts int) error {
-	_, err := s.db.ExecContext(ctx, `
+// MediaAttemptFailed counts a failed download; gaveUp is true once the file
+// has used all its attempts and is marked failed.
+func (s *Store) MediaAttemptFailed(ctx context.Context, key, errMsg string, maxAttempts int) (gaveUp bool, err error) {
+	var status string
+	err = s.db.QueryRowContext(ctx, `
 UPDATE media SET attempts = attempts + 1, error = ?,
   status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'pending' END
-WHERE key = ?`, errMsg, maxAttempts, key)
-	return err
+WHERE key = ? RETURNING status`, errMsg, maxAttempts, key).Scan(&status)
+	return status == MediaFailed, err
 }
 
 func (s *Store) MediaInfo(ctx context.Context, key string) (MediaInfo, error) {

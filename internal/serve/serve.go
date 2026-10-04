@@ -68,7 +68,10 @@ type Status struct {
 	Backups  []Backup  `json:"backups"`
 	Schedule Schedule  `json:"schedule"`
 	Bot      bool      `json:"bot"`
-	// Problems are setup steps still missing, each with what to do.
+	// SetupLeft names the required settings not made yet: until then the
+	// archive is not being kept.
+	SetupLeft []string `json:"setup_left"`
+	// Problems are other things to fix (an unencrypted disk).
 	Problems []string `json:"problems"`
 }
 
@@ -200,8 +203,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page("overview.html"))
 	// The chat list is a step of Setup.
-	mux.Handle("GET /chats", http.RedirectHandler("/setup#chats", http.StatusFound))
-	mux.HandleFunc("GET /setup", s.page("setup.html"))
+	// Settings were called Setup, and the chat list was a page of its own.
+	mux.Handle("GET /chats", http.RedirectHandler("/settings#chats", http.StatusFound))
+	mux.Handle("GET /setup", http.RedirectHandler("/settings", http.StatusFound))
+	mux.HandleFunc("GET /settings", s.page("setup.html"))
 	static, _ := fs.Sub(webFS, "web/static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 

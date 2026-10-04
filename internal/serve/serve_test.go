@@ -219,7 +219,7 @@ func TestAPI(t *testing.T) {
 
 func TestStaticAndPages(t *testing.T) {
 	s, _, _ := testServer(t)
-	for _, p := range []string{"/", "/setup", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
+	for _, p := range []string{"/", "/settings", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
 		w := do(t, s, "GET", p, host, "", "")
 		body, _ := io.ReadAll(w.Body)
 		if w.Code != 200 || len(body) == 0 {
@@ -229,9 +229,11 @@ func TestStaticAndPages(t *testing.T) {
 	if csp := do(t, s, "GET", "/", host, "", "").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP = %q", csp)
 	}
-	// The chat list is a step of Setup now.
-	if w := do(t, s, "GET", "/chats", host, "", ""); w.Code != http.StatusFound || w.Header().Get("Location") != "/setup#chats" {
-		t.Errorf("/chats: %d %s", w.Code, w.Header().Get("Location"))
+	// Old addresses: the chat list is a step of Settings, which was called Setup.
+	for from, to := range map[string]string{"/chats": "/settings#chats", "/setup": "/settings"} {
+		if w := do(t, s, "GET", from, host, "", ""); w.Code != http.StatusFound || w.Header().Get("Location") != to {
+			t.Errorf("%s: %d %s", from, w.Code, w.Header().Get("Location"))
+		}
 	}
 	// The archive is not served: its pages are opened from the disk.
 	for _, p := range []string{"/html/index.html", "/media/photo/1.jpg", "/archive.sqlite"} {
@@ -292,7 +294,7 @@ func TestOtherOriginsCannotLoadTheInterface(t *testing.T) {
 func TestSetupRoutes(t *testing.T) {
 	s, f, _ := testServer(t)
 	tok := token(t, s)
-	if w := do(t, s, "GET", "/setup", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "setup.js") {
+	if w := do(t, s, "GET", "/settings", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "setup.js") {
 		t.Fatalf("setup page: %d", w.Code)
 	}
 	if w := do(t, s, "GET", "/api/setup", host, tok, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "complete") {

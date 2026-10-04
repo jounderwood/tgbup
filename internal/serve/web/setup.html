@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="tgbup-token" content="{{.Token}}">
-<title>Setup · tgbup</title>
+<title>Settings · tgbup</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/common.js" defer></script>
 <script src="/static/chats.js" defer></script>
@@ -13,10 +13,10 @@
 <body>
 <header class="top">
   <b class="logo">tgbup</b>
-  <nav><a href="/">Overview</a><a href="/setup" class="on">Setup</a></nav>
+  <nav><a href="/">Overview</a><a href="/settings" class="on">Settings</a></nav>
 </header>
 <main>
-  <p class="muted">Each step shows a ✓ when it is done; you can come back any time to change something. The same steps exist in Terminal as <code>tgbup init</code>.</p>
+  <p class="muted" id="intro"></p>
   <div id="steps" class="steps"><p class="muted">Loading…</p></div>
   <section id="chatpicker" class="chatpicker" hidden>
     <p class="hint">Tick the chats to archive. In a forum, open its topics to leave some out; new topics are archived automatically. Nothing changes until you save.</p>

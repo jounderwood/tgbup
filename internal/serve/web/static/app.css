@@ -83,3 +83,6 @@ section.step { margin: 0; }
 .runs tr.details td { background: var(--bg); }
 .runs tr.details pre.log { max-height: 320px; }
 ul.snapshots { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.setup-left { border: 1px solid var(--bad, #c0392b); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; }
+.setup-left h2 { margin: 0 0 6px; font-size: 16px; }
+nav a.todo::after { content: " ●"; color: var(--bad, #c0392b); }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,9 +13,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
+	"golang.org/x/sys/unix"
+
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/diskcrypt"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
@@ -130,6 +134,137 @@ func checkRepo(repo, password string) error {
 		}
 	}
 	return errNotAPlace
+}
+
+// moveArchive moves the archive folder, with its database, media and pages,
+// to dir and points the config there. On the same disk it is a rename; to
+// another disk the files are copied, checked and only then removed from the
+// old place. Runs wait meanwhile (run.lock).
+func moveArchive(st setup, dir string) error {
+	if err := checkArchiveDir(dir); err != nil {
+		return err
+	}
+	from, to := filepath.Clean(st.cfg.ArchiveDir), filepath.Clean(expandTilde(dir, st.paths.Home))
+	switch {
+	case from == to:
+		return badInput("the archive is already there")
+	case within(to, from) || within(from, to):
+		return badInput("choose a folder outside the archive, not one containing it")
+	case within(to, st.paths.StateDir):
+		return badInput("choose a folder apart from tgbup's own files")
+	}
+	for _, r := range st.cfg.Backup.Repositories {
+		if filepath.IsAbs(r) && (within(r, to) || within(to, r)) {
+			return badInput("choose a folder apart from the backup folder %s", tildePath(r, st.paths.Home))
+		}
+	}
+	if entries, err := os.ReadDir(to); err == nil && len(entries) > 0 {
+		return badInput("%s is not empty: choose a new or empty folder", tildePath(to, st.paths.Home))
+	}
+	release, err := acquireLock(st.paths.Lock())
+	if errors.Is(err, errLocked) {
+		return badInput("a run is in progress: move the archive when it has finished")
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(to) // an empty folder chosen in the dialog: the rename takes its place
+	err = os.Rename(from, to)
+	if errors.Is(err, syscall.EXDEV) {
+		err = copyArchive(from, to)
+	}
+	if err != nil {
+		return fmt.Errorf("the archive was not moved and is still in %s: %w", tildePath(from, st.paths.Home), err)
+	}
+	if err := saveArchiveDir(st, to); err != nil {
+		return fmt.Errorf("the archive is now in %s, but the config could not be updated: %w; set archive_dir to it", tildePath(to, st.paths.Home), err)
+	}
+	return nil
+}
+
+// copyArchive copies from to to (another disk), checks every file arrived
+// whole, and only then removes from. A failed copy leaves from as it was.
+func copyArchive(from, to string) error {
+	var files, bytes int64
+	err := filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(from, p)
+		dst := filepath.Join(to, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(dst, info.Mode().Perm()|0o700)
+		case info.Mode()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(target, dst)
+		case info.Mode().IsRegular():
+			files++
+			bytes += info.Size()
+			return copyFileKeepingTimes(p, dst, info)
+		}
+		return nil
+	})
+	if err == nil {
+		var gotFiles, gotBytes int64
+		err = filepath.WalkDir(to, func(_ string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				info, ierr := d.Info()
+				if ierr != nil {
+					return ierr
+				}
+				gotFiles++
+				gotBytes += info.Size()
+			}
+			return err
+		})
+		if err == nil && (gotFiles != files || gotBytes != bytes) {
+			err = fmt.Errorf("the copy has %d files, %d bytes; the archive %d files, %d bytes", gotFiles, gotBytes, files, bytes)
+		}
+	}
+	if err != nil {
+		_ = os.RemoveAll(to)
+		return err
+	}
+	return os.RemoveAll(from)
+}
+
+func copyFileKeepingTimes(from, to string, info fs.FileInfo) error {
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return err
+	}
+	if err := errors.Join(dst.Sync(), dst.Close()); err != nil {
+		return err
+	}
+	// The macOS "downloaded" mark of someone else's file goes along.
+	if n, err := unix.Getxattr(from, "com.apple.quarantine", make([]byte, 0)); err == nil && n > 0 {
+		buf := make([]byte, n)
+		if n, err = unix.Getxattr(from, "com.apple.quarantine", buf); err == nil {
+			_ = unix.Setxattr(to, "com.apple.quarantine", buf[:n], 0)
+		}
+	}
+	return os.Chtimes(to, info.ModTime(), info.ModTime())
 }
 
 // diskWarning is what to say when the disk holding the archive is not

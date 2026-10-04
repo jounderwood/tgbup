@@ -20,9 +20,19 @@ async function load() {
   render();
 }
 
+// Once set up, the page is the settings: what is changed most comes first,
+// the chats above all; before that, the steps go in the order they are taken.
+const settingsOrder = ["chats", "backup", "schedule", "bot", "archive", "download", "login", "keys"];
+
 function render() {
+  $("intro").textContent = state.complete
+    ? "Everything tgbup does is set here: which chats are archived, where backups go, when it runs. The same settings are in Terminal as tgbup init."
+    : "Finish these steps to start archiving; each shows a ✓ when done. You can stop and come back any time. The same steps are in Terminal as tgbup init.";
+  const steps = state.complete
+    ? [...state.steps].sort((a, b) => settingsOrder.indexOf(a.id) - settingsOrder.indexOf(b.id))
+    : state.steps;
   const warnings = (state.warnings || []).map((w) => el("li", {}, w));
-  $("steps").replaceChildren(...(warnings.length ? [el("ul", { class: "problems" }, warnings)] : []), ...state.steps.map(card));
+  $("steps").replaceChildren(...(warnings.length ? [el("ul", { class: "problems" }, warnings)] : []), ...steps.map(card));
 }
 
 function card(step) {
@@ -42,7 +52,6 @@ function card(step) {
 }
 
 function changeable(step) {
-  if (step.id === "archive") return !state.archive.has_messages;
   return step.id !== "download";
 }
 
@@ -141,6 +150,19 @@ const forms = {
       el("label", { class: "check" }, el("input", { type: "radio", name: "amode", checked: mode === "restore", onchange: () => pick("restore") }), "Restore from a backup")));
     if (draft.archiveDir === undefined) draft.archiveDir = a.dir || a.default;
     const dir = el("input", { type: "text", value: draft.archiveDir, "aria-label": "Archive folder", oninput: (e) => { draft.archiveDir = e.target.value; } });
+    if (a.has_messages && mode === "new") {
+      // Pointing the config elsewhere would start an empty archive and download
+      // everything again: the archive moves with its files instead.
+      f.replaceChildren(el("p", { class: "hint" }, "The archive is in " + a.dir + ". To keep it somewhere else, it moves there whole — database, files and pages. On another disk it is copied and checked first; runs wait meanwhile."),
+        el("label", {}, "Move the archive to (a new or empty folder)"), folderRow(dir),
+        el("div", { class: "row" },
+          el("button", { type: "button", onclick: async () => {
+            if (!confirm("Move the archive to " + dir.value + "?")) return;
+            if (await action(f, "archive/move", { dir: dir.value }, "Archive moved")) { delete draft.archiveDir; open.delete("archive"); load(); }
+          } }, "Move the archive"),
+          el("button", { type: "button", class: "link", onclick: () => pick("restore") }, "or restore from a backup")));
+      return f;
+    }
     if (mode === "new") {
       f.append(el("label", {}, "Archive folder"), folderRow(dir),
         el("div", {}, el("button", { type: "button", onclick: async () => {

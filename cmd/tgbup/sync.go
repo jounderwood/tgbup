@@ -67,7 +67,7 @@ func (s syncSummary) print(w io.Writer) {
 	for _, part := range []struct {
 		n    int
 		what string
-	}{{s.media.Skipped, "skipped by settings"}, {s.media.Deferred, "deferred"}, {s.media.Failed, "failed"}} {
+	}{{s.media.Skipped, "skipped by settings"}, {s.media.Deferred, "deferred"}, {s.media.Retry, "to retry next run"}, {s.media.Failed, "failed"}} {
 		if part.n > 0 {
 			fmt.Fprintf(w, " · %s %s", groupDigits(part.n), part.what)
 		}
@@ -75,6 +75,9 @@ func (s syncSummary) print(w io.Writer) {
 	fmt.Fprintln(w)
 	for _, err := range s.media.Errors {
 		fmt.Fprintf(w, "  %v\n", err)
+	}
+	for _, err := range s.media.RetryErrors {
+		fmt.Fprintf(w, "  %v (retried next run)\n", err)
 	}
 	if s.media.LocalErr != nil {
 		fmt.Fprintf(w, "media stopped by a local disk error: %v\n", s.media.LocalErr)
@@ -317,6 +320,10 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 		Progress: progressPrinter(progressOut, tty, "media"),
 	}
 	sum.media, err = d.Run(ctx)
+	// Not a failed run, but worth seeing in the run's details.
+	for _, e := range sum.media.RetryErrors {
+		log.Warn("a file will be downloaded again next run", "err", e.Error())
+	}
 	views()
 	if err != nil {
 		return sum, err

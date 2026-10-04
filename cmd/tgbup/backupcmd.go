@@ -150,7 +150,13 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 }
 
 // cmdRun is what the schedule starts: sync, backup, record, notify.
-func cmdRun(ctx context.Context, env Env) int {
+func cmdRun(ctx context.Context, args []string, env Env) int {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	takeout := fs.Bool("takeout", false, "download through a Telegram data export (the first, full download)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	warnings := &warnLines{}
 	log := slog.New(warnings.wrap(newLogger(env.Stderr).Handler()))
 	st, err := loadSetup(env, true)
@@ -174,10 +180,17 @@ func cmdRun(ctx context.Context, env Env) int {
 		return failEarly(ctx, log, bot, "open the archive", err)
 	}
 	defer db.Close()
-	return runOnce(ctx, runParts{
-		sync: func(ctx context.Context) (syncSummary, error) {
-			return syncArchive(ctx, st, db, log, env.Stderr, false)
-		},
+	return runOnce(ctx, newRunParts(st, db, bot, log, warnings, env, func(ctx context.Context) (syncSummary, error) {
+		return syncArchive(ctx, st, db, log, env.Stderr, *takeout)
+	}))
+}
+
+// newRunParts is a run of tgbup: sync (as given), back up into every place,
+// record the run and tell the bot.
+func newRunParts(st setup, db *store.Store, bot notify.Bot, log *slog.Logger, warnings *warnLines, env Env,
+	sync func(context.Context) (syncSummary, error)) runParts {
+	return runParts{
+		sync: sync,
 		backup: func(ctx context.Context) (backup.Report, bool) {
 			if len(st.cfg.Backup.Repositories) == 0 {
 				return backup.Report{}, false
@@ -196,7 +209,7 @@ func cmdRun(ctx context.Context, env Env) int {
 		host: hostname(), archiveDir: st.cfg.ArchiveDir, repos: st.cfg.Backup.Repositories,
 		summaryEvery: st.cfg.Notify.SummaryEvery.D(), now: time.Now, loc: time.Local,
 		out: env.Stdout, log: log, warnings: warnings,
-	})
+	}
 }
 
 func cmdNotify(ctx context.Context, args []string, env Env) int {

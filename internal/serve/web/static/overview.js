@@ -13,8 +13,16 @@ function renderStatus(s) {
   $("host").textContent = s.host;
   document.title = "tgbup · " + s.host;
 
+  // Until the required settings are made, nothing is archived: say so first.
+  const left = s.setup_left || [];
+  $("setup-left").hidden = !left.length;
+  $("setup-left").replaceChildren(
+    el("h2", {}, "Setup is not finished — nothing is being archived yet"),
+    el("ul", {}, left.map((p) => el("li", {}, p))),
+    el("a", { href: "/settings" }, el("button", { type: "button" }, "Continue setup")));
+  $("settings-tab").classList.toggle("todo", left.length > 0);
   const problems = $("problems");
-  problems.replaceChildren(...(s.problems || []).map((p) => el("li", {}, p + " ", el("a", { href: "/setup" }, "Open Setup"))));
+  problems.replaceChildren(...(s.problems || []).map((p) => el("li", {}, p + " ", el("a", { href: "/settings" }, "Open Settings"))));
   problems.hidden = !(s.problems || []).length;
 
   const last = (s.runs || [])[0];

@@ -47,7 +47,7 @@ func TestMediaQueueLifecycle(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		if err := s.MediaAttemptFailed(ctx, "document:1", "boom", 5); err != nil {
+		if _, err := s.MediaAttemptFailed(ctx, "document:1", "boom", 5); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
@@ -168,7 +169,7 @@ func (w *wizard) steps() []initStep {
 	return []initStep{
 		{name: "Telegram API keys", check: w.checkKeys, change: "Enter different API keys?", run: w.setKeys},
 		{name: "Telegram login", check: w.checkLogin, run: w.login},
-		{name: "Archive folder", check: w.checkArchiveDir, run: w.setArchiveDir},
+		{name: "Archive folder", check: w.checkArchiveDir, change: "Move the archive to another folder?", run: w.setArchiveDir},
 		{name: "Chats to archive", check: w.checkChats, change: "Change the chat list?", run: w.chooseChats},
 		{name: "Backups", check: w.checkStorage, change: "Change the backup settings?",
 			run: w.setBackup, after: w.initRepos, optional: true},
@@ -277,6 +278,26 @@ func (w *wizard) setArchiveDir(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// An archive with messages moves whole: pointing the config elsewhere
+	// would start an empty one and download everything again.
+	if n, err := archivedMessages(ctx, st.cfg.ArchiveDir); err == nil && n > 0 {
+		fmt.Fprintf(w.out, "  The archive (%s) moves with its files and pages; on another disk it is copied and checked first.\n",
+			tildePath(st.cfg.ArchiveDir, st.paths.Home))
+		dir, err := w.askValid(ctx, "  Move it to (a new or empty folder; Enter = keep it where it is): ", func(v string) error {
+			if v == "" {
+				return nil
+			}
+			return checkArchiveDir(v)
+		})
+		if err != nil || dir == "" {
+			return err
+		}
+		if err := moveArchive(st, dir); err != nil {
+			return err
+		}
+		fmt.Fprintf(w.out, "  moved to %s\n", dir)
+		return nil
+	}
 	restore, err := w.yes(ctx, "  Restore an archive from an existing backup instead of starting a new one?", false)
 	if err != nil {
 		return err
@@ -314,10 +335,47 @@ func (w *wizard) checkChats(context.Context) (string, bool, error) {
 		return "", false, nil
 	}
 	status := plural(len(t.Include), "chat")
+	if names := chatNames(st, t.Include, 5); names != "" {
+		status += ": " + names
+	}
 	if len(t.Folders) > 0 {
-		status += fmt.Sprintf(" and folders %s", strings.Join(t.Folders, ", "))
+		status += fmt.Sprintf("; folders %s", strings.Join(t.Folders, ", "))
 	}
 	return status, true, nil
+}
+
+// chatNames names up to max of the chosen chats by the titles the archive
+// knows; "" before the first download.
+func chatNames(st setup, include []config.PeerRef, max int) string {
+	path := filepath.Join(st.cfg.ArchiveDir, "archive.sqlite")
+	if !isFile(path) {
+		return ""
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	chats, err := db.RenderChats(context.Background())
+	if err != nil {
+		return ""
+	}
+	titles := map[int64]string{}
+	for _, c := range chats {
+		titles[c.ID] = c.Title
+	}
+	var names []string
+	for _, p := range include {
+		if id, ok := p.ID(); ok && titles[id] != "" {
+			names = append(names, titles[id])
+		} else if u, ok := p.Username(); ok {
+			names = append(names, "@"+u)
+		}
+	}
+	if len(names) > max {
+		return strings.Join(names[:max], ", ") + fmt.Sprintf(" and %d more", len(names)-max)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (w *wizard) chooseChats(ctx context.Context) error {
@@ -1040,7 +1098,8 @@ func (w *wizard) firstSync(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
-	log := newLogger(w.env.Stderr)
+	warnings := &warnLines{}
+	log := slog.New(warnings.wrap(newLogger(w.env.Stderr).Handler()))
 	// Takeout gets higher limits for a full export; Telegram asks to allow it in the app first.
 	takeout := true
 	for {
@@ -1058,11 +1117,14 @@ func (w *wizard) firstSync(ctx context.Context) error {
 			}
 			continue
 		}
-		if err != nil {
-			return err
-		}
-		sum.print(w.out)
-		if !sum.ok() {
+		// Recorded and backed up like any run: the overview shows it, and the
+		// archive has its first snapshot right away.
+		bot := notify.Bot{Token: st.secrets.BotToken, ChatID: st.secrets.BotChatID}
+		env := w.env
+		env.Stdout = w.out
+		if code := runOnce(ctx, newRunParts(st, db, bot, log, warnings, env, func(context.Context) (syncSummary, error) {
+			return sum, err
+		})); code != 0 {
 			fmt.Fprintln(w.out, "  some items failed; scheduled runs try them again")
 		}
 		return nil
@@ -1227,6 +1289,9 @@ func (w *wizard) schedule(ctx context.Context) error {
 		return err
 	} else if !ok {
 		return errSkipped
+	}
+	if lockHeld(st.paths.Lock()) {
+		return errors.New("a run is in progress: the check would be skipped; run tgbup init again when it has finished")
 	}
 	return w.watchRun(ctx, j, st.cfg.ArchiveDir, 2*time.Second, 30*time.Minute)
 }

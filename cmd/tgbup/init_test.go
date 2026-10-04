@@ -15,6 +15,7 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/serve"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -672,5 +673,70 @@ func TestBadPlaceIsSkippedNotFatal(t *testing.T) {
 	}
 	if strings.Contains(errBadPlace.Error(), pw) {
 		t.Error("the error shows the place")
+	}
+}
+
+// Moving the archive takes its files along and points the config at it.
+func TestMoveArchive(t *testing.T) {
+	_, _, p := testWizard(t, "")
+	from := filepath.Join(p.Home, "Old")
+	for _, f := range []string{"archive.sqlite", "media/2025/2025-01-01_000000_a.jpg", "html/index.html"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(from, f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(from, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := config.SetValue(p.Config, []string{"archive_dir"}, from); err != nil {
+		t.Fatal(err)
+	}
+	st, err := loadLocalSetup(Env{Getenv: func(k string) string { return map[string]string{"HOME": p.Home}[k] }}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"relative", from, filepath.Join(from, "inside")} {
+		if err := moveArchive(st, bad); !errors.Is(err, serve.ErrBadRequest) {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	busy := filepath.Join(p.Home, "Busy")
+	_ = os.MkdirAll(busy, 0o755)
+	_ = os.WriteFile(filepath.Join(busy, "x"), nil, 0o644)
+	if err := moveArchive(st, busy); !errors.Is(err, serve.ErrBadRequest) {
+		t.Errorf("non-empty target: %v", err)
+	}
+	to := filepath.Join(p.Home, "New", "Archive")
+	if err := moveArchive(st, to); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(to, "media/2025/2025-01-01_000000_a.jpg")); string(b) != "media/2025/2025-01-01_000000_a.jpg" {
+		t.Error("media did not move")
+	}
+	if _, err := os.Stat(from); err == nil {
+		t.Error("the old folder stays")
+	}
+	if st, _ := loadLocalSetup(Env{Getenv: func(k string) string { return map[string]string{"HOME": p.Home}[k] }}, false); st.cfg.ArchiveDir != to {
+		t.Errorf("config archive_dir = %s", st.cfg.ArchiveDir)
+	}
+}
+
+// Across disks the copy is checked before the old folder goes.
+func TestCopyArchiveKeepsTimes(t *testing.T) {
+	from, to := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
+	_ = os.MkdirAll(filepath.Join(from, "media"), 0o755)
+	f := filepath.Join(from, "media", "x.jpg")
+	_ = os.WriteFile(f, []byte("jpeg"), 0o644)
+	when := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	_ = os.Chtimes(f, when, when)
+	if err := copyArchive(from, to); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(to, "media", "x.jpg"))
+	if err != nil || !st.ModTime().Equal(when) {
+		t.Fatalf("copied file: %v %v", st, err)
+	}
+	if _, err := os.Stat(from); err == nil {
+		t.Error("the old folder stays")
 	}
 }

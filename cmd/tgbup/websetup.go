@@ -246,6 +246,11 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 			req.Dir = st.cfg.ArchiveDir // the default until a config sets one
 		}
 		return nil, saveArchiveDir(st, req.Dir)
+	case "archive/move":
+		// The page reads the database meanwhile; it waits for the move.
+		b.dbMu.Lock()
+		defer b.dbMu.Unlock()
+		return nil, moveArchive(st, req.Dir)
 	case "choose-folder":
 		return chooseFolder(ctx)
 	case "password/new":
@@ -273,7 +278,8 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 	case "bot/save":
 		return nil, saveBot(ctx, st, notify.Bot{Token: strings.TrimSpace(req.Token), ChatID: req.ChatID})
 	case "download":
-		args := []string{"sync"}
+		// A whole run: the first download is recorded and backed up like any other.
+		args := []string{"run"}
 		if req.Takeout {
 			args = append(args, "--takeout")
 		}
@@ -321,6 +327,10 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		}
 		if st.testDC || !j.installedHere() {
 			return nil, badInput("install the schedule first")
+		}
+		if b.running(st) {
+			// It would start, find run.lock taken and skip without a trace.
+			return nil, badInput("a run is in progress: start the check when it has finished")
 		}
 		return nil, j.kickstart()
 	case "restore/snapshots":

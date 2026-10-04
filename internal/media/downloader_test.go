@@ -391,8 +391,25 @@ func TestHangingChunkFailsTheAttempt(t *testing.T) {
 	e := newEnv(t, 1000)
 	e.tg.hang = true
 	r, err := e.d.Run(context.Background())
-	if err != nil || r.Failed != 1 || e.info(t).Attempts != 1 {
+	if err != nil || r.Retry != 1 || r.Failed != 0 || e.info(t).Attempts != 1 {
 		t.Fatalf("report = %+v info = %+v err = %v: a hung request must end and count as an attempt", r, e.info(t), err)
+	}
+}
+
+// A file with attempts left is retried next run and does not fail this one;
+// the last attempt gives up and does.
+func TestFailureWithAttemptsLeftIsARetry(t *testing.T) {
+	e := newEnv(t, 1000)
+	e.tg.fail = tgerr.New(500, "RPC_CALL_FAIL")
+	for i := 1; i <= media.MaxAttempts; i++ {
+		r, err := e.d.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := i == media.MaxAttempts
+		if last && (r.Failed != 1 || r.Retry != 0) || !last && (r.Retry != 1 || r.Failed != 0 || len(r.RetryErrors) != 1) {
+			t.Fatalf("run %d: %+v", i, r)
+		}
 	}
 }
 

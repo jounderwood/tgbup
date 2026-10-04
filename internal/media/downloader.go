@@ -53,9 +53,13 @@ type Downloader struct {
 type Report struct {
 	Done     int
 	Skipped  int
-	Failed   int
+	Failed   int // gave up after MaxAttempts
 	Deferred int
 	Errors   []error
+	// Retry counts files that failed this time but have attempts left: they
+	// are tried again next run, so the run is not failed for them.
+	Retry       int
+	RetryErrors []error
 	AuthErr  error
 	// LocalErr is a disk-side failure (full disk, permissions); it stops the
 	// media phase and is not held against the files.
@@ -101,9 +105,11 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 				local := err != nil && isLocal(err)
 				countsAsAttempt := err != nil && !local &&
 					(kind == tgclient.KindOther || kind == tgclient.KindFileReference || kind == tgclient.KindInaccessible)
+				gaveUp := false
 				if countsAsAttempt {
-					if ferr := d.Store.MediaAttemptFailed(context.WithoutCancel(ctx), j.Key, err.Error(), MaxAttempts); ferr != nil {
-						err = errors.Join(err, ferr)
+					var ferr error
+					if gaveUp, ferr = d.Store.MediaAttemptFailed(context.WithoutCancel(ctx), j.Key, err.Error(), MaxAttempts); ferr != nil {
+						err, gaveUp = errors.Join(err, ferr), true
 					}
 				}
 				mu.Lock()
@@ -122,6 +128,9 @@ func (d *Downloader) Run(ctx context.Context) (Report, error) {
 				case kind == tgclient.KindAuth:
 					r.AuthErr = err
 					cancel(err)
+				case !gaveUp:
+					r.Retry++
+					r.RetryErrors = append(r.RetryErrors, fmt.Errorf("media %s: %w", j.Key, err))
 				default:
 					r.Failed++
 					r.Errors = append(r.Errors, fmt.Errorf("media %s: %w", j.Key, err))
