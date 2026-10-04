@@ -38,6 +38,11 @@ function renderStatus(s) {
     detail.textContent = when(last.started) + " · " + plural(last.new_messages, "new message") + ", " + plural(last.new_media, "new file");
     errs.replaceChildren(...(last.errors || []).slice(0, 8).map((e) => el("li", {}, e)));
   }
+  // An empty archive starts with the first download, not an update.
+  const empty = !(s.archive.messages > 0);
+  $("first-run").hidden = !empty || !!(s.setup_left || []).length;
+  $("run-now").hidden = empty;
+  $("first-takeout").disabled = $("first-plain").disabled = running;
   $("run-now").disabled = running;
   $("run-state").textContent = running ? " running…" : "";
 
@@ -132,13 +137,21 @@ $("open-archive").addEventListener("click", async () => {
   try { await api("POST", "/api/archive/open"); } catch (e) { toast("Could not open the archive: " + e.message); }
 });
 
-$("run-now").addEventListener("click", async () => {
-  $("run-now").disabled = true;
+$("first-takeout").addEventListener("click", () => startRun("/api/run?takeout=1"));
+$("first-plain").addEventListener("click", () => startRun("/api/run"));
+$("run-now").addEventListener("click", () => startRun("/api/run"));
+
+async function startRun(path) {
+  $("run-now").disabled = $("first-takeout").disabled = $("first-plain").disabled = true;
   gen++;
   try {
-    await api("POST", "/api/run");
+    await api("POST", path);
   } catch (e) {
-    if (e.status !== 409) { toast("Could not start: " + e.message); $("run-now").disabled = false; return; }
+    if (e.status !== 409) {
+      toast("Could not start: " + e.message);
+      $("run-now").disabled = $("first-takeout").disabled = $("first-plain").disabled = false;
+      return;
+    }
     toast("A run is already in progress");
   }
   running = true;
@@ -146,6 +159,6 @@ $("run-now").addEventListener("click", async () => {
   $("run-state").textContent = " running…";
   clearTimeout(timer);
   timer = setTimeout(refresh, 1500);
-});
+}
 
 refresh();

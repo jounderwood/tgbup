@@ -32,7 +32,8 @@ var ErrBadRequest = errors.New("bad request")
 // Backend is what the interface shows and changes.
 type Backend interface {
 	Status(ctx context.Context) (Status, error)
-	StartRun() error
+	// StartRun starts tgbup run; takeout for the first, full download.
+	StartRun(takeout bool) error
 	RunLog() (string, error)
 	Chats(ctx context.Context) (ChatList, error)
 	Counts(ctx context.Context, ids []int64) (map[int64]Count, error)
@@ -326,8 +327,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	reply(w, st, err)
 }
 
-func (s *Server) run(w http.ResponseWriter, _ *http.Request) {
-	err := s.backend.StartRun()
+func (s *Server) run(w http.ResponseWriter, r *http.Request) {
+	err := s.backend.StartRun(r.URL.Query().Get("takeout") == "1")
 	if errors.Is(err, ErrBusy) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

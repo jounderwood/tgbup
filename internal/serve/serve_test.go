@@ -24,19 +24,21 @@ func (f *fakeBackend) Snapshots(_ context.Context, place int) ([]Snapshot, error
 }
 
 type fakeBackend struct {
-	opened  int
-	counted []bool // the counts flag of each Topics and Preview call
-	actions []string
-	busy    bool
-	runs    int
-	saved   *Selection
+	takeouts []bool
+	opened   int
+	counted  []bool // the counts flag of each Topics and Preview call
+	actions  []string
+	busy     bool
+	runs     int
+	saved    *Selection
 }
 
 func (f *fakeBackend) Status(context.Context) (Status, error) {
 	return Status{Host: "mac", Archive: Archive{Messages: 42}}, nil
 }
 
-func (f *fakeBackend) StartRun() error {
+func (f *fakeBackend) StartRun(takeout bool) error {
+	f.takeouts = append(f.takeouts, takeout)
 	if f.busy {
 		return ErrBusy
 	}
@@ -340,5 +342,15 @@ func TestCountsOnlyWhenAsked(t *testing.T) {
 	do(t, s, "POST", "/api/chats/preview?counts=1", host, tok, `{"chats":[1]}`)
 	if want := []bool{false, true, false, true}; !slices.Equal(f.counted, want) {
 		t.Fatalf("counts = %v, want %v", f.counted, want)
+	}
+}
+
+func TestFirstRunAsksForTakeout(t *testing.T) {
+	s, f, _ := testServer(t)
+	tok := token(t, s)
+	do(t, s, "POST", "/api/run", host, tok, "")
+	do(t, s, "POST", "/api/run?takeout=1", host, tok, "")
+	if !slices.Equal(f.takeouts, []bool{false, true}) {
+		t.Fatalf("takeout = %v", f.takeouts)
 	}
 }

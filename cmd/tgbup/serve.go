@@ -268,7 +268,12 @@ func lockHeld(path string) bool {
 	return false
 }
 
-func (b *serveBackend) StartRun() error { return b.startProcess("run") }
+func (b *serveBackend) StartRun(takeout bool) error {
+	if takeout {
+		return b.startProcess("run", "--takeout")
+	}
+	return b.startProcess("run")
+}
 
 // startProcess runs tgbup with args as its own process, writing to run.log
 // like the schedule does; one at a time, and not while a run holds run.lock.

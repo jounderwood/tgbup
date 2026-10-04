@@ -25,6 +25,11 @@
       <div id="last-run-detail" class="muted"></div>
       <ul id="last-run-errors" class="errors"></ul>
       <button id="run-now" type="button">Update now</button>
+      <div id="first-run" hidden>
+        <p class="muted">The archive is empty. The first download uses a Telegram data export, which is faster for a whole history: Telegram asks to allow it in your Telegram app (a message from “Telegram”).</p>
+        <button id="first-takeout" type="button">Start the first download</button>
+        <button id="first-plain" type="button" class="secondary">Without the export</button>
+      </div>
       <span id="run-state" class="muted"></span>
     </div>
     <div class="box">
