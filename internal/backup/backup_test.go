@@ -97,6 +97,10 @@ func TestBackupSnapshotsArchive(t *testing.T) {
 	if !r.OK() || r.Repos[0].Snapshot == "" {
 		t.Fatalf("report = %+v", r)
 	}
+	// The database copy is only for the snapshot.
+	if _, err := os.Stat(filepath.Join(e.o.WorkDir, "archive.sqlite")); err == nil {
+		t.Error("the database copy stays after the backup")
+	}
 	files := e.restic(t, repo, "ls", "latest")
 	for _, want := range []string{"/archive.sqlite", "/config.yaml", "/media/photo/7.jpg", "/html/index.html"} {
 		if !strings.Contains(files, want) {

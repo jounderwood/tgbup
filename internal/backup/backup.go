@@ -130,6 +130,9 @@ func Run(ctx context.Context, a Archive, o Options) Report {
 		r.Integrity = err
 		return r
 	}
+	// The copy exists only for the snapshots: kept, it would take as much
+	// room again as the archive's database.
+	defer o.removeCopy()
 	if err := o.prepare(ctx, a); err != nil {
 		r.Integrity = fmt.Errorf("prepare the snapshot: %w", err)
 		return r
@@ -154,6 +157,14 @@ func (o Options) host(ctx context.Context, a Archive) (string, error) {
 		return v, err
 	}
 	return o.Host, a.SetMeta(ctx, "backup:host", o.Host)
+}
+
+// removeCopy deletes what prepare put into WorkDir.
+func (o Options) removeCopy() {
+	for _, f := range []string{"archive.sqlite", "config.yaml"} {
+		_ = os.Remove(filepath.Join(o.WorkDir, f))
+	}
+	_ = os.Remove(o.WorkDir) // only if empty
 }
 
 // prepare puts a consistent database copy and the config into WorkDir.

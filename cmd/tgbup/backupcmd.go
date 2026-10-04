@@ -44,7 +44,9 @@ func backupOptions(ctx context.Context, st setup) (backup.Options, error) {
 	o := backup.Options{
 		Repos: repos, Retention: b.Retention, PruneEvery: b.PruneEvery.D(), CheckEvery: b.CheckEvery.D(),
 		CheckSubset: b.CheckReadSubset, Password: st.secrets.ResticPassword, RcloneConfigPass: st.secrets.RcloneConfigPass,
-		WorkDir: filepath.Join(st.paths.StateDir, "backup"), ArchiveDir: st.cfg.ArchiveDir, ConfigPath: st.paths.Config,
+		// The database copy for a snapshot lives next to the archive, on its disk,
+		// only while the snapshot is taken.
+		WorkDir: filepath.Join(st.cfg.ArchiveDir, ".snapshot"), ArchiveDir: st.cfg.ArchiveDir, ConfigPath: st.paths.Config,
 		Host: hostname(), Now: time.Now,
 	}
 	var err error

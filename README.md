@@ -230,7 +230,7 @@ Google Drive через rclone на новом компьютере подклю
    ```bash
    RESTIC_PASSWORD=… restic -r "<репозиторий>" restore latest --target ~/restore
    ```
-   Пути в снимке абсолютные: в `~/restore` окажутся `…/.local/state/tgbup/backup/archive.sqlite`, `…/config.yaml`,
+   Пути в снимке абсолютные: в `~/restore` окажутся `…/archive/.snapshot/archive.sqlite`, `…/archive/.snapshot/config.yaml`,
    `…/archive/media/` и `…/archive/html/`.
 3. Чтобы только почитать, достаточно открыть `…/archive/html/index.html`.
 4. Чтобы продолжить архив: `archive.sqlite` и `media/` положить в папку архива, `config.yaml` — в `~/Tgbup/`,

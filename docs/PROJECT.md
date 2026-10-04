@@ -52,6 +52,7 @@
     media/<год>/<дата>_<время>_<имя>  файлы, один на все пересылки; имя — оригинальное или чат  → в снимке
     html/                          страницы с диска; «archive as of» из assets/updated.js       → в снимке (для чтения без tgbup)
     md/                            те же страницы в Markdown                                     → не в снимке
+    .snapshot/                     копия базы (VACUUM INTO) и конфига, только пока делается снимок → в снимке
   backup/                          репозиторий restic на этом Mac (если выбран)
   logs/tgbup.log, run.log          журнал всех команд и вывод запусков; по 10 МБ, хранятся 5
 ~/.local/state/tgbup/              скрыто: то, что не должно ездить с видимой папкой
@@ -60,7 +61,6 @@
   run.lock                         один запуск за раз: sync, run, backup (и --init), render,
                                    init (создание репозиториев, первая выгрузка)
   bin/restic-*/, bin/rclone-*/     скачанные зависимости
-  backup/archive.sqlite, config.yaml   копия базы и конфига для снимка                         → в снимке
 ~/.config/rclone/rclone.conf       вход в Google Drive через rclone (если выбран)               → не в снимке
 <другие места бэкапа>              iCloud, Google Drive, внешние диски и любые restic-репозитории
 ~/Library/LaunchAgents/com.gitlab.joeunderwood.tgbup.plist   tgbup run в schedule.times (по умолчанию 00:30, 06:30, 12:30, 18:30)
