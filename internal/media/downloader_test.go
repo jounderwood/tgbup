@@ -141,7 +141,7 @@ func newEnv(t *testing.T, size int) *env {
 }
 
 // finalRel is where docMessage's file goes: its date is 1 second after the epoch.
-var finalRel = filepath.Join("media", "1970", "1970-01-01_000001_отчёт 2026.pdf")
+var finalRel = filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026.pdf")
 
 func (e *env) final() string { return filepath.Join(e.dir, finalRel) }
 
@@ -268,7 +268,7 @@ func quarantinedWhenSent(t *testing.T, sent func(*tg.Message)) bool {
 // never overwritten: the download takes the next name.
 func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
 	e := newEnv(t, 100)
-	other := filepath.Join(e.dir, "media", "1970", "1970-01-01_000001_ОТЧЁТ 2026.pdf")
+	other := filepath.Join(e.dir, "media", "1970", "file", "1970-01-01_000001_ОТЧЁТ 2026.pdf")
 	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
 	if b, _ := os.ReadFile(other); string(b) != "someone else's" {
 		t.Fatal("an existing file was overwritten")
 	}
-	want := filepath.Join("media", "1970", "1970-01-01_000001_отчёт 2026 (2).pdf")
+	want := filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026 (2).pdf")
 	if i := e.info(t); i.LocalPath != want {
 		t.Fatalf("path = %s, want %s", i.LocalPath, want)
 	}
@@ -457,17 +457,17 @@ func TestRelPath(t *testing.T) {
 		n    int
 		want string
 	}{
-		{store.MediaJob{Kind: "document", FileName: "Договор аренды.PDF", Mime: "application/pdf"}, 1, "2024-06-14_180233_Договор аренды.PDF"},
-		{store.MediaJob{Kind: "document", FileName: "Договор аренды.pdf"}, 2, "2024-06-14_180233_Договор аренды (2).pdf"},
-		{store.MediaJob{Kind: "document", FileName: "../../etc/passwd", Mime: "application/pdf"}, 1, "2024-06-14_180233_etcpasswd.pdf"},
-		{store.MediaJob{Kind: "photo", ChatTitle: "Семья / дом"}, 1, "2024-06-14_180233_Семья дом.jpg"},
-		{store.MediaJob{Kind: "video_note"}, 1, "2024-06-14_180233_round.mp4"},
-		{store.MediaJob{Kind: "document", FileName: "install.command"}, 1, "2024-06-14_180233_install.command.txt"},
-		{store.MediaJob{Kind: "document", FileName: "run.SH", ChatTitle: "x"}, 1, "2024-06-14_180233_run.SH.txt"},
+		{store.MediaJob{Kind: "document", FileName: "Договор аренды.PDF", Mime: "application/pdf"}, 1, "file/2024-06-14_180233_Договор аренды.PDF"},
+		{store.MediaJob{Kind: "document", FileName: "Договор аренды.pdf"}, 2, "file/2024-06-14_180233_Договор аренды (2).pdf"},
+		{store.MediaJob{Kind: "document", FileName: "../../etc/passwd", Mime: "application/pdf"}, 1, "file/2024-06-14_180233_etcpasswd.pdf"},
+		{store.MediaJob{Kind: "photo", ChatTitle: "Семья / дом"}, 1, "photo/2024-06-14_180233_Семья дом.jpg"},
+		{store.MediaJob{Kind: "video_note"}, 1, "round/2024-06-14_180233_round.mp4"},
+		{store.MediaJob{Kind: "document", FileName: "install.command"}, 1, "file/2024-06-14_180233_install.command.txt"},
+		{store.MediaJob{Kind: "document", FileName: "run.SH", ChatTitle: "x"}, 1, "file/2024-06-14_180233_run.SH.txt"},
 	} {
 		c.job.Date = date
 		got := media.RelPath(c.job, time.UTC, c.n)
-		if want := filepath.Join("media", "2024", c.want); got != want {
+		if want := filepath.Join("media", "2024", filepath.FromSlash(c.want)); got != want {
 			t.Errorf("%+v → %s, want %s", c.job, got, want)
 		}
 	}

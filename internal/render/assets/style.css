@@ -79,3 +79,12 @@ body.wide { max-width: 1100px; }
 button.local { border: 0; background: none; padding: 0 2px; cursor: pointer; font-size: 14px; opacity: .7; }
 button.local:hover { opacity: 1; }
 .asof { color: #888; font-size: 13px; }
+
+/* The bar: where you are, search, and the page and day pickers; it stays in view. */
+header.bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  background: var(--bg, #fff); padding: 8px 0; border-bottom: 1px solid #8883; }
+header.bar nav.crumbs { margin: 0; }
+header.bar form.search input[type=search] { width: 16em; }
+header.bar .jump select, header.bar .jump input { font: inherit; }
+@media (max-width: 640px) { header.bar form.search input[type=search] { width: 100%; } }
+header.bar form.search { display: flex; align-items: center; gap: 6px; margin: 0; }

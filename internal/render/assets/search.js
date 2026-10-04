@@ -4,40 +4,60 @@
 // Results are built with DOM text nodes only, never from HTML strings.
 window.tgbupSearch = {
   chats: [],
-  loading: null,
   add(c) {
     for (const e of c.entries) e.push(e[3].toLowerCase());
+    // Which file it came from: a search can be limited to one chat's file.
+    c.file = document.currentScript ? document.currentScript.getAttribute('src') : '';
     this.chats.push(c);
   },
+  loaded: {},
+  load(files) {
+    return Promise.all(files.map((src) => this.loaded[src] || (this.loaded[src] = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = s.onerror = resolve;
+      document.head.append(s);
+    }))));
+  },
+  // init runs the box on the index page. #q=…&chat=<id> (from the search box
+  // on any page) fills it and limits it to that chat until "all chats".
   init(files) {
     const q = document.getElementById('q');
     const out = document.getElementById('results');
-    const load = () => {
-      this.loading = this.loading || Promise.all(files.map((src) => new Promise((resolve) => {
-        const s = document.createElement('script');
-        s.src = src;
-        s.onload = s.onerror = resolve;
-        document.head.append(s);
-      })));
-      return this.loading;
+    const scope = document.getElementById('scope');
+    const params = new URLSearchParams(location.hash.slice(1));
+    let only = params.get('chat') ? 'search/' + params.get('chat') + '.js' : '';
+    if (only && !files.includes(only)) only = '';
+    const chosen = () => (only ? [only] : files);
+    const run = async () => {
+      if (!chosen().every((f) => this.loaded[f])) out.textContent = 'Loading the search index…';
+      await this.load(chosen());
+      this.show(q.value.trim().toLowerCase(), out, chosen());
+      scope.replaceChildren();
+      if (only) {
+        const all = Object.assign(document.createElement('a'), { href: '#', textContent: 'search all chats' });
+        all.addEventListener('click', (e) => { e.preventDefault(); only = ''; run(); });
+        scope.append('In one chat only · ', all);
+      }
     };
-    q.addEventListener('focus', load);
+    q.addEventListener('focus', () => this.load(chosen()));
     let timer;
     q.addEventListener('input', () => {
       clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (!this.loading) out.textContent = 'Loading the search index…';
-        await load();
-        this.show(q.value.trim().toLowerCase(), out);
-      }, 150);
+      timer = setTimeout(run, 150);
     });
+    if (params.get('q')) {
+      q.value = params.get('q');
+      run();
+    }
   },
-  show(needle, out) {
+  show(needle, out, files) {
     out.replaceChildren();
     if (needle.length < 2) return;
     const max = 200;
     let found = 0;
     for (const c of this.chats) {
+      if (files && !files.includes(c.file)) continue;
       for (const [, date, page, text, lower] of c.entries) {
         const at = lower.indexOf(needle);
         if (at < 0) continue;

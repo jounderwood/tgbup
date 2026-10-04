@@ -33,6 +33,15 @@ var kindNames = map[string]string{
 	"document": "file", "sticker": "sticker", "animation": "gif",
 }
 
+// kindDir is the folder of a kind of file inside the year: photo, video,
+// file, voice, round, audio, sticker, gif.
+func kindDir(kind string) string {
+	if d, ok := kindNames[kind]; ok {
+		return d
+	}
+	return "file"
+}
+
 // runnable extensions get .txt appended: a double click in Finder must not run
 // a file someone sent.
 var runnable = map[string]bool{
@@ -65,7 +74,7 @@ func PartPath(final string) string {
 }
 
 // RelPath is the n-th candidate name of a file (n > 1 adds " (n)"):
-// media/<year>/<date>_<time>_<name><ext>. The name is the sender's file name
+// media/<year>/<kind>/<date>_<time>_<name><ext>. The name is the sender's file name
 // as it was, made safe, or the chat's title when the file has none.
 func RelPath(j store.MediaJob, loc *time.Location, n int) string {
 	t := time.Unix(j.Date, 0).In(loc)
@@ -86,7 +95,7 @@ func RelPath(j store.MediaJob, loc *time.Location, n int) string {
 	if name == "" {
 		name = "file"
 	}
-	return filepath.Join("media", t.Format("2006"), prefix+name+suffix+ext)
+	return filepath.Join("media", t.Format("2006"), kindDir(j.Kind), prefix+name+suffix+ext)
 }
 
 // baseName is the file name without the extension Ext takes from it.

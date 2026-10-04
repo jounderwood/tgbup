@@ -81,6 +81,11 @@ func TestRenderSite(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "html/assets/local.js")); err != nil {
 		t.Error(err)
 	}
+	// The page and day pickers read the thread's pages and days from nav.js.
+	if nav := read(t, filepath.Join(dir, "html/Family/Expenses/nav.js")); !strings.Contains(nav, `"href":"p1.html"`) ||
+		!strings.Contains(nav, `.html#d20`) || !strings.HasPrefix(nav, "window.tgbupNav = ") {
+		t.Errorf("nav.js = %s", nav)
+	}
 	for _, p := range []string{
 		"html/index.html", "html/assets/style.css", "html/assets/search.js",
 		"html/Family/index.html", "html/Family/General/p1.html", "html/Family/Expenses/p1.html",

@@ -279,6 +279,7 @@ func (t *thread) dateRange(loc *time.Location) string {
 }
 
 type calendar struct {
+	ChatID int64
 	Title  string
 	Crumbs []string
 	Root   string
@@ -311,11 +312,44 @@ type calPage struct {
 	Count int
 }
 
+// writeNav writes nav.js: the thread's pages and which page holds each day,
+// for the page and date pickers on every page of the thread. Only dates and
+// file names: nothing a sender wrote.
+func writeNav(w io.Writer, cal calendar) error {
+	type navPage struct {
+		N     int    `json:"n"`
+		Href  string `json:"href"`
+		Range string `json:"range"`
+	}
+	nav := struct {
+		Pages []navPage         `json:"pages"`
+		Days  map[string]string `json:"days"`
+	}{Days: map[string]string{}}
+	for _, p := range cal.Pages {
+		nav.Pages = append(nav.Pages, navPage{N: p.N, Href: p.Href + ".html", Range: p.Range})
+	}
+	for _, y := range cal.Years {
+		for _, m := range y.Months {
+			for _, d := range m.Days {
+				if _, date, ok := strings.Cut(d.Href, "#d"); ok {
+					nav.Days[date] = d.Href
+				}
+			}
+		}
+	}
+	b, err := json.Marshal(nav)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "window.tgbupNav = %s;\n", b)
+	return err
+}
+
 // writeThreadIndexes writes each thread's calendar (dates.html, dates.md).
 func writeThreadIndexes(l *layout, opts Options, threads []*thread) error {
 	for _, t := range threads {
 		crumbs := l.crumbs(t.ChatID, t.TopicID)
-		cal := calendar{Title: strings.Join(crumbs, " › "), Crumbs: crumbs,
+		cal := calendar{ChatID: t.ChatID, Title: strings.Join(crumbs, " › "), Crumbs: crumbs,
 			Root: strings.Repeat("../", strings.Count(t.Dir, "/")+1), Latest: t.latest()}
 		for _, p := range t.Pages {
 			cal.Pages = append(cal.Pages, calPage{N: p.N, Href: pageName(p.N), Range: dateRange(p.First, p.Last, opts.Loc), Count: len(p.IDs)})
@@ -343,6 +377,11 @@ func writeThreadIndexes(l *layout, opts Options, threads []*thread) error {
 		dir := filepath.FromSlash(t.Dir)
 		if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "dates.html"), func(w io.Writer) error {
 			return datesHTML.Execute(w, cal)
+		}); err != nil {
+			return err
+		}
+		if err := writeFile(filepath.Join(opts.OutDir, "html", dir, "nav.js"), func(w io.Writer) error {
+			return writeNav(w, cal)
 		}); err != nil {
 			return err
 		}

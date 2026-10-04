@@ -7,10 +7,15 @@
 <link rel="stylesheet" href="{{.Root}}assets/style.css">
 <script src="{{.Root}}assets/updated.js" defer></script>
 <script src="{{.Root}}assets/local.js" defer></script>
+<script src="nav.js" defer></script>
 <script src="{{.Root}}assets/page.js" defer></script>
 </head>
 <body>
+<header class="bar">
 <nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · {{.Range}} · <a href="{{.Root}}media.html#chat={{.ChatID}}{{with .Topic}}&topic={{.}}{{end}}">media</a> <span class="asof"></span></nav>
+{{template "search" .}}
+<span class="jump" data-page="{{.N}}"></span>
+</header>
 {{template "pager" .}}
 <main>
 {{- range .Days}}
@@ -97,6 +102,13 @@
 {{template "pager" .}}
 </body>
 </html>
+{{define "search"}}
+<form class="search" role="search" data-root="{{.Root}}" data-chat="{{.ChatID}}">
+<input type="search" name="q" placeholder="Search{{if .ChatID}} this chat{{end}}…" aria-label="Search">
+{{- if .ChatID}} <label><input type="checkbox" name="all"> all chats</label>{{end}}
+</form>
+{{- end}}
+
 {{define "pager"}}
 <nav class="pager">
 {{- if .Prev}}<a href="{{.Prev}}.html">← older</a>{{else}}<span class="off">← older</span>{{end}}

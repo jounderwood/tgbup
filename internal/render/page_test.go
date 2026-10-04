@@ -89,6 +89,8 @@ func TestPageHTML(t *testing.T) {
 		"⏳ photo not downloaded yet",
 		`<button type="button" class="local" data-href="../../../media/document/9.pdf">💾</button>`,
 		`<script src="../../assets/updated.js" defer></script>`, `<span class="asof"></span>`,
+		`<script src="nav.js" defer></script>`, `<header class="bar">`, `<form class="search" role="search" data-root="../../"`,
+		`placeholder="Search this chat…"`, `name="all"`, `<span class="jump" data-page="3"></span>`,
 		"created topic «Recipes»", "pinned a message",
 		"👍 3", "★ 2",
 	} {

@@ -208,7 +208,7 @@ func checkPrivateAndGroup(t *testing.T, db *sql.DB) {
 // so neither is quarantined.
 func checkMediaNames(t *testing.T, archive string) {
 	t.Helper()
-	pattern := filepath.Join(archive, "media", "*", "*_отчёт 2026*.pdf")
+	pattern := filepath.Join(archive, "media", "*", "file", "*_отчёт 2026*.pdf")
 	m, _ := filepath.Glob(pattern)
 	if len(m) != 2 {
 		t.Errorf("%d matches for %s: %q", len(m), pattern, m)

@@ -5,9 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · dates</title>
 <link rel="stylesheet" href="{{.Root}}assets/style.css">
+<script src="{{.Root}}assets/page.js" defer></script>
 </head>
 <body>
+<header class="bar">
 <nav class="crumbs"><a href="{{.Root}}index.html">Archive</a>{{range .Crumbs}} › {{.}}{{end}} · <a href="{{.Latest}}.html">latest messages</a></nav>
+<form class="search" role="search" data-root="{{.Root}}" data-chat="{{.ChatID}}">
+<input type="search" name="q" placeholder="Search this chat…" aria-label="Search"> <label><input type="checkbox" name="all"> all chats</label>
+</form>
+</header>
 <h1>{{.Title}}</h1>
 {{- range .Years}}
 <h2>{{.Year}}</h2>
