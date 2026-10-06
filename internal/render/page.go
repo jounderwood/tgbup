@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -130,7 +131,7 @@ func buildPage(in pageInput) Page {
 			Edited:   m.EditDate != 0,
 			Pinned:   m.Pinned,
 			Forward:  forward(m, in.Loc),
-			Service:  serviceText(m.ServiceActionJSON),
+			Service:  serviceText(m.ServiceActionJSON, in.Refs[m.ReplyToID].MetaJSON),
 		}
 		pm.Reactions = reactions(m.ReactionsJSON)
 		if m.ReplyToID != 0 {
@@ -306,9 +307,14 @@ var serviceTexts = map[string]string{
 	"messageActionHistoryClear":        "cleared history",
 }
 
-func serviceText(actionJSON string) string {
+// serviceText says what a service message did; refMeta is the meta of the
+// message it refers to (a checklist, for checklist events).
+func serviceText(actionJSON, refMeta string) string {
 	if actionJSON == "" {
 		return ""
+	}
+	if t := convert.TodoEventText(actionJSON, refMeta); t != "" {
+		return t
 	}
 	var a struct {
 		Type string         `json:"type"`

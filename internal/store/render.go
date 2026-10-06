@@ -294,6 +294,8 @@ type MessageRef struct {
 	SenderName string
 	Text       string
 	MediaKind  string
+	// MetaJSON names a checklist's items for the events that refer to it.
+	MetaJSON string
 }
 
 func (s *Store) MessageRefs(ctx context.Context, chatID int64, ids []int) (map[int]MessageRef, error) {
@@ -306,7 +308,7 @@ func (s *Store) MessageRefs(ctx context.Context, chatID int64, ids []int) (map[i
 		args = append(args, id)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT msg.id, COALESCE(msg.topic_id, 0), msg.text, `+senderName+`, COALESCE(m.kind, '')
+SELECT msg.id, COALESCE(msg.topic_id, 0), msg.text, `+senderName+`, COALESCE(m.kind, ''), COALESCE(msg.meta_json, '')
 FROM messages msg`+senderJoins+`
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
@@ -317,7 +319,7 @@ WHERE msg.chat_id = ? AND msg.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)`, ar
 	defer rows.Close()
 	for rows.Next() {
 		r := MessageRef{ChatID: chatID}
-		if err := rows.Scan(&r.ID, &r.TopicID, &r.Text, &r.SenderName, &r.MediaKind); err != nil {
+		if err := rows.Scan(&r.ID, &r.TopicID, &r.Text, &r.SenderName, &r.MediaKind, &r.MetaJSON); err != nil {
 			return nil, err
 		}
 		out[r.ID] = r

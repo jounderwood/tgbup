@@ -9,12 +9,51 @@ import (
 	"path/filepath"
 	"time"
 
+	"gitlab.com/joeunderwood/tgbup/internal/convert"
 	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
 func renderArchive(ctx context.Context, db *store.Store, archiveDir string, full bool) (render.Result, error) {
+	if err := applyTodoEvents(ctx, db); err != nil {
+		return render.Result{}, fmt.Errorf("update checklists: %w", err)
+	}
 	return render.Render(ctx, db, render.Options{OutDir: archiveDir, Track: true, Full: full, Loc: time.Local})
+}
+
+// applyTodoEvents brings every archived checklist up to the ticks and items
+// added after it was downloaded: Telegram sends those as separate events and
+// does not resend the checklist. A changed checklist changes its page, which
+// is then redrawn.
+func applyTodoEvents(ctx context.Context, db *store.Store) error {
+	events, err := db.TodoEvents(ctx)
+	if err != nil {
+		return err
+	}
+	type key struct {
+		chat int64
+		id   int
+	}
+	metas, changed := map[key]string{}, map[key]bool{}
+	for _, e := range events {
+		k := key{e.ChatID, e.Checklist}
+		meta, seen := metas[k]
+		if !seen {
+			if meta, err = db.MessageMeta(ctx, e.ChatID, e.Checklist); err != nil {
+				return err
+			}
+		}
+		if next, ok := convert.ApplyTodoEvent(meta, e.ActionJSON, e.FromID, int(e.Date)); ok {
+			meta, changed[k] = next, true
+		}
+		metas[k] = meta
+	}
+	for k := range changed {
+		if err := db.SetMessageMeta(ctx, k.chat, k.id, metas[k]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printRender(w io.Writer, r render.Result, err error) {

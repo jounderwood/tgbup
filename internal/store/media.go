@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -148,5 +149,50 @@ func (s *Store) CountMedia(ctx context.Context, status string) (int, error) {
 // ReleaseMediaPath forgets the name reserved for key, so another can be chosen.
 func (s *Store) ReleaseMediaPath(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE media SET local_path = NULL, path_key = NULL WHERE key = ?`, key)
+	return err
+}
+
+// TodoEvent is a checklist event: who ticked or added items in which checklist.
+type TodoEvent struct {
+	ChatID     int64
+	Checklist  int // the checklist message the event refers to
+	FromID     int64
+	Date       int64
+	ActionJSON string
+}
+
+// TodoEvents lists checklist events in the order they happened.
+func (s *Store) TodoEvents(ctx context.Context) ([]TodoEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT chat_id, reply_to_id, COALESCE(from_id, 0), date, service_action_json FROM messages
+WHERE reply_to_id IS NOT NULL AND service_action_json LIKE '{"type":"messageActionTodo%'
+ORDER BY date, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TodoEvent
+	for rows.Next() {
+		var e TodoEvent
+		if err := rows.Scan(&e.ChatID, &e.Checklist, &e.FromID, &e.Date, &e.ActionJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// MessageMeta returns a message's meta_json; "" when there is none or no such message.
+func (s *Store) MessageMeta(ctx context.Context, chatID int64, id int) (string, error) {
+	var meta sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT meta_json FROM messages WHERE chat_id = ? AND id = ?`, chatID, id).Scan(&meta)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return meta.String, err
+}
+
+func (s *Store) SetMessageMeta(ctx context.Context, chatID int64, id int, meta string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET meta_json = ? WHERE chat_id = ? AND id = ?`, meta, chatID, id)
 	return err
 }
