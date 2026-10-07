@@ -14,8 +14,8 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/serve"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/serve"
 )
 
 func TestLoginErrorsAreActionable(t *testing.T) {

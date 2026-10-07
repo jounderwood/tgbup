@@ -16,15 +16,15 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/backup"
+	"github.com/joeunderwood/tgbup/internal/backup"
 	"golang.org/x/sys/unix"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/diskcrypt"
-	"gitlab.com/joeunderwood/tgbup/internal/notify"
-	"gitlab.com/joeunderwood/tgbup/internal/serve"
-	"gitlab.com/joeunderwood/tgbup/internal/render"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/diskcrypt"
+	"github.com/joeunderwood/tgbup/internal/notify"
+	"github.com/joeunderwood/tgbup/internal/serve"
+	"github.com/joeunderwood/tgbup/internal/render"
+	"github.com/joeunderwood/tgbup/internal/store"
 )
 
 // The setup steps without their questions: tgbup init asks in the terminal,

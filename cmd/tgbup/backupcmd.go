@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/backup"
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/deps"
-	"gitlab.com/joeunderwood/tgbup/internal/notify"
-	"gitlab.com/joeunderwood/tgbup/internal/render"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/backup"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/deps"
+	"github.com/joeunderwood/tgbup/internal/notify"
+	"github.com/joeunderwood/tgbup/internal/render"
+	"github.com/joeunderwood/tgbup/internal/store"
 )
 
 func hostname() string {

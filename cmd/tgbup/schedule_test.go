@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/config"
 	"os"
 	"path/filepath"
 	"strings"

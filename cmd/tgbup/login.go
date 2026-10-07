@@ -9,7 +9,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"golang.org/x/term"
 
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func cmdLogin(ctx context.Context, env Env) int {

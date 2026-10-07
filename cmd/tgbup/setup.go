@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 type setup struct {

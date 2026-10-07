@@ -62,8 +62,8 @@ func (f *fakeBackend) StartRun(takeout bool) error {
 func (f *fakeBackend) RunLog() (string, error) { return "line 1\nline 2", nil }
 
 func (f *fakeBackend) Chats(context.Context) (ChatList, error) {
-	return ChatList{Groups: []Group{{Title: "All chats", IDs: []int64{-1002263466511}}},
-		Chats: []Chat{{ID: -1002263466511, Title: "Family", Type: "forum", Selected: true, ExcludedTopics: []int{5}}}}, nil
+	return ChatList{Groups: []Group{{Title: "All chats", IDs: []int64{-1005550001234}}},
+		Chats: []Chat{{ID: -1005550001234, Title: "Family", Type: "forum", Selected: true, ExcludedTopics: []int{5}}}}, nil
 }
 
 func (f *fakeBackend) Counts(_ context.Context, ids []int64) (map[int64]Count, error) {
@@ -206,11 +206,11 @@ func TestAPI(t *testing.T) {
 		t.Errorf("log = %q", got)
 	}
 	var list ChatList
-	if err := json.NewDecoder(do(t, s, "GET", "/api/chats", host, tok, "").Body).Decode(&list); err != nil || list.Chats[0].ID != -1002263466511 {
+	if err := json.NewDecoder(do(t, s, "GET", "/api/chats", host, tok, "").Body).Decode(&list); err != nil || list.Chats[0].ID != -1005550001234 {
 		t.Fatalf("chats = %+v, %v", list, err)
 	}
-	counts := do(t, s, "POST", "/api/chats/counts", host, tok, `{"ids":[-1002263466511]}`).Body.String()
-	if !strings.Contains(counts, `"-1002263466511":{"messages":10,"topics":2}`) {
+	counts := do(t, s, "POST", "/api/chats/counts", host, tok, `{"ids":[-1005550001234]}`).Body.String()
+	if !strings.Contains(counts, `"-1005550001234":{"messages":10,"topics":2}`) {
 		t.Errorf("counts = %s", counts)
 	}
 	if w := do(t, s, "GET", "/api/chats/x/topics", host, tok, ""); w.Code != http.StatusBadRequest {
@@ -219,11 +219,11 @@ func TestAPI(t *testing.T) {
 	if w := do(t, s, "POST", "/api/chats", host, tok, `{"chats":[]}`); w.Code != http.StatusBadRequest || f.saved != nil {
 		t.Errorf("empty selection: %d, saved %v", w.Code, f.saved)
 	}
-	w := do(t, s, "POST", "/api/chats", host, tok, `{"chats":[-1002263466511,10],"exclude_topics":{"-1002263466511":[5,12]}}`)
+	w := do(t, s, "POST", "/api/chats", host, tok, `{"chats":[-1005550001234,10],"exclude_topics":{"-1005550001234":[5,12]}}`)
 	if w.Code != http.StatusNoContent || f.saved == nil {
 		t.Fatalf("save: %d %s", w.Code, w.Body)
 	}
-	if got := f.saved.ExcludeTopics[-1002263466511]; len(got) != 2 || got[1] != 12 || f.saved.Chats[1] != 10 {
+	if got := f.saved.ExcludeTopics[-1005550001234]; len(got) != 2 || got[1] != 12 || f.saved.Chats[1] != 10 {
 		t.Errorf("saved = %+v", f.saved)
 	}
 	if w := do(t, s, "POST", "/api/chats", host, tok, `{"chats":[404]}`); w.Code != http.StatusBadRequest {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/config"
 )
 
 func TestLoadSecretsPrecedence(t *testing.T) {

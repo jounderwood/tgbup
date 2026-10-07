@@ -22,11 +22,11 @@ import (
 
 	"golang.org/x/term"
 
-	"gitlab.com/joeunderwood/tgbup/internal/backup"
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/notify"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/backup"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/notify"
+	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 // errSkipped ends a step the person chose to leave for later.

@@ -10,8 +10,8 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
-	"gitlab.com/joeunderwood/tgbup/internal/names"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/names"
+	"github.com/joeunderwood/tgbup/internal/store"
 )
 
 var safeExt = regexp.MustCompile(`^\.[a-zA-Z0-9]{1,10}$`)

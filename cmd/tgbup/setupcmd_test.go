@@ -12,11 +12,11 @@ import (
 	"testing/iotest"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
-	"gitlab.com/joeunderwood/tgbup/internal/selector"
-	"gitlab.com/joeunderwood/tgbup/internal/stats"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/selector"
+	"github.com/joeunderwood/tgbup/internal/stats"
+	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 var (

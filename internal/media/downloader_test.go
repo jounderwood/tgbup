@@ -19,10 +19,10 @@ import (
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/sys/unix"
 
-	"gitlab.com/joeunderwood/tgbup/internal/convert"
-	"gitlab.com/joeunderwood/tgbup/internal/media"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/joeunderwood/tgbup/internal/media"
+	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 const chatN = int64(1)

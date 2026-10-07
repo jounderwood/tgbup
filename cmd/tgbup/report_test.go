@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/joeunderwood/tgbup/internal/stats"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
-	"gitlab.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/joeunderwood/tgbup/internal/stats"
+	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/tgclient"
 )
 
 func sampleStats() []stats.ChatStats {
 	return []stats.ChatStats{
 		{
-			Item:  stats.Item{ID: -1002263466511, Type: "forum", Title: "Family"},
+			Item:  stats.Item{ID: -1005550001234, Type: "forum", Title: "Family"},
 			Total: 4812, Types: tgclient.TypeCounts{Photos: 310, Videos: 42, Links: 55},
 			Topics: []stats.TopicStats{
 				{ID: 1, Title: "General", Count: 1612},
@@ -34,7 +34,7 @@ func TestPrintReport(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"would archive 3 chats, ~17 212 messages:\n",
-		"── 1. Family · forum · -1002263466511 ─",
+		"── 1. Family · forum · -1005550001234 ─",
 		"   ~4 812 msgs: photos 310 · videos 42 · links 55\n",
 		"   topics 2 of 3:  General #1 ~1 612 · Recipes #3 ~300\n",
 		"   excluded:       Flood #5 ~2 900   (~2 900 msgs not saved)\n",
@@ -111,8 +111,8 @@ func TestTopicLabelNeverTouchesList(t *testing.T) {
 // note it reads like a duplicate of the forum.
 func TestReportMarksPreUpgradeGroup(t *testing.T) {
 	targets := []tgclient.Target{
-		{Chat: store.Chat{ID: -1002263466511, Type: store.ChatForum, Title: "Family", MigratedFromID: -4510946492}},
-		{Chat: store.Chat{ID: -4510946492, Type: store.ChatGroup, Title: "Family"}},
+		{Chat: store.Chat{ID: -1005550001234, Type: store.ChatForum, Title: "Family", MigratedFromID: -4550001234}},
+		{Chat: store.Chat{ID: -4550001234, Type: store.ChatGroup, Title: "Family"}},
 	}
 	var chats []stats.ChatStats
 	for _, it := range statItems(targets) {
@@ -120,7 +120,7 @@ func TestReportMarksPreUpgradeGroup(t *testing.T) {
 	}
 	var out bytes.Buffer
 	printReport(&out, chats)
-	if !strings.Contains(out.String(), "── 2. Family · group · -4510946492 · history before the upgrade, see 1. ─") {
+	if !strings.Contains(out.String(), "── 2. Family · group · -4550001234 · history before the upgrade, see 1. ─") {
 		t.Fatalf("pre-upgrade group not marked:\n%s", out.String())
 	}
 }

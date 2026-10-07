@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/config"
 )
 
 func writeFile(t *testing.T, dir, name, body string, perm os.FileMode) string {

@@ -1,22 +1,7 @@
 # tgbup
 
 Автономный архив Telegram-чатов, групп и форумов: выгрузка 4 раза в сутки, чтение в браузере и Obsidian,
-бэкапы restic. Этот файл — актуальное устройство и журнал решений; спеки в `superpowers/specs/` — решения на
-момент их принятия, расхождения с реализацией перечислены в конце каждой.
-
-| Спека | О чём |
-|---|---|
-| [2026-09-28 design](superpowers/specs/2026-09-28-tgbup-design.md) | основа: данные, выгрузка, ошибки, бэкап, уведомления |
-| [2026-09-30 setup / dry-run](superpowers/specs/2026-09-30-tgbup-setup-dry-run-design.md) | выбор чатов, предпросмотр выгрузки |
-| [2026-10-01 topics / stats](superpowers/specs/2026-10-01-tgbup-topics-stats-design.md) | исключение топиков, подробный dry-run, постраничный setup |
-| [2026-10-01 render](superpowers/specs/2026-10-01-tgbup-render-design.md) | HTML, Markdown, поиск, экспорт |
-| [2026-10-01 message meta](superpowers/specs/2026-10-01-tgbup-message-meta-design.md) | превью ссылок, места, контакты, опросы, чеклисты |
-| [2026-10-02 backup](superpowers/specs/2026-10-02-tgbup-backup-design.md) | restic, `run`, расписание, бот, зависимости |
-| [2026-10-03 init](superpowers/specs/2026-10-03-tgbup-init-design.md) | настройка одной командой |
-| [2026-10-03 serve](superpowers/specs/2026-10-03-tgbup-serve-design.md) | веб-страница |
-| [2026-10-03 web setup / restore](superpowers/specs/2026-10-03-tgbup-web-setup-restore-design.md) | настройка в браузере, восстановление внутри tgbup |
-
-Планы в `superpowers/plans/` — пошаговые инструкции исполнения, после выполнения не поддерживаются.
+бэкапы restic. Этот файл — актуальное устройство и журнал решений.
 
 ## Как устроено
 

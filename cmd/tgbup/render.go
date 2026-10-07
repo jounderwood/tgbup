@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/convert"
-	"gitlab.com/joeunderwood/tgbup/internal/render"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/joeunderwood/tgbup/internal/render"
+	"github.com/joeunderwood/tgbup/internal/store"
 )
 
 // renderArchive redraws the archive's pages and, when anything changed,

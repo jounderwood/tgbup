@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"gitlab.com/joeunderwood/tgbup/internal/convert"
-	"gitlab.com/joeunderwood/tgbup/internal/store"
+	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/joeunderwood/tgbup/internal/store"
 )
 
 // Page is one page of a chat's or forum topic's thread.

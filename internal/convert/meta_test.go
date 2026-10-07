@@ -7,7 +7,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbup/internal/convert"
+	"github.com/joeunderwood/tgbup/internal/convert"
 )
 
 func withMedia(mm tg.MessageMediaClass) *tg.Message {

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      # The backup tests run against a real restic, fetched (pinned and
+      # checksum-verified) by tgbup deps; without it they are skipped.
+      - name: Test
+        run: |
+          go build -o bin/tgbup ./cmd/tgbup
+          export TGBUP_TEST_RESTIC="$(bin/tgbup deps | awk '/^restic:/ {print $2}')"
+          test -x "$TGBUP_TEST_RESTIC"
+          go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - name: Lint the end-to-end tests
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          args: --build-tags e2e ./e2e/...

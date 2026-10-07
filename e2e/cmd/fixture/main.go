@@ -16,7 +16,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"gitlab.com/joeunderwood/tgbup/e2e/testenv"
+	"github.com/joeunderwood/tgbup/e2e/testenv"
 )
 
 func main() {

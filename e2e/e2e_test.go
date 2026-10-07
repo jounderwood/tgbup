@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 
-	"gitlab.com/joeunderwood/tgbup/e2e/testenv"
+	"github.com/joeunderwood/tgbup/e2e/testenv"
 )
 
 var (

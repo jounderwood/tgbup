@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"github.com/joeunderwood/tgbup/internal/config"
 )
 
 // Archive is what a backup needs from the archive database.

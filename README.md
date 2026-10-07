@@ -1,170 +1,193 @@
 # tgbup
 
-Архив ваших чатов, групп и форумов Telegram у вас на компьютере. Сообщения хранятся в базе SQLite, файлы лежат
-рядом под понятными именами. Архив читается в браузере и в Obsidian, обновляется сам по расписанию, а зашифрованные
-бэкапы уходят во все выбранные места.
+**English** · [Русский](README.ru.md)
 
-- **Только читает Telegram.** Каждый вызов проверяется по белому списку: отправить, изменить или удалить что-либо в
-  аккаунте tgbup не может (см. [«Безопасность и приватность»](#безопасность-и-приватность)).
-- **Ничего не удаляет.** Сообщения, удалённые в Telegram, остаются в архиве. Восстановление из бэкапа не затирает
-  то, что уже лежит на диске.
-- **Всё у вас.** Страница управления открывается только с этого компьютера. Ключи и пароли лежат в скрытом файле с
-  правами 600, бэкапы зашифрованы.
+An archive of your Telegram chats, groups and forums, on your own computer. Messages are kept in an SQLite database,
+files sit next to it under readable names. The archive reads in a browser and in Obsidian, updates itself on a
+schedule, and encrypted backups go to every place you choose.
 
-Сделано для macOS. На Linux (например, на NAS) работают выгрузка, бэкапы, восстановление и страница; расписание там
-ставится через cron или systemd (`tgbup run`), а окна выбора папки и буфера обмена нет.
+- **Telegram is only read.** Every call is checked against an allowlist: tgbup cannot send, edit or delete anything in
+  your account (see [Security and privacy](#security-and-privacy)).
+- **Nothing is deleted.** Messages deleted in Telegram stay in the archive. Restoring from a backup never overwrites
+  what is already on disk.
+- **Everything stays with you.** The control page opens only on this computer. Keys and passwords are in a hidden
+  file with mode 600, backups are encrypted.
 
-Как устроено внутри (подсистемы, раскладка на диске) и журнал решений — [`docs/PROJECT.md`](docs/PROJECT.md).
+Made for macOS. On Linux (a NAS, say) downloading, backups, restore and the control page work; the schedule is set up
+there with cron or systemd (`tgbup run`), and there is no folder picker or clipboard.
 
-## Быстрый старт
+How it works inside (subsystems, layout on disk) and the decisions log, in Russian: [`docs/PROJECT.md`](docs/PROJECT.md).
 
-Понадобятся телефон с Telegram (для кода входа) и минут 10–15. Первая выгрузка может идти дольше, если в чатах много
-медиа.
+## Quick start
+
+You need a phone with Telegram (for the login code) and 10–15 minutes. The first download may take longer if the
+chats hold a lot of media. Install tgbup in one of three ways.
+
+**A release build.** [Releases](https://github.com/joeunderwood/tgbup/releases) has archives for macOS (Apple Silicon
+and Intel) and Linux. Put `tgbup` into `~/.local/bin` and open the setup:
 
 ```bash
-brew install go
+xattr -d com.apple.quarantine ~/.local/bin/tgbup
 ```
+
+```bash
+tgbup serve --open
+```
+
+The first command is for macOS only: the build is not signed, and without it macOS refuses to run it.
+
+**With Go** (1.26 or newer):
+
+```bash
+go install github.com/joeunderwood/tgbup/cmd/tgbup@latest
+```
+
+This puts `tgbup` into `~/go/bin`; then `tgbup serve --open`.
+
+**From source:**
 
 ```bash
 make setup
 ```
 
-`make setup` соберёт tgbup, поставит его в `~/.local/bin/tgbup` и откроет страницу настройки в браузере. Если удобнее
-в терминале, `make setup-cli` запустит те же шаги (`tgbup init`).
+`make setup` builds tgbup, installs it as `~/.local/bin/tgbup` and opens the setup page in the browser. If you prefer
+the terminal, `make setup-cli` (or `tgbup init`) runs the same steps.
 
-## Настройка по шагам
+## Setup, step by step
 
-Страница Settings и `tgbup init` проходят одни и те же шаги. Сделанные отмечены галочкой и повторно не спрашиваются.
-Прервать можно в любой момент: повторный `make setup` или `tgbup init` продолжит с того же места. Тем же путём потом
-меняется всё: чаты, места бэкапа, расписание, ключи, пароль.
+The Settings page and `tgbup init` go through the same steps. Done steps are ticked and not asked again. You can stop
+at any point: `make setup` or `tgbup init` again picks up where you left off. The same way later changes anything:
+chats, backup places, schedule, keys, password.
 
-| # | Шаг | Что делаете вы |
+| # | Step | What you do |
 |---|---|---|
-| 1 | Ключи Telegram | на https://my.telegram.org → API development tools создаёте приложение и вставляете `api_id` и `api_hash` |
-| 2 | Вход | телефон → код из приложения Telegram → пароль двухэтапной проверки, если он есть |
-| 3 | Папка архива | по умолчанию `~/Tgbup/archive` («Choose…» открывает окно выбора папки). **Или** «Restore from a backup», см. [«Восстановление»](#восстановление). Потом архив можно перенести в другую папку целиком: на том же диске это мгновенно, на другой — с копированием и сверкой |
-| 4 | Чаты | отмечаете чаты, папки Telegram и топики форумов прямо в этом шаге (см. [«Выбор чатов»](#выбор-чатов)) |
-| 5 | Бэкапы | папка на этом Mac (по умолчанию `~/Tgbup/backup`), дополнительные места и пароль |
-| 6 | Бот для уведомлений (необязательно) | создаёте бота у @BotFather, вставляете токен и пишете боту; chat_id tgbup найдёт сам и пришлёт проверочное сообщение |
-| 7 | Первая выгрузка | Telegram пришлёт запрос на экспорт данных — разрешите его в приложении. Можно и без экспорта, тогда выгрузка медленнее. Это обычный запуск (`tgbup run --takeout`): он записывается в историю и сразу делает первый бэкап |
-| 8 | Расписание | время запусков (по умолчанию 00:30, 06:30, 12:30, 18:30), установка и проверочный запуск. Здесь же время потом меняется, а расписание выключается |
-| 9 | `PATH` (только в терминале) | добавляет `~/.local/bin` в профиль shell, чтобы команда `tgbup` работала везде |
+| 1 | Telegram keys | at https://my.telegram.org → API development tools, create an app and paste `api_id` and `api_hash` |
+| 2 | Login | phone → the code from the Telegram app → the two-step verification password, if you have one |
+| 3 | Archive folder | `~/Tgbup/archive` by default («Choose…» opens a folder picker). **Or** «Restore from a backup», see [Restore](#restore). The archive can later be moved to another folder as a whole: instantly on the same disk, with a copy and a check to another one |
+| 4 | Chats | tick chats, Telegram folders and forum topics right in this step (see [Choosing chats](#choosing-chats)) |
+| 5 | Backups | a folder on this Mac (`~/Tgbup/backup` by default), more places, and the password |
+| 6 | Notification bot (optional) | create a bot with @BotFather, paste its token and write to the bot; tgbup finds the chat_id itself and sends a test message |
+| 7 | First download | Telegram asks you to allow a data export — allow it in the app. It also works without the export, only slower. This is an ordinary run (`tgbup run --takeout`): it goes into the history and makes the first backup right away |
+| 8 | Schedule | run times (00:30, 06:30, 12:30, 18:30 by default), installing and a test run. The times are changed and the schedule turned off here later too |
+| 9 | `PATH` (terminal only) | adds `~/.local/bin` to the shell profile so the `tgbup` command works everywhere |
 
-**Пароль бэкапов** никогда не задаётся молча. tgbup генерирует его и показывает («Use this password?»), или вы
-вводите свой дважды. Где хранить копию, решаете вы. Без этого пароля бэкапы не открыть, восстановить его невозможно,
-а на компьютере он лежит в `secrets.env`, который в бэкап не входит. На новом компьютере выберите «ввести свой» и
-введите прежний.
+**The backup password** is never set silently. tgbup generates one and shows it («Use this password?»), or you type
+your own twice. Where to keep a copy is up to you. Without this password the backups cannot be opened and it cannot be
+recovered; on the computer it is in `secrets.env`, which is not in the backup. On a new computer choose «type your own»
+and enter the old one.
 
-**Места бэкапа.** Снимок делается во все выбранные места при каждом запуске:
-- папка на этом Mac — по умолчанию `~/Tgbup/backup`, можно выбрать другую или отказаться;
-- найденные tgbup: iCloud Drive, Google Drive, Dropbox и OneDrive из `~/Library/CloudStorage`, внешние диски из
-  `/Volumes`;
-- Google Drive без приложения — через rclone, вход в браузере (доступ только к файлам, созданным tgbup);
-- свой путь или restic-репозиторий: полный путь (`/…` или `~/…`) или адрес restic (`sftp:`, `s3:`, `rclone:`…).
-  Другое не принимается — так в место бэкапа не попадёт, например, вставленный по ошибке пароль.
+**Backup places.** Every snapshot goes to every place chosen:
+- a folder on this Mac — `~/Tgbup/backup` by default, another one, or none;
+- places tgbup finds: iCloud Drive, Google Drive, Dropbox and OneDrive from `~/Library/CloudStorage`, external disks
+  from `/Volumes`;
+- Google Drive without its app — through rclone, signing in in the browser (access to the files tgbup created only);
+- your own path or restic repository: a full path (`/…` or `~/…`) or a restic address (`sftp:`, `s3:`, `rclone:`…).
+  Nothing else is taken — so a password pasted by mistake, say, never becomes a backup place.
 
-Папку iCloud в Finder стоит пометить «Всегда хранить на этом Mac». Бэкап можно выключить: шаг Backups →
-«Keep backing up? n». Уже сделанные снимки останутся.
+In Finder, mark the iCloud folder «Keep Downloaded». Backups can be turned off: the Backups step → «Keep backing up?
+n». The snapshots already made stay.
 
-### Где что лежит
+### Where things are
 
-Всё, на что стоит смотреть, — в одной папке:
+Everything worth looking at is in one folder:
 ```
 ~/Tgbup/
-  config.yaml       настройки: чаты, места бэкапа, время запусков
-  archive/          архив: база, media/, html/, md/
-  backup/           бэкап на этом Mac (если выбран)
-  logs/             tgbup.log — журнал всех команд, run.log — вывод запусков (по 10 МБ, хранятся 5)
+  config.yaml       settings: chats, backup places, run times
+  archive/          the archive: database, media/, html/, md/
+  backup/           the backup on this Mac (if chosen)
+  logs/             tgbup.log — every command's log, run.log — runs' output (10 MB each, 5 kept)
 ```
-Ключи Telegram, пароль бэкапов, токен бота (`secrets.env`) и вход в Telegram лежат отдельно, в скрытой
-`~/.local/state/tgbup/`. Папку `~/Tgbup` копируют, синхронизируют и отдают, а с сессией можно читать переписку от
-вашего имени. Установка, сделанная до `~/Tgbup` (настройки в `~/.config/tgbup`), продолжает работать на старых местах.
+The Telegram keys, the backup password, the bot token (`secrets.env`) and the Telegram login are apart, in the hidden
+`~/.local/state/tgbup/`. `~/Tgbup` gets copied, synced and shared, and with the session anyone can read your messages
+as you. An install made before `~/Tgbup` (settings in `~/.config/tgbup`) keeps working where it is.
 
-## Как это работает дальше
+## What happens next
 
-Расписание запускает `tgbup run` в выбранное время. Если компьютер спал, пропущенный запуск сработает после
-пробуждения. Запуск:
-1. скачивает новые сообщения и медиа;
-2. перерисовывает изменившиеся страницы архива;
-3. делает снимок во все места бэкапа — даже если выгрузка не удалась;
-4. сообщает через бота: об ошибках сразу и со звуком, сводку раз в 7 дней (`notify.summary_every`).
+The schedule starts `tgbup run` at the chosen times. If the computer was asleep, a missed run starts after it wakes up.
+A run:
+1. downloads new messages and media;
+2. redraws the archive pages that changed;
+3. snapshots the archive into every backup place — even if the download failed;
+4. tells you through the bot: errors right away and with a sound, a summary every 7 days (`notify.summary_every`).
 
-Ещё бот без звука пишет, когда запуск начался (по расписанию, со страницы или первая выгрузка) и когда закончился
-(сколько нового, в какие места сделан снимок), а также когда настройка завершена (поставлено расписание): что
-архивируется, куда бэкапы, когда запуски. Выключить эти сообщения — `notify: {progress: false}`; ошибки приходят
-всегда.
+The bot also writes, silently, when a run starts (scheduled, from the page, or the first download) and when it
+finishes (what is new, which snapshots were made), and when setup is done (the schedule installed): what is archived,
+where backups go, when runs happen. To turn these messages off: `notify: {progress: false}`; errors always come.
 
-Посмотреть, как дела, — `tgbup serve --open` (или `make setup`). Страница http://localhost:8640 открывается только с
-этого компьютера, в ней три вкладки:
-- **Overview** — последний запуск, размер архива, бэкапы, расписание и предупреждения. Пока настройка не закончена,
-  наверху плашка «Setup is not finished» с тем, чего не хватает, и кнопкой «Continue setup»; У запуска с ошибками по клику
-  раскрываются все ошибки и предупреждения. У каждого места бэкапа — когда оно последний раз было актуально и ссылка
-  на его снимки. «Update now» запускает то же, что расписание, и показывает журнал (его можно скрыть). «Open the archive» открывает архив в браузере;
-- **Settings** — при первом запуске шаги по порядку, потом все настройки: первыми чаты (с названиями того, что
-  архивируется), бэкапы, расписание, уведомления; папка архива и вход — ниже. Здесь же восстановление.
-- **Snapshots** — все снимки каждого места, новые сверху, с тем, что в них изменилось. «Restore a copy» восстанавливает
-  снимок в отдельную папку рядом с архивом (`<архив>-snapshots/<хэш>`, со всеми файлами того времени; сам архив не
-  трогается), потом «Open» открывает его в браузере. «Copy command» копирует ту же команду для терминала.
+To see how things are — `tgbup serve --open` (or `make setup`). The page at http://localhost:8640 opens only on this
+computer and has three tabs:
+- **Overview** — the last run, the archive size, backups, schedule and warnings. Until setup is finished, a «Setup is
+  not finished» banner at the top says what is missing, with a «Continue setup» button. A run with errors opens all
+  its errors and warnings on a click. Each backup place shows when it was last up to date, with a link to its
+  snapshots. «Update now» starts what the schedule starts and shows its log (which can be hidden). «Open the archive»
+  opens the archive in the browser;
+- **Settings** — on first use the steps in order, then all the settings: chats first (with the names of what is
+  archived), backups, schedule, notifications; the archive folder and the login below. Restore is here as well;
+- **Snapshots** — every snapshot of every place, newest first, with what changed in it. «Restore a copy» restores a
+  snapshot into a folder of its own next to the archive (`<archive>-snapshots/<id>`, with all the files of then; the
+  archive itself is not touched), then «Open» opens it in the browser. «Copy command» copies the same command for a
+  terminal.
 
-Запуск со страницы идёт отдельным процессом: закрытие страницы его не прервёт. Два запуска одновременно не идут:
-если один уже работает, второй пропускается.
+A run started from the page is a process of its own: closing the page does not stop it. Two runs never overlap: if one
+is running, the second is skipped.
 
-**Журналы.** Каждая команда пишет журнал в терминал и в `~/Tgbup/logs/tgbup.log` (запись в файл выключается
-настройкой `log: {file: false}`). Вывод запусков по расписанию и со страницы — в `~/Tgbup/logs/run.log`. Действия на
-странице (каждое действие, ошибки, запуски, медленные запросы) тоже попадают в журнал; введённые пароли, коды и
-токены — нет.
+**Logs.** Every command writes its log to the terminal and to `~/Tgbup/logs/tgbup.log` (the file is turned off with
+`log: {file: false}`). The output of scheduled runs and of runs from the page is in `~/Tgbup/logs/run.log`. What
+happens on the page (every action, errors, runs, slow requests) is logged too; passwords, codes and tokens typed in are
+not.
 
-## Чтение архива
+## Reading the archive
 
-Страницы архива открываются прямо с диска, сервер для них не нужен. В папке архива (`~/Tgbup/archive`):
+The archive's pages open straight from the disk, no server needed. In the archive folder (`~/Tgbup/archive`):
 
-| Что | Как читать |
+| What | How to read it |
 |---|---|
-| `html/index.html` | список чатов и поиск по всему архиву. Вверху каждой страницы «archive as of … · snapshot …» — когда архив проверялся последний раз и в каком снимке он лежит; ссылка ведёт на историю изменений и снимков |
-| страница чата | открывается на самых новых сообщениях внизу, как в мессенджере; более ранние — на предыдущих страницах, по 500 сообщений. Сверху закреплённая панель: поиск (по этому чату или, галочкой, по всем), список страниц с датами и календарь — выбрали день, и вы на нём. Фото, видео, голосовые, файлы, превью ссылок, места и опросы — прямо в ленте: у видео первый кадр, GIF и видеостикеры играют без звука, пока видны, кружок играет по клику |
-| `html/media.html` | все фото, видео, файлы, голосовые, ссылки, места, контакты и опросы — с такими же превью, как в ленте, у видео длительность, голосовые слушаются прямо в списке и подписаны, от кого. Фильтры по типу, чату, топику, периоду и названию сохраняются в адресе, их можно добавить в закладки |
-| `md/` | те же страницы в Markdown; папку архива можно открыть как хранилище Obsidian |
-| `media/` | сами файлы по году и виду: `media/2025/file/2025-06-14_180233_Договор аренды.pdf`, `media/2025/photo/…` (виды: photo, video, file, voice, round, audio, sticker, gif) |
+| `html/index.html` | the chat list and a search over the whole archive. At the top of every page, «archive as of … · snapshot …» — when the archive was last checked and which snapshot holds it; the link leads to the history of changes and snapshots |
+| a chat's page | opens on the newest messages at the bottom, as in a messenger; older ones are on the previous pages, 500 messages each. The bar at the top stays in view: search (this chat, or all chats with a tick), the list of pages with their dates, and a calendar — pick a day and you are there. Photos, videos, voice messages, files, link previews, places and polls are right in the feed: a video shows its first frame, GIFs and video stickers play silently while in view, a round video plays on a click |
+| `html/media.html` | every photo, video, file, voice message, link, place, contact and poll — with the same previews as in the feed, videos with their length, voice messages playable right in the list and named by who said them. The filters by kind, chat, topic, period and name live in the address and can be bookmarked |
+| `md/` | the same pages in Markdown; the archive folder opens as an Obsidian vault |
+| `media/` | the files themselves, by year and kind: `media/2025/file/2025-06-14_180233_Lease.pdf`, `media/2025/photo/…` (kinds: photo, video, file, voice, round, audio, sticker, gif) |
 
-У нескачанных файлов — ⏳ (в очереди), ⛔ (пропущен по настройкам) или ⚠️ (не удалось скачать) и причина.
+Files not downloaded show ⏳ (queued), ⛔ (skipped by the settings) or ⚠️ (could not be downloaded) and why.
 
-**Имена файлов.** После даты и времени сообщения идёт оригинальное имя файла. У фото, голосовых и кружков имени нет,
-тогда — название чата, а у голосовых ещё и кто говорит: `2025-06-14_180233_Семья_Катерина.ogg`. Сортировка по имени совпадает с хронологией, дата изменения файла — дата сообщения. Каждый файл
-лежит один раз, даже если его пересылали в несколько чатов; из какого он чата и сообщения, знают база и страницы.
-Имя задаётся при скачивании и потом не меняется, поэтому переименовывать файлы в `media/` не стоит: страницы
-ссылаются на эти имена.
+**File names.** After the message's date and time comes the file's original name. Photos, voice messages and round
+videos have none: then the chat's name, and for voice messages also who said it:
+`2025-06-14_180233_Family_Kate.ogg`. Sorting by name is chronological, and a file's modification date is the message's
+date. Each file is there once, even if it was forwarded to several chats; which chat and message it came from is known
+to the database and the pages. A name is chosen at download and never changes afterwards, so do not rename files in
+`media/`: the pages link to these names.
 
-`html/` и `md/` перерисовываются из базы, их можно удалить. Вручную, без Telegram: `tgbup render` (`--full` — всё
-заново). После переименования чата в `html/` и `md/` остаётся старая папка: её можно удалить.
+`html/` and `md/` are redrawn from the database and can be deleted. By hand, without Telegram: `tgbup render`
+(`--full` redraws everything). After a chat is renamed, its old folder stays in `html/` and `md/`: it can be deleted.
 
-**Отправить чат кому-то:** `tgbup export Family -o family.zip` — zip со страницами и медиа, открывается двойным
-кликом по `index.html`. Чат можно указать названием или его однозначной частью, `@username` или ID. Сузить выгрузку:
-`--topic Expenses`, `--from 2026-01 --to 2026-03`, `--no-media`. **Пока zip не защищён паролем** — не пересылайте его
-через открытые каналы.
+**Sending a chat to someone:** `tgbup export Family -o family.zip` — a zip with the pages and media that opens with a
+double click on `index.html`. Name the chat by its title or an unambiguous part of it, `@username` or ID. To narrow it:
+`--topic Expenses`, `--from 2026-01 --to 2026-03`, `--no-media`. **The zip is not password-protected yet** — do not
+send it over open channels.
 
-## Выбор чатов
+## Choosing chats
 
-Шаг Chats в Settings или `tgbup setup` в терминале. Чаты сгруппированы: All chats, папки Telegram, No folder, Archived.
-В форуме можно раскрыть топики и снять отметку с ненужных; новые топики архивируются автоматически. Перед записью
-показывается, что будет записано, и итоговый конфиг.
+The Chats step in Settings, or `tgbup setup` in a terminal. Chats are grouped: All chats, Telegram folders, No folder,
+Archived. In a forum you can open its topics and untick the ones you do not need; new topics are archived
+automatically. Before saving you see what will be written and the resulting config.
 
-Число сообщений считается только по просьбе: на каждый чат уходит несколько запросов к Telegram, и на большом списке
-это долго. На странице — «count» у чата, «count messages of the chats shown», «count messages per topic» в топиках и
-«Count messages» перед сохранением. В терминале — команда `c` на странице списка, в топиках и в вопросе перед записью.
-В терминале:
-- списки по 20 на странице, листать `>`/`<`/`p N`;
-- номера сквозные, можно `21-23,45`;
-- `a`/`n` отмечают страницу, `A`/`N` — весь список;
-- `s` — поиск по названию или `@username`;
-- `t N` открывает топики форума;
-- `c` считает сообщения на текущей странице (в топиках — по топикам);
-- `d` показывает, что будет записано, и спрашивает, записать ли (`c` — сначала посчитать сообщения);
-- команды понимаются и в русской раскладке.
+Messages are counted only when asked: each chat costs Telegram several requests, and on a long list that is slow. On
+the page — «count» on a chat, «count messages of the chats shown», «count messages per topic» in topics and «Count
+messages» before saving. In a terminal — the `c` command on a list page, in topics and at the question before saving.
+In a terminal:
+- lists show 20 a page, page with `>`/`<`/`p N`;
+- numbers run through the whole list, `21-23,45` works;
+- `a`/`n` tick or untick the page, `A`/`N` the whole list;
+- `s` searches by title or `@username`;
+- `t N` opens a forum's topics;
+- `c` counts the messages on the current page (in topics, per topic);
+- `d` shows what will be written and asks whether to write it (`c` counts the messages first);
+- commands work in the Russian keyboard layout too.
 
-Проверить, что будет выгружено, ничего не скачивая: `tgbup sync --dry-run`.
+To check what would be downloaded without downloading anything: `tgbup sync --dry-run`.
 ```
 would archive 2 chats, ~17 062 messages:
-── 1. Family · forum · -1002263466511 ─────────────────────────────
+── 1. Family · forum · -1005550001234 ─────────────────────────────
    ~4 812 msgs: photos 310 · videos 42 · files 18 · voice 97 · round 12 · links 55
    topics 5 of 7:  General #1 ~1 200 · Recipes #3 ~300 · …
    excluded:       Flood #5 ~2 900 · Memes #12 ~150   (~3 050 msgs not saved)
@@ -173,186 +196,193 @@ would archive 2 chats, ~17 062 messages:
 ══ Total: 2 chats, ~17 062 msgs saved · …
 ```
 
-Конфиг можно править и руками; в конце файла есть закомментированная справка по всем настройкам.
+The config can be edited by hand too; its end has a commented reference of every setting.
 ```yaml
 archive_dir: ~/Tgbup/archive
 targets:
-  folders: ["Семья", "Бизнес"]   # папки Telegram
-  include: ["@some_group"]        # плюс отдельные чаты; надёжнее числовые ID: username могут сменить
+  folders: ["Family", "Work"]   # Telegram folders
+  include: ["@some_group"]      # plus single chats; numeric IDs are safer: usernames change
   exclude: []
-  exclude_topics:                 # форум → ID топиков (видны в dry-run как «#5»)
-    -1002263466511: [5, 12]
+  exclude_topics:               # forum → topic IDs (shown in dry-run as «#5»)
+    -1005550001234: [5, 12]
 schedule:
   times: ["00:30", "06:30", "12:30", "18:30"]
 ```
-Если чат из `include` не найден, выгрузка завершается с ошибкой, чтобы архивирование не прекратилось молча. Если
-вернуть исключённый топик, следующая выгрузка один раз перечитает историю форума и допишет пропущенное.
+If a chat in `include` is not found, the download ends with an error, so that archiving does not stop silently. If an
+excluded topic is brought back, the next download reads the forum's history once and adds what was missed.
 
-## Бэкапы
+## Backups
 
-В снимок входят копия базы (проверенная `integrity_check`), `config.yaml`, `media/` и `html/` — страницы, чтобы архив
-из снимка можно было читать и без tgbup. Не входят `md/` (то же, что `html/`), сессия Telegram и `secrets.env`: на
-новом компьютере вход делается заново.
+A snapshot holds a copy of the database (checked with `integrity_check`), `config.yaml`, `media/` and `html/` — the
+pages, so that the archive in a snapshot can be read without tgbup. It does not hold `md/` (the same as `html/`), the
+Telegram session and `secrets.env`: on a new computer you log in again.
 
-**Снимок — только когда архив изменился.** Страницы перерисовываются каждый запуск, а снимок делается, только если
-с прошлого снимка в этом месте что-то поменялось: сообщения, файлы, правки, реакции, отметки в чек-листах или
-`config.yaml`. Место, которое уже держит архив как есть, только проверяется (на месте ли хранилище и то ли оно) и
-считается «up to date». Новое место, пересозданное хранилище или место, где прошлый снимок не удался или не смог
-прочитать часть файлов, получит снимок в следующий запуск.
+**A snapshot only when the archive changed.** The pages are redrawn on every run, but a snapshot is made only if
+something changed since the last snapshot in that place: messages, files, edits, reactions, checklist ticks or
+`config.yaml`. A place that already holds the archive as it is, is only checked (is the repository there, and the same
+one) and counts as «up to date». A new place, a repository made again, or a place whose last snapshot failed or could
+not read some files gets a snapshot on the next run.
 
-**Хранится последний снимок каждого дня — всегда**, плюс 4 самых свежих. Каждый снимок полный: из любого
-восстанавливается весь архив, но restic хранит только новое, поэтому день стоит столько, сколько за него пришло.
-Ограничить можно в `config.yaml`, например `backup: {retention: {daily: 90}}` — тогда старше 90 дней остаются по одному
-на неделю (4 недели) и на месяц (12 месяцев); `all` — хранить все. Лишние удаляются после снимка, место освобождается
-раз в сутки, проверка 5% данных — раз в 30 дней. Снимок вручную, даже без изменений: `tgbup backup`.
+**The last snapshot of every day is kept — always**, plus the 4 newest. Every snapshot is complete: the whole archive
+restores from any of them, but restic stores only what is new, so a day costs what came in that day. It can be limited
+in `config.yaml`, e.g. `backup: {retention: {daily: 90}}` — then beyond 90 days one a week (4 weeks) and one a month
+(12 months) stay; `all` keeps every one. The rest is forgotten after a snapshot, the space is freed once a day, and 5%
+of the data is read back every 30 days. A snapshot by hand, even without changes: `tgbup backup`.
 
-**История.** Вверху каждой страницы архива: «snapshot 3333bbbb of Oct 7, 12:31» — снимок, в котором лежит то, что вы
-видите, или «not in a snapshot yet», если последние изменения ещё не в бэкапе. Ссылка ведёт на `html/history.html`:
-каждое изменение — когда, хэш снимка, что изменилось («+120 messages · +5 files · 3 edited» и по чатам), в каких местах
-он лежит. Снимок хранится зашифрованным, а не файлами, поэтому открыть его в Finder нельзя — только восстановить.
-Для этого рядом с каждым снимком готовая команда; копия ложится в `<архив>-snapshots/<хэш>`, архив и настройки не трогаются,
-и в истории вместо команды появляется ссылка «open the restored copy»:
+**History.** At the top of every archive page: «snapshot 3333bbbb of Oct 7, 12:31» — the snapshot that holds what you
+see, or «not in a snapshot yet» if the latest changes are not backed up yet. The link leads to `html/history.html`:
+every change — when, the snapshot's id, what changed («+120 messages · +5 files · 3 edited» and per chat), and in which
+places it is. A snapshot is stored encrypted, not as files, so it cannot be opened in Finder — only restored. For that
+each snapshot has its command; the copy goes into `<archive>-snapshots/<id>`, the archive and the settings are not
+touched, and the history then shows an «open the restored copy» link instead of the command:
 
 ```bash
 tgbup restore --copy --from ~/Tgbup/backup --snapshot 3333bbbb
 ```
-В обзоре у запуска видно, какой снимок он сделал или что архив не менялся, на вкладке Snapshots — что изменилось в каждом снимке.
 
-Бэкапы делает [restic](https://restic.net), Google Drive без приложения подключается через
-[rclone](https://rclone.org). Ставить их не нужно: tgbup скачивает нужные версии сам и сверяет контрольные суммы
-(`tgbup deps` показывает, где они лежат).
+On the overview a run shows the snapshot it made or that the archive did not change; the Snapshots tab shows what
+changed in each snapshot.
 
-## Восстановление
+Backups are made by [restic](https://restic.net); Google Drive without its app is reached through
+[rclone](https://rclone.org). There is no need to install them: tgbup downloads the versions it needs and checks their
+checksums (`tgbup deps` shows where they are).
 
-На новом компьютере или после потери архива:
-1. `make setup`, ключи Telegram и вход — как при первой настройке.
-2. Шаг Archive folder → «Restore from a backup». В терминале — ответ `y` на «Restore an archive from an existing
-   backup» или отдельная команда `tgbup restore`.
-3. Указать место бэкапа и пароль, выбрать снимок (по умолчанию последний).
-4. Дальше мастер продолжит обычные шаги. Чаты уже выбраны, если конфиг взят из снимка.
+## Restore
 
-Google Drive через rclone на новом компьютере подключается заново, входом в браузере.
+On a new computer or after losing the archive:
+1. `make setup` (or `tgbup serve --open`), the Telegram keys and the login — as on the first setup.
+2. The Archive folder step → «Restore from a backup». In a terminal — answer `y` to «Restore an archive from an
+   existing backup», or the separate `tgbup restore` command.
+3. Give the backup place and the password, choose a snapshot (the latest by default).
+4. The setup then goes on with the usual steps. The chats are already chosen if the config came from the snapshot.
 
-Что происходит при восстановлении:
-- **база** — если в папке архива уже есть `archive.sqlite`, она переименовывается в
-  `archive.sqlite.before-restore-<время>`, а восстановленная встаёт на её место;
-- **медиа** — недостающие добавляются, такие же остаются. Если под тем же именем лежит другой файл, он переносится в
-  `media.before-restore-<время>`, а на его место встаёт файл из снимка: на него ссылается восстановленная база;
-- **конфиг** — берётся из снимка, если в текущем ещё не выбраны чаты; места бэкапа из обоих объединяются. Конфиг с
-  выбранными чатами не меняется;
-- **пароль** — сохраняется, только если своего ещё нет. Если у вас уже другой пароль, он остаётся, а место, из
-  которого восстанавливали, в бэкапы не добавляется: один пароль должен открывать все места;
-- **страницы** перерисовываются.
+Google Drive through rclone is connected again on a new computer, by signing in in the browser.
 
-Свободного места нужно на снимок целиком: он сначала раскладывается во временную папку рядом с архивом, а потом
-переносится переименованием.
+What a restore does:
+- **the database** — if the archive folder already has `archive.sqlite`, it is renamed to
+  `archive.sqlite.before-restore-<time>`, and the restored one takes its place;
+- **media** — missing files are added, identical ones stay. If another file lies under the same name, it moves to
+  `media.before-restore-<time>`, and the snapshot's file takes its place: the restored database links to it;
+- **the config** — taken from the snapshot if the current one has no chats chosen yet; the backup places of both are
+  merged. A config with chats chosen is not changed;
+- **the password** — saved only if there is none yet. If you already have another password, it stays, and the place
+  restored from is not added to the backups: one password must open every place;
+- **the pages** are redrawn.
 
-`tgbup restore` в терминале: `--from <место>` (иначе — первое место из конфига или вопрос), `--snapshot <id|latest>`,
-`--to <папка>`, `--list` — только показать снимки.
+You need free space for the whole snapshot: it is first laid out in a temporary folder next to the archive and then
+moved into place by renaming.
+
+`tgbup restore` in a terminal: `--from <place>` (otherwise the first place in the config, or a question), `--snapshot
+<id|latest>`, `--to <folder>`, `--list` to only list the snapshots, `--copy` for a copy to look at next to the
+archive, which touches neither the archive nor the settings.
 
 <details>
-<summary>Без tgbup (например, на другой ОС)</summary>
+<summary>Without tgbup (on another OS, say)</summary>
 
-1. Поставить restic. Для Google Drive ещё rclone и заново `rclone config` с тем же именем хранилища (`gdrive`).
-2. Восстановить последний снимок:
+1. Install restic. For Google Drive also rclone, and `rclone config` again with the same remote name (`gdrive`).
+2. Restore the latest snapshot:
    ```bash
-   RESTIC_PASSWORD=… restic -r "<репозиторий>" restore latest --target ~/restore
+   RESTIC_PASSWORD=… restic -r "<repository>" restore latest --target ~/restore
    ```
-   Пути в снимке абсолютные: в `~/restore` окажутся `…/archive/.snapshot/archive.sqlite`, `…/archive/.snapshot/config.yaml`,
-   `…/archive/media/` и `…/archive/html/`.
-3. Чтобы только почитать, достаточно открыть `…/archive/html/index.html`.
-4. Чтобы продолжить архив: `archive.sqlite` и `media/` положить в папку архива, `config.yaml` — в `~/Tgbup/`,
-   `secrets.env` создать заново в `~/.local/state/tgbup/`, затем `tgbup login` и `tgbup render`.
+   Paths in a snapshot are absolute: `~/restore` gets `…/archive/.snapshot/archive.sqlite`,
+   `…/archive/.snapshot/config.yaml`, `…/archive/media/` and `…/archive/html/`.
+3. To only read it, open `…/archive/html/index.html`.
+4. To go on with the archive: put `archive.sqlite` and `media/` into the archive folder and `config.yaml` into
+   `~/Tgbup/`, create `secrets.env` again in `~/.local/state/tgbup/`, then `tgbup login` and `tgbup render`.
 </details>
 
-## Безопасность и приватность
+## Security and privacy
 
-**Telegram — только чтение.** Каждый вызов Telegram API проходит через белый список методов
-(`internal/tgclient/readonly.go`). Всё, чего в списке нет, отклоняется до отправки в сеть: отправка, правка,
-удаление, пересылка, отметка «прочитано», реакции, вступление и выход из чатов, изменение профиля и настроек.
+**Telegram is read only.** Every Telegram API call goes through an allowlist of methods
+(`internal/tgclient/readonly.go`). Anything not on it is refused before it reaches the network: sending, editing,
+deleting, forwarding, marking as read, reactions, joining and leaving chats, changing the profile and settings.
 
-| Методы | Зачем |
+| Methods | What for |
 |---|---|
-| `messages.getDialogs`, `messages.getDialogFilters` | список чатов и папок |
-| `messages.getHistory`, `messages.getReplies`, `messages.search`, `messages.getSearchCounters` | сообщения, их число, закрепы, счётчики по типам |
-| `messages.getForumTopics` | топики форумов |
-| `messages.getMessages`, `channels.getMessages` | перечитать сообщение для свежей ссылки на файл |
-| `channels.getFullChannel` | из какой группы выросла супергруппа |
-| `users.getUsers` | свой id, проверка входа |
-| `upload.getFile` | скачивание медиа |
-| `auth.sendCode`, `auth.signIn`, `account.getPassword`, `auth.checkPassword` | вход |
-| `account.initTakeoutSession`, `account.finishTakeoutSession` | экспорт данных для первой выгрузки |
-| `help.getConfig`, `help.getNearestDc`, `help.getCdnConfig`, `auth.exportAuthorization`, `auth.importAuthorization` | служебное соединение с дата-центрами |
+| `messages.getDialogs`, `messages.getDialogFilters` | the chat and folder list |
+| `messages.getHistory`, `messages.getReplies`, `messages.search`, `messages.getSearchCounters` | messages, their count, pins, counts by kind |
+| `messages.getForumTopics` | forum topics |
+| `messages.getMessages`, `channels.getMessages` | reread a message for a fresh file reference |
+| `channels.getFullChannel` | which group a supergroup grew from |
+| `users.getUsers` | your own id, checking the login |
+| `upload.getFile` | downloading media |
+| `auth.sendCode`, `auth.signIn`, `account.getPassword`, `auth.checkPassword` | login |
+| `account.initTakeoutSession`, `account.finishTakeoutSession` | the data export for the first download |
+| `help.getConfig`, `help.getNearestDc`, `help.getCdnConfig`, `auth.exportAuthorization`, `auth.importAuthorization` | connecting to Telegram's data centers |
 
-В аккаунте заметно только это:
-- вход создаёт сеанс «tgbup» в списке активных сеансов, как любое приложение Telegram. Если его завершить, tgbup
-  перестанет выгружать и сообщит об этом;
-- экспорт данных Telegram подтверждает запросом в приложении.
+All that shows in the account:
+- the login creates a «tgbup» session in the list of active sessions, like any Telegram app. If you end it, tgbup stops
+  downloading and tells you;
+- Telegram confirms a data export with a request in the app.
 
-История читается без отметки «прочитано», собеседники ничего не видят.
+History is read without marking it as read; nobody you talk to sees anything.
 
-**Архив на диске.** Бэкапы зашифрованы (restic), а сам архив хранится обычными файлами: его защищает шифрование
-диска — FileVault на Mac, зашифрованный том (LUKS), зашифрованная общая папка или шифрование ZFS на NAS. tgbup
-проверяет диск с архивом и, если он не зашифрован, предупреждает в обзоре, в Settings и в конце `tgbup init`. Когда
-проверить нельзя (другая ОС, сетевая папка), предупреждения нет.
+**The archive on disk.** Backups are encrypted (restic), while the archive itself is plain files: what protects it is
+disk encryption — FileVault on a Mac, an encrypted volume (LUKS), an encrypted shared folder or ZFS encryption on a
+NAS. tgbup checks the disk with the archive and, if it is not encrypted, warns on the overview, in Settings and at the
+end of `tgbup init`. When it cannot tell (another OS, a network folder), it says nothing.
 
-**Присланные файлы.** К расширениям, которые запускаются двойным кликом (`.command`, `.sh`, `.pkg`, `.dmg`…),
-дописывается `.txt`. Файлам от других людей ставится отметка macOS о скачивании из интернета: при попытке запустить
-такой файл macOS переспросит. Ваши собственные файлы (отправленные вами, не пересланные) идут без отметки.
+**Files sent to you.** Extensions that run on a double click (`.command`, `.sh`, `.pkg`, `.dmg`…) get `.txt` appended.
+Files from other people get macOS's «downloaded from the internet» mark: macOS asks before running such a file. Your
+own files (sent by you, not forwarded) come without the mark.
 
-**Секреты.** Ключи, пароль бэкапов и токен бота лежат только в `~/.local/state/tgbup/secrets.env` (права 600), не в
-бэкапе и не в журналах. Страница управления доступна только с этого компьютера, её действия требуют токена, который
-знают лишь её собственные страницы.
+**Secrets.** The keys, the backup password and the bot token are only in `~/.local/state/tgbup/secrets.env` (mode
+600), neither in the backups nor in the logs. The control page is reachable only from this computer, and its actions
+need a token that only its own pages know.
 
-## Команды
+## Commands
 
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `tgbup init` | настройка по шагам в терминале; повторный запуск продолжает или меняет настройки |
-| `tgbup serve --open` | страница на этом компьютере: обзор, «Update now», настройка с выбором чатов |
-| `tgbup setup` | выбор чатов в терминале |
-| `tgbup sync` | выгрузить новое (`--dry-run` — только показать, `--takeout` — через экспорт данных) |
-| `tgbup run` | то, что запускает расписание: выгрузка, бэкап, уведомления (`--takeout` — через экспорт данных) |
-| `tgbup backup` | снимок вручную (`--init` — создать хранилища) |
-| `tgbup restore` | восстановить архив из бэкапа (`--from`, `--snapshot`, `--to`, `--list`; `--copy` — копию посмотреть, рядом с архивом, не трогая архив и настройки) |
-| `tgbup render` | перерисовать страницы без Telegram |
-| `tgbup export <чат>` | zip с чатом, топиком или периодом |
-| `tgbup schedule install\|status\|uninstall` | расписание launchd (время — `schedule.times` или Settings) |
-| `tgbup notify test` | проверочное сообщение от бота |
-| `tgbup login` | войти в Telegram заново |
-| `tgbup deps` | где лежат restic и rclone (скачает, если нет) |
+| `tgbup init` | step-by-step setup in a terminal; run again to continue or change the settings |
+| `tgbup serve --open` | the page on this computer: overview, «Update now», settings with the chat choice, snapshots |
+| `tgbup setup` | choosing chats in a terminal |
+| `tgbup sync` | download what is new (`--dry-run` only shows it, `--takeout` goes through a data export) |
+| `tgbup run` | what the schedule starts: download, backup, notifications (`--takeout` goes through a data export) |
+| `tgbup backup` | a snapshot by hand (`--init` creates the repositories) |
+| `tgbup restore` | restore the archive from a backup (`--from`, `--snapshot`, `--to`, `--list`; `--copy` for a copy to look at, next to the archive, touching neither the archive nor the settings) |
+| `tgbup render` | redraw the pages without Telegram |
+| `tgbup export <chat>` | a zip of a chat, a topic or a period |
+| `tgbup schedule install\|status\|uninstall` | the launchd schedule (times in `schedule.times` or Settings) |
+| `tgbup notify test` | a test message from the bot |
+| `tgbup login` | log in to Telegram again |
+| `tgbup deps` | where restic and rclone are (downloads them if missing) |
 
-## Если что-то не так
+## When something is wrong
 
-| Что видно | Что делать |
+| What you see | What to do |
 |---|---|
-| «the Telegram session is no longer valid» | сеанс завершили в Telegram: `tgbup init` (или `tgbup login`) |
-| «another tgbup run is in progress» | идёт другой запуск (плановый или «Update now»), дождитесь его конца |
-| Первая выгрузка ждёт разрешения | разрешите экспорт данных в приложении Telegram и нажмите Enter, или `s` — качать без экспорта |
-| Чат из `include` не найден | его переименовали или вы из него вышли: поправьте список в Settings → Chats или `tgbup setup` |
-| «a backup place is a full path…» | в местах бэкапа есть строка, которая не путь и не адрес (например, вставленный пароль): Settings → Backups → change → Save, она отбросится. Остальные места бэкапятся как обычно |
-| «The disk with the archive is not encrypted» | включите FileVault (Mac) или перенесите архив на зашифрованный том |
-| Бэкап в iCloud не делается | при проверочном запуске macOS спрашивала доступ к iCloud. Если отказали, разрешите в «Системные настройки» → «Конфиденциальность и безопасность» → «Файлы и папки» |
-| Google Drive через rclone: нет доступа | шаг Backups → «Sign in to Google Drive again» |
-| Забыт пароль бэкапов | старые снимки открыть нельзя. Задайте новый пароль и новое место бэкапа |
-| Запуск отмечен ошибкой из-за одного файла | файл, у которого остались попытки (всего 5), перекачивается в следующий запуск и запуск не портит; ошибкой считается только файл, исчерпавший попытки |
-| Подробности любой ошибки | обзор на странице `tgbup serve` (запуск раскрывается по клику), `~/Tgbup/logs/tgbup.log` и `run.log` |
+| «the Telegram session is no longer valid» | the session was ended in Telegram: `tgbup init` (or `tgbup login`) |
+| «another tgbup run is in progress» | another run is going (scheduled or «Update now»), wait for it to end |
+| The first download waits for permission | allow the data export in the Telegram app and press Enter, or `s` to download without the export |
+| A chat in `include` is not found | it was renamed or you left it: fix the list in Settings → Chats or `tgbup setup` |
+| «a backup place is a full path…» | the backup places hold a line that is neither a path nor an address (a pasted password, say): Settings → Backups → change → Save drops it. The other places are backed up as usual |
+| «The disk with the archive is not encrypted» | turn on FileVault (Mac) or move the archive to an encrypted volume |
+| No backups to iCloud | macOS asked for access to iCloud during the test run. If it was refused, allow it in System Settings → Privacy & Security → Files and Folders |
+| Google Drive through rclone: no access | the Backups step → «Sign in to Google Drive again» |
+| The backup password is forgotten | the old snapshots cannot be opened. Set a new password and a new backup place |
+| A run marked failed because of one file | a file with attempts left (5 in all) is downloaded again on the next run and does not fail the run; only a file out of attempts counts as an error |
+| Details of any error | the overview on the `tgbup serve` page (a run opens on a click), `~/Tgbup/logs/tgbup.log` and `run.log` |
 
-## Разработка
+## Development
 
 ```bash
-make test         # юнит-тесты
-make test-backup  # тесты бэкапа с настоящим restic
+make test         # unit tests
+make test-backup  # backup tests against a real restic
 make lint
 ```
 
-Тестовые серверы Telegram: `TGBUP_TEST_DC=1 bin/tgbup login` создаёт отдельную сессию `session-test`, боевая не
-затрагивается. Всё остальное в этом режиме требует своих `TGBUP_CONFIG`, `TGBUP_SECRETS` и `TGBUP_STATE_DIR`
-(скопируйте туда `session-test` и ключи API), иначе tgbup откажется запускаться. Так тестовые чаты не попадут в
-настоящий архив, а тестовый пароль бэкапа не заменит настоящий. Папки архива и бэкапа по умолчанию в этом режиме лежат
-рядом с тестовым конфигом, журнал — там же, а расписание не трогается вовсе.
+Telegram's test servers: `TGBUP_TEST_DC=1 bin/tgbup login` creates a separate `session-test` session; the real one is
+not touched. Everything else in this mode needs its own `TGBUP_CONFIG`, `TGBUP_SECRETS` and `TGBUP_STATE_DIR` (copy
+`session-test` and the API keys there), or tgbup refuses to start. That way test chats never reach the real archive,
+and a test backup password never replaces the real one. In this mode the archive and backup folders default to next to
+the test config, the log goes there too, and the schedule is not touched at all.
 
-`make e2e` создаёт на тестовом аккаунте форум со всеми видами сообщений и прогоняет настоящий `tgbup sync`: полную
-выгрузку, инкремент, dry-run, исключение и возврат топика. Затем проверяет архив и удаляет за собой форум и папку.
-Писать в Telegram может только эта фикстура: её функция компилируется лишь с тегом `e2e`, работает только на
-тестовых серверах и в бинарник `tgbup` не попадает.
+`make e2e` creates a forum with every kind of message on a test account and runs a real `tgbup sync`: a full download,
+an incremental one, a dry run, excluding a topic and bringing it back. It then checks the archive and deletes the forum
+and the folder it made. Only this fixture can write to Telegram: its code compiles only with the `e2e` tag, works only
+on the test servers, and is never in the `tgbup` binary.
+
+## License
+
+[MIT](LICENSE).
