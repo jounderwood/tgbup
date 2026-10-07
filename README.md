@@ -2,6 +2,10 @@
 
 **English** · [Русский](README.ru.md)
 
+> **Work in progress.** tgbup is under active development and has no stable release yet: settings, the archive layout
+> and commands may still change between versions, and some parts (a password-protected export) are not done. Use it at
+> your own risk and keep the backups on.
+
 An archive of your Telegram chats, groups and forums, on your own computer. Messages are kept in an SQLite database,
 files sit next to it under readable names. The archive reads in a browser and in Obsidian, updates itself on a
 schedule, and encrypted backups go to every place you choose.
