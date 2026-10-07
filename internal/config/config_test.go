@@ -53,7 +53,7 @@ backup:
 	if cfg.Sync.RunTimeBudget.D() != 2*time.Hour || cfg.Sync.MaxFloodWait.D() != 5*time.Minute {
 		t.Errorf("sync defaults = %+v", cfg.Sync)
 	}
-	if cfg.Backup.Retention != (config.Retention{Last: 2, Daily: 7, Weekly: 4, Monthly: 12}) {
+	if cfg.Backup.Retention != (config.Retention{Last: 2, Daily: config.KeepAll, Weekly: 4, Monthly: 12}) {
 		t.Errorf("Retention = %+v", cfg.Backup.Retention)
 	}
 	if cfg.Notify.SummaryEvery.D() != 7*24*time.Hour {
@@ -180,5 +180,28 @@ func TestParseTimes(t *testing.T) {
 	}
 	if c := config.Default().Schedule.Clocks(); len(c) != 4 || c[1].String() != "06:30" {
 		t.Errorf("default = %v", c)
+	}
+}
+
+func TestRetentionKeepAll(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) (config.Config, error) {
+		p := filepath.Join(dir, "config.yaml")
+		if err := os.WriteFile(p, []byte("targets: {folders: [x]}\nbackup:\n  retention: "+body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return config.Load(p, dir)
+	}
+	cfg, err := write("{daily: 90, weekly: all, monthly: unlimited}")
+	if err != nil || cfg.Backup.Retention != (config.Retention{Last: 4, Daily: 90, Weekly: config.KeepAll, Monthly: config.KeepAll}) {
+		t.Fatalf("retention = %+v, %v", cfg.Backup.Retention, err)
+	}
+	if cfg.Backup.Retention.Weekly.Restic() != "unlimited" || cfg.Backup.Retention.Daily.Restic() != "90" {
+		t.Fatalf("restic values = %s %s", cfg.Backup.Retention.Weekly.Restic(), cfg.Backup.Retention.Daily.Restic())
+	}
+	for _, bad := range []string{"{daily: -3}", "{daily: often}", "{last: 0, daily: 0, weekly: 0, monthly: 0}"} {
+		if _, err := write(bad); err == nil {
+			t.Errorf("%s: accepted", bad)
+		}
 	}
 }

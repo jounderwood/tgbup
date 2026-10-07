@@ -58,7 +58,7 @@ document.addEventListener('keydown', toggleRound);
 // Videos near the bottom grow as they load, so it keeps to the bottom until
 // the reader scrolls themselves.
 window.addEventListener('load', () => {
-  if (location.hash) return;
+  if (location.hash || !document.querySelector('.jump')) return; // only a chat's page
   const bottom = () => window.scrollTo(0, document.documentElement.scrollHeight);
   let stick = true;
   for (const ev of ['wheel', 'touchstart', 'keydown', 'mousedown']) {

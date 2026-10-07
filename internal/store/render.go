@@ -21,7 +21,7 @@ type PageKey struct {
 // ThreadPage is a page of a thread with a fingerprint of what it shows.
 type ThreadPage struct {
 	PageKey
-	Total       int   // pages in the thread
+	Total       int     // pages in the thread
 	IDs         []int   // message ids, oldest first
 	Dates       []int64 // their dates, for day anchors and the calendar
 	First, Last int64   // dates of its first and last message

@@ -94,3 +94,11 @@ header.bar form.search input[type=search] { width: 16em; }
 header.bar .jump select, header.bar .jump input { font: inherit; }
 @media (max-width: 640px) { header.bar form.search input[type=search] { width: 100%; } }
 header.bar form.search { display: flex; align-items: center; gap: 6px; margin: 0; }
+
+/* history.html: the updates and their snapshots. */
+.update { border-bottom: 1px solid var(--line); padding: 4px 0 10px; }
+.update h2 { font-size: 16px; margin: 8px 0 2px; }
+.update .when { color: var(--muted); font-weight: normal; font-size: 13px; }
+.update p { margin: 2px 0; }
+.update .snaps { margin: 4px 0; padding-left: 18px; font-size: 13px; }
+.update code.cmd { display: inline-block; margin-top: 2px; color: var(--muted); user-select: all; word-break: break-all; }

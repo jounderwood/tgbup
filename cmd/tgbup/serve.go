@@ -191,8 +191,23 @@ func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Sta
 		r := runs[i]
 		var rec runRecord
 		_ = json.Unmarshal([]byte(r.Summary), &rec)
+		snap := ""
+		switch {
+		case len(rec.Snapshots) > 0:
+			var ids []string
+			for _, s := range rec.Snapshots {
+				// "<place>: <id>"; a place may hold a colon (rclone:gdrive:x).
+				if id := shortID(s[strings.LastIndex(s, " ")+1:]); !slices.Contains(ids, id) {
+					ids = append(ids, id)
+				}
+			}
+			snap = "snapshot " + strings.Join(ids, ", ")
+		case rec.Unchanged:
+			snap = "unchanged, no new snapshot"
+		}
 		s.Runs = append(s.Runs, serve.Run{Started: r.Started, Finished: r.Finished, OK: r.OK,
-			NewMessages: rec.NewMessages, NewMedia: rec.NewMedia, Errors: append(rec.SyncErrors, rec.BackupErrors...), Log: rec.Log})
+			NewMessages: rec.NewMessages, NewMedia: rec.NewMedia, Snapshot: snap,
+			Errors: append(rec.SyncErrors, rec.BackupErrors...), Log: rec.Log})
 	}
 	return nil
 }
@@ -792,11 +807,31 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 	if err != nil {
 		return nil, err
 	}
+	updates := b.snapshotUpdates(ctx, st, repos[place])
 	out := make([]serve.Snapshot, len(snaps))
 	for i, sn := range snaps {
 		out[i] = serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host}
+		if u, ok := updates[sn.ID]; ok {
+			out[i].Changes = u.Diff.Summary()
+		}
 	}
 	return out, nil
+}
+
+// snapshotUpdates is what the archive knows of repo's snapshots; without an
+// archive (a backup being looked at before a restore) it knows nothing.
+func (b *serveBackend) snapshotUpdates(ctx context.Context, st setup, repo string) map[string]store.Update {
+	path := filepath.Join(st.cfg.ArchiveDir, "archive.sqlite")
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+	m, _ := db.SnapshotUpdates(ctx, repo)
+	return m
 }
 
 // diskWarning is cached: the page asks for the status every half minute, and

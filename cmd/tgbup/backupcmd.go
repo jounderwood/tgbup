@@ -15,6 +15,7 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/config"
 	"gitlab.com/joeunderwood/tgbup/internal/deps"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -137,8 +138,14 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	defer db.Close()
+	// By hand, a snapshot is wanted even of an unchanged archive.
+	o.Force = true
+	o.Update = latestUpdate(ctx, db)
 	rep := backup.Run(ctx, db, o)
 	printBackup(env.Stdout, rep)
+	if err := render.WriteHistory(ctx, db, archiveRender(st.cfg.ArchiveDir)); err != nil {
+		log.Error("write the update history", "err", err)
+	}
 	if !rep.OK() {
 		fmt.Fprintln(env.Stdout, "hint: a new repository needs tgbup backup --init first")
 		return 1
@@ -204,6 +211,7 @@ func newRunParts(st setup, db *store.Store, bot notify.Bot, log *slog.Logger, wa
 			if err != nil {
 				return backup.Report{Integrity: err}, true
 			}
+			o.Update = latestUpdate(ctx, db) // places that hold it get no new snapshot
 			rep := backup.Run(ctx, db, o)
 			if _, bad := splitPlaces(st); bad > 0 {
 				rep.Repos = append(rep.Repos, backup.RepoResult{Repo: "(a place that is not one)", Err: errBadPlace})
@@ -262,4 +270,14 @@ func botFromSecrets(env Env) notify.Bot {
 	}
 	sec, _ := config.LoadSecrets(p.Secrets, env.Getenv)
 	return notify.Bot{Token: sec.BotToken, ChatID: sec.BotChatID}
+}
+
+// latestUpdate notes what changed since the last update, also when the pages
+// could not be drawn, and returns the latest update; 0 when there is none.
+func latestUpdate(ctx context.Context, db *store.Store) int {
+	u, _, ok, err := db.NoteUpdate(ctx, 0, time.Now())
+	if err != nil || !ok {
+		return 0 // unknown: every place gets a snapshot
+	}
+	return u.N
 }

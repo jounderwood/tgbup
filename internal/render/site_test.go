@@ -329,3 +329,85 @@ func TestPageLinksItsTopicMedia(t *testing.T) {
 		t.Error("media page has no topic filter")
 	}
 }
+
+func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
+	db, dir := siteFixture(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
+	if _, _, _, err := db.NoteUpdate(ctx, 0, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveBatch(ctx, store.Batch{ChatID: 10, Messages: []store.Message{{ChatID: 10, ID: 2, Date: at("2026-03-06", "08:00"), Raw: []byte{1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := db.NoteUpdate(ctx, 1, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.AddSnapshot(ctx, "/Volumes/My Disk/tgbup", "1111aaaa2222", 1, false, t0)
+	_ = db.AddSnapshot(ctx, "/Volumes/My Disk/tgbup", "3333bbbb4444", 2, false, t0.Add(time.Hour))
+	_ = db.ForgetSnapshots(ctx, "/Volumes/My Disk/tgbup", []string{"1111aaaa2222"}, t0.Add(time.Hour))
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC, Now: func() time.Time { return t0.Add(2 * time.Hour) }}
+	if err := WriteHistory(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	page := read(t, filepath.Join(dir, "html/history.html"))
+	for _, want := range []string{
+		`<h2><a href="#u2">2026-03-06 10:00</a> · snapshot <code>3333bbbb</code></h2>`,
+		"&#43;1 message · 1 page redrawn: ../Mom/ &#43;1",
+		`<a href="#u1">2026-03-06 09:00</a> <span class="when">· no snapshot of its own: the next one holds it</span>`,
+		"first recorded: 5 messages, 0 files",
+		"/Volumes/My Disk/tgbup <code>3333bbbb</code>",
+		"tgbup restore --from &#39;/Volumes/My Disk/tgbup&#39; --snapshot 3333bbbb --to",
+		"<s>/Volumes/My Disk/tgbup <code>1111aaaa</code></s>", "removed by retention",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("history.html lacks %q:\n%s", want, page)
+		}
+	}
+	js := read(t, filepath.Join(dir, "html/assets/updated.js"))
+	for _, want := range []string{`"anchor":"u2"`, `"snapshot":"3333bbbb"`, `"snapshot_at":"2026-03-06T10:00:00Z"`, `"what":"+1 message · 1 page redrawn"`} {
+		if !strings.Contains(js, want) {
+			t.Errorf("updated.js lacks %s: %s", want, js)
+		}
+	}
+	// A change not snapshotted yet says so.
+	if err := db.SaveBatch(ctx, store.Batch{ChatID: 10, Messages: []store.Message{{ChatID: 10, ID: 3, Date: at("2026-03-06", "09:00"), Raw: []byte{1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := db.NoteUpdate(ctx, 1, t0.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteHistory(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	if js := read(t, filepath.Join(dir, "html/assets/updated.js")); !strings.Contains(js, `"anchor":"u3"`) || strings.Contains(js, `"snapshot"`) {
+		t.Errorf("not snapshotted: %s", js)
+	}
+	if page := read(t, filepath.Join(dir, "html/history.html")); !strings.Contains(page, "· not in a snapshot yet") {
+		t.Errorf("history does not say the latest change is not snapshotted")
+	}
+	// An export is not the archive: no update, no history.
+	out := t.TempDir()
+	if err := WriteHistory(ctx, db, Options{OutDir: out, Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if js := read(t, filepath.Join(out, "html/assets/updated.js")); strings.Contains(js, `"anchor"`) {
+		t.Errorf("export updated.js = %s", js)
+	}
+	if _, err := os.Stat(filepath.Join(out, "html/history.html")); err == nil {
+		t.Error("an export has a history page")
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"~/Tgbup/backup":        "~/Tgbup/backup",
+		"rclone:gdrive:tgbup":   "rclone:gdrive:tgbup",
+		"~/My Archive/update-3": "~/'My Archive/update-3'",
+		"/Volumes/Bob's/x":      `'/Volumes/Bob'\''s/x'`,
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}

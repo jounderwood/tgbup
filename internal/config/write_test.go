@@ -223,7 +223,7 @@ func TestSetValueCreatesAndKeepsTheRest(t *testing.T) {
 	if !slices.Equal(cfg.Backup.Repositories, []string{"/home/u/iCloud/tgbup-restic", "rclone:gdrive:tgbup-restic"}) {
 		t.Errorf("repositories = %v", cfg.Backup.Repositories)
 	}
-	if got := includeIDs(t, cfg); !slices.Equal(got, []int64{10}) || cfg.Backup.Retention.Daily != 7 {
+	if got := includeIDs(t, cfg); !slices.Equal(got, []int64{10}) || cfg.Backup.Retention.Daily != config.KeepAll {
 		t.Errorf("other settings lost: %v %+v", got, cfg.Backup)
 	}
 	raw, _ := os.ReadFile(path)

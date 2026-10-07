@@ -101,11 +101,46 @@ type Backup struct {
 	CheckReadSubset string    `yaml:"check_read_subset"`
 }
 
+// Retention says which snapshots each place keeps, as restic forget's
+// --keep-* options: the last ones, and the newest of each day, week and month.
 type Retention struct {
-	Last    int `yaml:"last"`
-	Daily   int `yaml:"daily"`
-	Weekly  int `yaml:"weekly"`
-	Monthly int `yaml:"monthly"`
+	Last    Keep `yaml:"last"`
+	Daily   Keep `yaml:"daily"`
+	Weekly  Keep `yaml:"weekly"`
+	Monthly Keep `yaml:"monthly"`
+}
+
+// Keep is how many snapshots of a kind are kept; KeepAll ("all") keeps every one.
+type Keep int
+
+const KeepAll Keep = -1
+
+func (k *Keep) UnmarshalYAML(n *yaml.Node) error {
+	if v := strings.ToLower(strings.TrimSpace(n.Value)); v == "all" || v == "unlimited" {
+		*k = KeepAll
+		return nil
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(n.Value))
+	if err != nil || v < 0 {
+		return fmt.Errorf("line %d: keep %q: want a number or all", n.Line, n.Value)
+	}
+	*k = Keep(v)
+	return nil
+}
+
+func (k Keep) String() string {
+	if k == KeepAll {
+		return "all"
+	}
+	return strconv.Itoa(int(k))
+}
+
+// Restic is the value for restic forget --keep-*.
+func (k Keep) Restic() string {
+	if k == KeepAll {
+		return "unlimited"
+	}
+	return strconv.Itoa(int(k))
 }
 
 type Notify struct {
@@ -123,7 +158,11 @@ func Default() Config {
 		Media:      Media{Workers: 4},
 		Sync:       Sync{RunTimeBudget: Duration(2 * time.Hour), MaxFloodWait: Duration(5 * time.Minute)},
 		Backup: Backup{
-			Retention:       Retention{Last: 4, Daily: 7, Weekly: 4, Monthly: 12},
+			// Every day's last version, for good: a snapshot is made only when
+			// the archive changed, and restic stores only what is new in it.
+			// Weekly and monthly add nothing to that, but keep the old policy
+			// for a config that sets daily to a number.
+			Retention:       Retention{Last: 4, Daily: KeepAll, Weekly: 4, Monthly: 12},
 			PruneEvery:      Duration(24 * time.Hour),
 			CheckEvery:      Duration(30 * 24 * time.Hour),
 			CheckReadSubset: "5%",
@@ -188,6 +227,9 @@ func (c Config) validate(requireTargets bool) error {
 	}
 	if _, err := ParseTimes(c.Schedule.Times); err != nil {
 		errs = append(errs, err)
+	}
+	if r := c.Backup.Retention; r.Last == 0 && r.Daily == 0 && r.Weekly == 0 && r.Monthly == 0 {
+		errs = append(errs, errors.New("backup.retention keeps nothing: set last, daily, weekly or monthly"))
 	}
 	if c.Media.Workers < 1 || c.Media.Workers > 16 {
 		errs = append(errs, fmt.Errorf("media.workers must be 1..16, got %d", c.Media.Workers))

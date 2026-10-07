@@ -6,7 +6,10 @@ package backup
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +29,9 @@ type Archive interface {
 	VacuumInto(ctx context.Context, path string) error
 	Meta(ctx context.Context, key string) (string, bool, error)
 	SetMeta(ctx context.Context, key, value string) error
+	LastSnapshot(ctx context.Context, repo string) (id string, update int, ok bool, err error)
+	AddSnapshot(ctx context.Context, repo, id string, update int, partial bool, at time.Time) error
+	ForgetSnapshots(ctx context.Context, repo string, ids []string, at time.Time) error
 }
 
 type Options struct {
@@ -41,13 +47,20 @@ type Options struct {
 	ConfigPath string
 	Host       string
 	Now        func() time.Time
+	// Update is the archive's latest update (store.NoteUpdate). A place whose
+	// last snapshot holds it gets no new one: nothing changed. 0, or Force,
+	// snapshots every place.
+	Update int
+	Force  bool
 }
 
 type RepoResult struct {
 	Repo     string
 	Snapshot string
-	Pruned   bool
-	Checked  bool
+	// Skipped: the place already had a snapshot of this update, Snapshot.
+	Skipped bool
+	Pruned  bool
+	Checked bool
 	// Warning: the snapshot was made but some files could not be read.
 	Warning string
 	Err     error
@@ -126,26 +139,105 @@ func Opens(ctx context.Context, o Options) []RepoResult {
 
 func Run(ctx context.Context, a Archive, o Options) Report {
 	var r Report
-	if err := a.IntegrityCheck(ctx); err != nil {
-		r.Integrity = err
-		return r
-	}
-	// The copy exists only for the snapshots: kept, it would take as much
-	// room again as the archive's database.
-	defer o.removeCopy()
-	if err := o.prepare(ctx, a); err != nil {
-		r.Integrity = fmt.Errorf("prepare the snapshot: %w", err)
-		return r
+	need := make([]bool, len(o.Repos))
+	unreachable := make([]error, len(o.Repos))
+	anyNeed := false
+	for i, repo := range o.Repos {
+		need[i], unreachable[i] = o.needs(ctx, a, repo)
+		anyNeed = anyNeed || need[i]
 	}
 	host, err := o.host(ctx, a)
 	if err != nil {
 		r.Integrity = err
 		return r
 	}
-	for _, repo := range o.Repos {
-		r.Repos = append(r.Repos, o.backupRepo(ctx, a, repo, host))
+	if anyNeed {
+		if err := a.IntegrityCheck(ctx); err != nil {
+			r.Integrity = err
+			return r
+		}
+		// The copy exists only for the snapshots: kept, it would take as much
+		// room again as the archive's database.
+		defer o.removeCopy()
+		if err := o.prepare(ctx, a); err != nil {
+			r.Integrity = fmt.Errorf("prepare the snapshot: %w", err)
+			return r
+		}
+	}
+	for i, repo := range o.Repos {
+		if need[i] {
+			r.Repos = append(r.Repos, o.backupRepo(ctx, a, repo, host))
+			continue
+		}
+		if unreachable[i] != nil {
+			r.Repos = append(r.Repos, RepoResult{Repo: repo, Err: unreachable[i]})
+			continue
+		}
+		res := RepoResult{Repo: repo, Skipped: true}
+		res.Snapshot, _, _, _ = a.LastSnapshot(ctx, repo)
+		now := o.Now()
+		// The place was just seen holding the archive as it is: it is up to date.
+		if err := RecordSuccess(ctx, a, repo, now); err != nil {
+			res.Err = err
+			r.Repos = append(r.Repos, res)
+			continue
+		}
+		if due(ctx, a, metaKey(repo, "prune_at"), o.PruneEvery, now) || due(ctx, a, metaKey(repo, "check_at"), o.CheckEvery, now) {
+			_, _ = o.restic(ctx, repo, "unlock") // as before a snapshot
+		}
+		o.maintain(ctx, a, &res, now)
+		r.Repos = append(r.Repos, res)
 	}
 	return r
+}
+
+// needs says whether repo needs a snapshot: its last full snapshot does not
+// hold the latest update or the config as it is now, or it is no longer the
+// repository that snapshot went to (wiped, made again). err: the place, which
+// would need none, cannot be reached.
+func (o Options) needs(ctx context.Context, a Archive, repo string) (bool, error) {
+	if o.Force || o.Update == 0 {
+		return true, nil
+	}
+	if _, n, ok, err := a.LastSnapshot(ctx, repo); err != nil || !ok || n != o.Update {
+		return true, nil
+	}
+	if cfg, _, _ := a.Meta(ctx, metaKey(repo, "config")); cfg != o.configHash() {
+		return true, nil
+	}
+	id, err := o.repoID(ctx, repo)
+	if err != nil {
+		return false, err
+	}
+	known, ok, _ := a.Meta(ctx, metaKey(repo, "repo_id"))
+	if !ok {
+		return false, a.SetMeta(ctx, metaKey(repo, "repo_id"), id)
+	}
+	return known != id, nil
+}
+
+// repoID is the repository's own id, which changes when it is made again.
+func (o Options) repoID(ctx context.Context, repo string) (string, error) {
+	out, err := o.restic(ctx, repo, "cat", "config")
+	if err != nil {
+		return "", err
+	}
+	var c struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &c); err != nil || c.ID == "" {
+		return "", fmt.Errorf("read the repository config of %s: %w", repo, cmp.Or(err, errors.New("no id")))
+	}
+	return c.ID, nil
+}
+
+func (o Options) configHash() string {
+	b, err := os.ReadFile(o.ConfigPath)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
 }
 
 // host is the name snapshots are tagged with. It is fixed at the first backup:
@@ -209,27 +301,72 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 		res.Err = err
 		return res
 	}
+	if res.Snapshot != "" {
+		// A snapshot that missed files does not hold the update: the next run
+		// makes another.
+		if err := a.AddSnapshot(ctx, repo, res.Snapshot, o.Update, res.Warning != "", now); err != nil {
+			res.Err = err
+			return res
+		}
+		if err := a.SetMeta(ctx, metaKey(repo, "config"), o.configHash()); err != nil {
+			res.Err = err
+			return res
+		}
+		if id, err := o.repoID(ctx, repo); err == nil {
+			_ = a.SetMeta(ctx, metaKey(repo, "repo_id"), id)
+		}
+	}
 	k := o.Retention
 	// Grouped by host and tag, not restic's default host and paths: the paths
 	// change (html/ added, a folder missing on a run), and a group no new
 	// snapshot joins would never be thinned.
-	if _, err := o.restic(ctx, repo, "forget", "--tag", "tgbup", "--host", host, "--group-by", "host,tags",
-		"--keep-last", strconv.Itoa(k.Last), "--keep-daily", strconv.Itoa(k.Daily),
-		"--keep-weekly", strconv.Itoa(k.Weekly), "--keep-monthly", strconv.Itoa(k.Monthly)); err != nil {
+	out, err = o.restic(ctx, repo, "forget", "--json", "--tag", "tgbup", "--host", host, "--group-by", "host,tags",
+		"--keep-last", k.Last.Restic(), "--keep-daily", k.Daily.Restic(),
+		"--keep-weekly", k.Weekly.Restic(), "--keep-monthly", k.Monthly.Restic())
+	if err != nil {
 		res.Err = err
 		return res
 	}
+	if err := a.ForgetSnapshots(ctx, repo, forgotten(out), now); err != nil {
+		res.Err = err
+		return res
+	}
+	o.maintain(ctx, a, &res, now)
+	return res
+}
+
+// forgotten lists the snapshots restic forget --json removed.
+func forgotten(out []byte) []string {
+	var groups []struct {
+		Remove []struct {
+			ID string `json:"id"`
+		} `json:"remove"`
+	}
+	_ = json.Unmarshal(out, &groups)
+	var ids []string
+	for _, g := range groups {
+		for _, s := range g.Remove {
+			ids = append(ids, s.ID)
+		}
+	}
+	return ids
+}
+
+// maintain prunes and checks repo when their intervals are due, also on a
+// run that made no snapshot.
+func (o Options) maintain(ctx context.Context, a Archive, res *RepoResult, now time.Time) {
+	repo := res.Repo
 	// prune rewrites pack files and check reads data back: both are costly on
 	// cloud storage, so they run on their own intervals.
 	if due(ctx, a, metaKey(repo, "prune_at"), o.PruneEvery, now) {
 		if _, err := o.restic(ctx, repo, "prune"); err != nil {
 			res.Err = err
-			return res
+			return
 		}
 		res.Pruned = true
 		if err := a.SetMeta(ctx, metaKey(repo, "prune_at"), strconv.FormatInt(now.Unix(), 10)); err != nil {
 			res.Err = err
-			return res
+			return
 		}
 	}
 	if due(ctx, a, metaKey(repo, "check_at"), o.CheckEvery, now) {
@@ -239,14 +376,13 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 		}
 		if _, err := o.restic(ctx, repo, args...); err != nil {
 			res.Err = err
-			return res
+			return
 		}
 		res.Checked = true
 		if err := a.SetMeta(ctx, metaKey(repo, "check_at"), strconv.FormatInt(now.Unix(), 10)); err != nil {
 			res.Err = err
 		}
 	}
-	return res
 }
 
 func due(ctx context.Context, a Archive, key string, every time.Duration, now time.Time) bool {

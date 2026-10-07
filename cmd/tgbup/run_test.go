@@ -215,7 +215,7 @@ func TestRunTellsTheBotItsProgress(t *testing.T) {
 		t.Fatalf("code %d", code)
 	}
 	if len(bot.sent) != 2 || !strings.Contains(bot.sent[0], "▶ tgbup on mac: download through a Telegram data export started from the page") ||
-		!strings.Contains(bot.sent[1], "✓ tgbup on mac: 10 new messages, 0 new files; snapshot in icloud") ||
+		!strings.Contains(bot.sent[1], "✓ tgbup on mac: 10 new messages, 0 new files; snapshot icloud abc") ||
 		!bot.quiet[0] || !bot.quiet[1] {
 		t.Fatalf("sent %q quiet %v", bot.sent, bot.quiet)
 	}
@@ -224,5 +224,39 @@ func TestRunTellsTheBotItsProgress(t *testing.T) {
 	runOnce(context.Background(), e.parts)
 	if len(bot.sent) != 2 || !strings.Contains(bot.sent[1], "telegram unreachable") || bot.quiet[1] {
 		t.Fatalf("an error: sent %q quiet %v", bot.sent, bot.quiet)
+	}
+}
+
+func TestUnchangedRunSaysNoSnapshotWasNeeded(t *testing.T) {
+	bot := newFakeBot(t)
+	e := newRunEnv(t, bot.bot())
+	e.parts.progress = true
+	ctx := context.Background()
+	if err := e.db.UpsertChat(ctx, store.Chat{ID: 10, Type: store.ChatPrivate, Title: "Mom"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.SaveBatch(ctx, store.Batch{ChatID: 10, Messages: []store.Message{{ChatID: 10, ID: 1, Date: 1, Raw: []byte{1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := e.db.NoteUpdate(ctx, 0, e.now); err != nil {
+		t.Fatal(err)
+	}
+	e.parts.backup = func(context.Context) (backup.Report, bool) {
+		return backup.Report{Repos: []backup.RepoResult{{Repo: "icloud", Snapshot: "abc", Skipped: true}}}, true
+	}
+	if code := runOnce(ctx, e.parts); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if len(bot.sent) != 2 || !strings.HasSuffix(bot.sent[1], "0 new files; nothing changed, no new snapshot") {
+		t.Fatalf("sent %q", bot.sent)
+	}
+	runs, err := e.db.RunsSince(ctx, time.Time{})
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs = %v %v", runs, err)
+	}
+	var rec runRecord
+	_ = json.Unmarshal([]byte(runs[0].Summary), &rec)
+	if rec.Update != 1 || !rec.Unchanged || len(rec.Snapshots) != 0 {
+		t.Fatalf("record = %+v", rec)
 	}
 }

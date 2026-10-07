@@ -215,9 +215,17 @@ func TestUnreadableFileIsAWarning(t *testing.T) {
 	if err := os.WriteFile(locked, []byte("x"), 0o000); err != nil {
 		t.Fatal(err)
 	}
+	e.o.Update = 1
 	r := Run(ctx, e.db, e.o)
 	if !r.OK() || r.Repos[0].Snapshot == "" || !strings.Contains(r.Repos[0].Warning, "locked.jpg") {
 		t.Fatalf("report = %+v", r.Repos[0])
+	}
+	// It misses a file, so it does not hold the update: the next run tries again.
+	if err := os.Chmod(locked, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if again := Run(ctx, e.db, e.o); again.Repos[0].Skipped || again.Repos[0].Warning != "" {
+		t.Fatalf("after a partial snapshot = %+v", again.Repos[0])
 	}
 }
 
@@ -348,4 +356,110 @@ func TestOpensTellsAWrongPassword(t *testing.T) {
 	if res := Opens(ctx, e.o); res[0].Err == nil || res[1].Err != nil {
 		t.Fatalf("wrong password: %+v (a missing repository opens with any)", res)
 	}
+}
+
+func TestUnchangedArchiveGetsNoNewSnapshot(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	second := filepath.Join(t.TempDir(), "second")
+	e := newEnv(t, repo)
+	e.o.Retention = config.Retention{Last: 1}
+	ctx := context.Background()
+	if res := Init(ctx, Options{Restic: e.o.Restic, Password: e.o.Password, Repos: []string{repo, second}}); res[0].Err != nil || res[1].Err != nil {
+		t.Fatalf("init = %+v", res)
+	}
+	e.o.Update = 1
+	first := Run(ctx, e.db, e.o)
+	if !first.OK() || first.Repos[0].Skipped || first.Repos[0].Snapshot == "" {
+		t.Fatalf("first = %+v", first)
+	}
+	if id, n, ok, _ := e.db.LastSnapshot(ctx, repo); !ok || id != first.Repos[0].Snapshot || n != 1 {
+		t.Fatalf("recorded = %q %d %v", id, n, ok)
+	}
+
+	// The same update again: nothing to snapshot, not even a database copy.
+	e.now = e.now.Add(time.Hour)
+	again := Run(ctx, e.db, e.o)
+	if !again.OK() || !again.Repos[0].Skipped || again.Repos[0].Snapshot != first.Repos[0].Snapshot {
+		t.Fatalf("again = %+v", again)
+	}
+	if snaps, _ := Snapshots(ctx, e.o, repo); len(snaps) != 1 {
+		t.Fatalf("snapshots after an unchanged run = %d, want 1", len(snaps))
+	}
+
+	// A new place has no snapshot of this update yet: it gets one, the old place not.
+	e.o.Repos = []string{repo, second}
+	added := Run(ctx, e.db, e.o)
+	if !added.OK() || !added.Repos[0].Skipped || added.Repos[1].Skipped || added.Repos[1].Snapshot == "" {
+		t.Fatalf("added place = %+v", added)
+	}
+
+	// A new update: a new snapshot; retention (keep 1) removes the first, and
+	// the archive knows it.
+	e.o.Repos, e.o.Update = []string{repo}, 2
+	e.now = e.now.Add(time.Hour)
+	next := Run(ctx, e.db, e.o)
+	if !next.OK() || next.Repos[0].Skipped || next.Repos[0].Snapshot == first.Repos[0].Snapshot {
+		t.Fatalf("next = %+v", next)
+	}
+	var gone bool
+	for _, id := range forgottenIDs(t, e, repo) {
+		gone = gone || id == first.Repos[0].Snapshot
+	}
+	if !gone {
+		t.Fatal("the archive does not know retention removed the first snapshot")
+	}
+	if id, n, _, _ := e.db.LastSnapshot(ctx, repo); id != next.Repos[0].Snapshot || n != 2 {
+		t.Fatalf("last = %q %d", id, n)
+	}
+
+	// A changed config goes into a snapshot even without new messages.
+	e.now = e.now.Add(time.Hour)
+	if err := os.WriteFile(e.o.ConfigPath, []byte("archive_dir: y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := Run(ctx, e.db, e.o); r.Repos[0].Skipped {
+		t.Fatalf("config changed, skipped: %+v", r.Repos[0])
+	}
+	if r := Run(ctx, e.db, e.o); !r.Repos[0].Skipped {
+		t.Fatalf("config unchanged since, not skipped: %+v", r.Repos[0])
+	}
+
+	// A place made again from scratch at the same path gets a snapshot.
+	if err := os.RemoveAll(repo); err != nil {
+		t.Fatal(err)
+	}
+	if r := Run(ctx, e.db, e.o); r.Repos[0].Err == nil {
+		t.Fatalf("a missing place is not an error: %+v", r.Repos[0])
+	}
+	Init(ctx, e.o)
+	if r := Run(ctx, e.db, e.o); !r.OK() || r.Repos[0].Skipped {
+		t.Fatalf("a new repository at the same path: %+v", r.Repos[0])
+	}
+
+	// Force (tgbup backup by hand) snapshots even an unchanged archive.
+	e.o.Force = true
+	if forced := Run(ctx, e.db, e.o); !forced.OK() || forced.Repos[0].Skipped || forced.Repos[0].Snapshot == next.Repos[0].Snapshot {
+		t.Fatalf("forced = %+v", forced)
+	}
+}
+
+func TestForgottenReadsForgetJSON(t *testing.T) {
+	out := []byte(`[{"tags":["tgbup"],"host":"h","paths":["/a"],"keep":[{"id":"k1"}],"remove":[{"id":"r1"},{"id":"r2"}],"reasons":[]},` +
+		`{"tags":["tgbup"],"host":"h","paths":["/b"],"keep":[{"id":"k2"}],"remove":null,"reasons":[]}]`)
+	if got := forgotten(out); strings.Join(got, ",") != "r1,r2" {
+		t.Fatalf("forgotten = %v", got)
+	}
+	if got := forgotten([]byte("not json")); len(got) != 0 {
+		t.Fatalf("bad output = %v", got)
+	}
+}
+
+// forgottenIDs lists the snapshots of repo the archive marked as removed.
+func forgottenIDs(t *testing.T, e *env, repo string) []string {
+	t.Helper()
+	ids, err := e.db.ForgottenSnapshots(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ids
 }

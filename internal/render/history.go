@@ -1,0 +1,224 @@
+package render
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"gitlab.com/joeunderwood/tgbup/internal/store"
+)
+
+// historyLimit is how many updates history.html lists, newest first.
+const historyLimit = 500
+
+type historyPage struct {
+	Updates []historyUpdate
+	Older   int // updates before the listed ones
+}
+
+type historyUpdate struct {
+	N    int
+	When string   // when its snapshot was taken, else when the change was found
+	IDs  []string // its snapshots that hold it, short
+	// NoSnapshot says why there is none: the latest is not backed up yet, an
+	// older one's changes went into the next snapshot.
+	NoSnapshot string
+	What       string
+	Chats      []string // "Family +100", the chats that changed most
+	Snapshots  []historySnap
+}
+
+type historySnap struct {
+	Place, ID string
+	Partial   bool   // some files could not be read
+	Gone      bool   // retention removed it
+	Restore   string // the command that opens this version in a folder of its own
+}
+
+// updatedJS fills every ".asof" element with when the archive was drawn and,
+// for the archive itself, the snapshot that holds it, linked to history.html.
+const updatedJS = `window.tgbupUpdated = %s;
+(() => {
+  const here = document.currentScript && document.currentScript.src;
+  const fmt = (t) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  document.addEventListener('DOMContentLoaded', () => {
+    const u = window.tgbupUpdated;
+    for (const s of document.querySelectorAll('.asof')) {
+      s.textContent = '· archive as of ' + fmt(u.at);
+      if (!u.anchor || !here) continue;
+      const a = document.createElement('a');
+      a.href = new URL('../history.html#' + u.anchor, here).href;
+      a.textContent = u.snapshot ? 'snapshot ' + u.snapshot + ' of ' + fmt(u.snapshot_at) : 'not in a snapshot yet';
+      a.title = 'Latest change: ' + u.what + '. The history of the archive and its snapshots';
+      s.append(' · ', a);
+    }
+  });
+})();
+`
+
+// fullSnapshot is the newest snapshot of u that has every file and is still kept.
+func fullSnapshot(u store.Update) (store.SnapshotRef, bool) {
+	var best store.SnapshotRef
+	found := false
+	for _, s := range u.Snapshots {
+		if !s.Partial && !s.Forgotten && (!found || s.At.After(best.At)) {
+			best, found = s, true
+		}
+	}
+	return best, found
+}
+
+// WriteHistory writes html/assets/updated.js and, for the archive itself
+// (Track), html/history.html: every update, what it changed and the
+// snapshots that hold it. Run it after a new update or snapshot.
+func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	stamp := map[string]any{"at": now().UTC().Format(time.RFC3339)}
+	var updates []store.Update
+	if opts.Track {
+		var err error
+		if updates, err = db.Updates(ctx, historyLimit+1); err != nil {
+			return err
+		}
+	}
+	if len(updates) > 0 {
+		u := updates[0]
+		stamp["anchor"], stamp["what"] = "u"+strconv.Itoa(u.N), u.Diff.Summary()
+		if snap, ok := fullSnapshot(u); ok {
+			stamp["snapshot"], stamp["snapshot_at"] = shortID(snap.ID), snap.At.UTC().Format(time.RFC3339)
+		} else if !anySnapshots(updates) {
+			delete(stamp, "anchor") // backups are off: nothing to say
+		}
+	}
+	js, _ := json.Marshal(stamp)
+	if err := writeFile(filepath.Join(opts.OutDir, "html", "assets", "updated.js"), func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, updatedJS, js)
+		return err
+	}); err != nil {
+		return err
+	}
+	if !opts.Track {
+		return nil
+	}
+	chats, err := db.RenderChats(ctx)
+	if err != nil {
+		return err
+	}
+	titles := map[int64]string{}
+	for _, c := range chats {
+		titles[c.ID] = orDefault(c.Title, strconv.FormatInt(c.ID, 10))
+	}
+	home, _ := os.UserHomeDir()
+	page := historyPage{}
+	if len(updates) > historyLimit {
+		page.Older = updates[historyLimit].N
+		updates = updates[:historyLimit]
+	}
+	backups := anySnapshots(updates)
+	for i, u := range updates {
+		hu := historyUpdate{N: u.N, When: u.At.In(opts.Loc).Format("2006-01-02 15:04"), What: u.Diff.Summary()}
+		if !u.Diff.First {
+			hu.Chats = chatDeltas(u.Diff.Chats, titles)
+		}
+		if snap, ok := fullSnapshot(u); ok {
+			hu.When = snap.At.In(opts.Loc).Format("2006-01-02 15:04")
+		}
+		for _, s := range u.Snapshots {
+			place := tilde(s.Repo, home)
+			short := shortID(s.ID)
+			if !s.Partial && !s.Forgotten && !slices.Contains(hu.IDs, short) {
+				hu.IDs = append(hu.IDs, short)
+			}
+			to := tilde(filepath.Join(filepath.Dir(opts.OutDir), "snapshot-"+short), home)
+			hu.Snapshots = append(hu.Snapshots, historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten,
+				Restore: "tgbup restore --from " + shellQuote(place) + " --snapshot " + short + " --to " + shellQuote(to)})
+		}
+		switch {
+		case len(hu.IDs) > 0 || !backups:
+		case i == 0:
+			hu.NoSnapshot = "not in a snapshot yet"
+		default:
+			hu.NoSnapshot = "no snapshot of its own: the next one holds it"
+		}
+		page.Updates = append(page.Updates, hu)
+	}
+	return writeFile(filepath.Join(opts.OutDir, "html", "history.html"), func(w io.Writer) error {
+		return historyHTML.Execute(w, page)
+	})
+}
+
+func anySnapshots(us []store.Update) bool {
+	for _, u := range us {
+		if len(u.Snapshots) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func shortID(id string) string { return id[:min(8, len(id))] }
+
+// chatDeltas names the chats that changed most, up to 8.
+func chatDeltas(d map[int64]int, titles map[int64]string) []string {
+	ids := make([]int64, 0, len(d))
+	for id := range d {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b int64) int {
+		return cmp.Or(cmp.Compare(abs(d[b]), abs(d[a])), cmp.Compare(titles[a], titles[b]))
+	})
+	var out []string
+	for i, id := range ids {
+		if i == 8 {
+			out = append(out, fmt.Sprintf("and %d more", len(ids)-8))
+			break
+		}
+		out = append(out, fmt.Sprintf("%s %+d", orDefault(titles[id], strconv.FormatInt(id, 10)), d[id]))
+	}
+	return out
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func tilde(p, home string) string {
+	if home != "" && (p == home || strings.HasPrefix(p, home+string(filepath.Separator))) {
+		return "~" + strings.TrimPrefix(p, home)
+	}
+	return p
+}
+
+// shellQuote quotes s for a shell unless it is plain; a leading ~ stays
+// outside the quotes so the shell still expands it.
+func shellQuote(s string) string {
+	plain := func(s string) bool {
+		for _, r := range s {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("/._-:~+@", r) {
+				return false
+			}
+		}
+		return true
+	}
+	if plain(s) {
+		return s
+	}
+	if rest, ok := strings.CutPrefix(s, "~/"); ok {
+		return "~/'" + strings.ReplaceAll(rest, "'", `'\''`) + "'"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}

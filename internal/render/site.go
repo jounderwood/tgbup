@@ -533,14 +533,6 @@ type siteIndex struct {
 	SearchFiles []string
 }
 
-// updatedJS fills every ".asof" element with when the archive was drawn.
-const updatedJS = `window.tgbupUpdated = %q;
-document.addEventListener('DOMContentLoaded', () => {
-  const when = new Date(window.tgbupUpdated).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  for (const s of document.querySelectorAll('.asof')) s.textContent = '· archive as of ' + when;
-});
-`
-
 func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options, threads []*thread,
 	where map[int64]map[int]store.PageKey, changed map[int64]bool) error {
 	byOwner := map[int64]*indexChat{}
@@ -612,16 +604,9 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 	if err := writeMediaPage(l, opts, chats, searchIDs); err != nil {
 		return err
 	}
-	// Every page shows when the archive was last drawn from one small file,
-	// so a page that did not change need not be drawn again for it.
-	now := time.Now
-	if opts.Now != nil {
-		now = opts.Now
-	}
-	if err := writeFile(filepath.Join(opts.OutDir, "html", "assets", "updated.js"), func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, updatedJS, now().UTC().Format(time.RFC3339))
-		return err
-	}); err != nil {
+	// Every page shows when the archive was last drawn, and its update, from
+	// one small file, so a page that did not change need not be drawn again for it.
+	if err := WriteHistory(ctx, db, opts); err != nil {
 		return err
 	}
 	for _, a := range []string{"style.css", "page.js", "search.js", "media.js", "local.js"} {

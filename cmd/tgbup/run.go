@@ -15,6 +15,7 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -47,6 +48,10 @@ type runRecord struct {
 	SyncErrors   []string `json:"sync_errors,omitempty"`
 	BackupErrors []string `json:"backup_errors,omitempty"`
 	Snapshots    []string `json:"snapshots,omitempty"`
+	// Update is the archive's update after the run; Unchanged says no place
+	// needed a snapshot of it, it already had one.
+	Update    int  `json:"update,omitempty"`
+	Unchanged bool `json:"unchanged,omitempty"`
 	// Log is the run's warnings and errors as logged, for the web page.
 	Log []string `json:"log,omitempty"`
 }
@@ -69,17 +74,32 @@ func runOnce(ctx context.Context, p runParts) int {
 	case rep.Integrity != nil:
 		rec.BackupErrors = append(rec.BackupErrors, rep.Integrity.Error())
 	}
+	if u, ok, err := p.db.LastUpdate(ctx); err == nil && ok {
+		rec.Update = u.N
+	}
+	made := false
+	rec.Unchanged = len(rep.Repos) > 0
 	for _, r := range rep.Repos {
 		if r.Err != nil {
 			rec.BackupErrors = append(rec.BackupErrors, r.Err.Error())
+			rec.Unchanged = false
 			continue
 		}
 		if r.Warning != "" {
 			rec.BackupErrors = append(rec.BackupErrors, backupWarning(r))
 		}
-		rec.Snapshots = append(rec.Snapshots, r.Repo+": "+r.Snapshot)
+		if !r.Skipped {
+			rec.Snapshots = append(rec.Snapshots, r.Repo+": "+r.Snapshot)
+			rec.Unchanged, made = false, true
+		}
 	}
 	printBackup(p.out, rep)
+	if made {
+		// history.html names the snapshots just made.
+		if err := render.WriteHistory(ctx, p.db, archiveRender(p.archiveDir)); err != nil {
+			p.log.Error("write the update history", "err", err)
+		}
+	}
 
 	ok := len(rec.SyncErrors) == 0 && len(rec.BackupErrors) == 0
 	if p.warnings != nil {
@@ -108,13 +128,17 @@ func runOnce(ctx context.Context, p runParts) int {
 			code = 1
 		}
 	} else {
-		var places []string
+		var places, same []string
 		for _, r := range rep.Repos {
-			if r.Err == nil {
-				places = append(places, tildePath(r.Repo, p.home))
+			switch {
+			case r.Err != nil:
+			case r.Skipped:
+				same = append(same, tildePath(r.Repo, p.home))
+			default:
+				places = append(places, tildePath(r.Repo, p.home)+" "+shortID(r.Snapshot))
 			}
 		}
-		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.NewMedia, places))
+		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.NewMedia, places, same))
 	}
 	if err := p.maybeSummary(ctx); err != nil {
 		p.log.Error("notify summary", "err", err)
@@ -227,6 +251,10 @@ func printBackup(w io.Writer, r backup.Report) {
 		}
 		if rr.Checked {
 			extra += " · repository checked"
+		}
+		if rr.Skipped {
+			fmt.Fprintf(w, "backup → %s: nothing changed since snapshot %s, no new one%s\n", rr.Repo, shortID(rr.Snapshot), extra)
+			continue
 		}
 		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", rr.Repo, shortID(rr.Snapshot), extra)
 		if rr.Warning != "" {

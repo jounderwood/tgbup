@@ -14,11 +14,36 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
+// renderArchive redraws the archive's pages and, when anything changed,
+// records it as a new update (see store.NoteUpdate), even when drawing failed:
+// the new messages and files are in the archive all the same, and the backup
+// must take them.
 func renderArchive(ctx context.Context, db *store.Store, archiveDir string, full bool) (render.Result, error) {
-	if err := applyTodoEvents(ctx, db); err != nil {
-		return render.Result{}, fmt.Errorf("update checklists: %w", err)
+	opts := archiveRender(archiveDir)
+	opts.Full = full
+	var res render.Result
+	err := applyTodoEvents(ctx, db)
+	if err != nil {
+		err = fmt.Errorf("update checklists: %w", err)
+	} else {
+		res, err = render.Render(ctx, db, opts)
 	}
-	return render.Render(ctx, db, render.Options{OutDir: archiveDir, Track: true, Full: full, Loc: time.Local})
+	pages := res.Pages
+	if full || err != nil {
+		pages = 0 // redrawn on purpose, or not all: not a sign of change
+	}
+	_, created, _, uerr := db.NoteUpdate(ctx, pages, time.Now())
+	switch {
+	case uerr != nil:
+		return res, errors.Join(err, fmt.Errorf("record the update: %w", uerr))
+	case created && err == nil:
+		err = render.WriteHistory(ctx, db, opts)
+	}
+	return res, err
+}
+
+func archiveRender(archiveDir string) render.Options {
+	return render.Options{OutDir: archiveDir, Track: true, Loc: time.Local}
 }
 
 // applyTodoEvents brings every archived checklist up to the ticks and items

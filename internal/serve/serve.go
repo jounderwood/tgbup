@@ -58,6 +58,9 @@ type Snapshot struct {
 	ID   string    `json:"id"`
 	Time time.Time `json:"time"`
 	Host string    `json:"host"`
+	// Changes is what changed in the archive since the snapshot before; ""
+	// for a snapshot tgbup has no record of.
+	Changes string `json:"changes"`
 }
 
 type Status struct {
@@ -94,7 +97,10 @@ type Run struct {
 	OK          bool      `json:"ok"`
 	NewMessages int       `json:"new_messages"`
 	NewMedia    int       `json:"new_media"`
-	Errors      []string  `json:"errors"`
+	// Snapshot says what the backups did: "snapshot 3333bbbb", "unchanged,
+	// no new snapshot", or "" when there are none.
+	Snapshot string   `json:"snapshot"`
+	Errors   []string `json:"errors"`
 	// Log is the run's warnings and errors as logged.
 	Log []string `json:"log"`
 }

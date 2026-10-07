@@ -20,6 +20,7 @@ var (
 	datesHTML    = htmlTemplate("dates.html")
 	redirectHTML = htmlTemplate("redirect.html")
 	mediaHTML    = htmlTemplate("media.html")
+	historyHTML  = htmlTemplate("history.html")
 	pageMD       = mdTemplate("page.md")
 	indexMD      = mdTemplate("index.md")
 	chatMD       = mdTemplate("chat.md")

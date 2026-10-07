@@ -57,7 +57,7 @@ function renderStatus(s) {
   $("backups").replaceChildren(...(s.backups || []).map((b, i) => {
     const old = isZero(b.last_success) || Date.now() - new Date(b.last_success) > 2 * 86400e3;
     return el("li", {}, el("span", { class: old ? "bad" : "ok" }, "● "), b.repo, el("br"),
-      el("span", { class: "muted" }, "last snapshot " + ago(b.last_success) + " · "),
+      el("span", { class: "muted" }, (isZero(b.last_success) ? "no snapshot yet" : "up to date " + ago(b.last_success)) + " · "),
       el("button", { type: "button", class: "link", onclick: () => toggleSnapshots(i) }, snapshots.has(i) ? "hide snapshots" : "show snapshots"),
       snapshotList(i));
   }));
@@ -83,9 +83,10 @@ function renderStatus(s) {
       el("td", { class: r.ok ? "ok" : "bad" }, details ? el("button", { type: "button", class: "link",
         onclick: () => { shown ? openRuns.delete(r.started) : openRuns.add(r.started); renderStatus(s); } }, (shown ? "▾ " : "▸ ") + result) : result),
       el("td", { class: "num" }, num(r.new_messages)),
-      el("td", { class: "num" }, num(r.new_media)));
+      el("td", { class: "num" }, num(r.new_media)),
+      el("td", { class: "muted" }, r.snapshot || ""));
     if (!shown) return [row];
-    return [row, el("tr", { class: "details" }, el("td", { colspan: 5 },
+    return [row, el("tr", { class: "details" }, el("td", { colspan: 6 },
       (r.errors || []).length ? el("ul", { class: "errors" }, r.errors.map((e) => el("li", {}, e))) : null,
       (r.log || []).length ? el("pre", { class: "log" }, r.log.join("\n")) : null))];
   }));
@@ -97,7 +98,8 @@ function snapshotList(i) {
   if (list.error) return el("div", { class: "bad" }, list.error);
   if (list.loading) return el("div", { class: "muted" }, "reading the snapshots…");
   if (!list.length) return el("div", { class: "muted" }, "no snapshots");
-  return el("ul", { class: "snapshots" }, list.map((sn) => el("li", {}, when(sn.time) + " · " + sn.host + " · ", el("code", {}, sn.id))));
+  return el("ul", { class: "snapshots" }, list.map((sn) => el("li", {}, when(sn.time) + " · " + sn.host + " · ", el("code", {}, sn.id),
+    sn.changes ? el("span", { class: "muted" }, " · " + sn.changes) : null)));
 }
 
 async function toggleSnapshots(i) {

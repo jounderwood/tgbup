@@ -53,13 +53,21 @@ func StartText(host, trigger string, takeout bool) string {
 	return fmt.Sprintf("▶ tgbup on %s: %s %s", host, what, why)
 }
 
-// DoneText says a run finished well: what it added, where the snapshots went.
-func DoneText(host string, newMessages, newMedia int, snapshots []string) string {
+// DoneText says a run finished: what it brought and the snapshots it made
+// ("~/Tgbup/backup 3333bbbb"); unchanged places already held the archive as it is.
+func DoneText(host string, newMessages, newMedia int, snapshots, unchanged []string) string {
 	text := fmt.Sprintf("✓ tgbup on %s: %d new messages, %d new files", host, newMessages, newMedia)
-	if len(snapshots) == 0 {
+	switch {
+	case len(snapshots) == 0 && len(unchanged) == 0:
 		return text + "; no backup set up"
+	case len(snapshots) == 0:
+		return text + "; nothing changed, no new snapshot"
 	}
-	return text + "; snapshot in " + strings.Join(snapshots, ", ")
+	text += "; snapshot " + strings.Join(snapshots, ", ")
+	if len(unchanged) > 0 {
+		text += "; already up to date: " + strings.Join(unchanged, ", ")
+	}
+	return text
 }
 
 // SetupText says tgbup is set up and what it will do.
