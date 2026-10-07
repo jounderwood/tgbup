@@ -357,7 +357,7 @@ func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
 		`<h2>2026-03-06 09:00 <span class="when">· no snapshot of its own: the next one holds it</span>`,
 		"first recorded: 5 messages, 0 files",
 		"/Volumes/My Disk/tgbup <code>3333bbbb</code>",
-		"tgbup restore --from &#39;/Volumes/My Disk/tgbup&#39; --snapshot 3333bbbb --to",
+		"tgbup restore --copy --from &#39;/Volumes/My Disk/tgbup&#39; --snapshot 3333bbbb",
 		"<s>/Volumes/My Disk/tgbup <code>1111aaaa</code></s>", "removed by retention",
 	} {
 		if !strings.Contains(page, want) {
@@ -365,11 +365,14 @@ func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
 		}
 	}
 	// Restored next to the archive, the copy gets a link instead of the command.
-	copyIndex := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-snapshots", "3333bbbb", "html", "index.html")
-	if err := os.MkdirAll(filepath.Dir(copyIndex), 0o755); err != nil {
+	copyDir := SnapshotCopyDir(dir+"/", "3333bbbb") // a trailing slash must not put it inside
+	if filepath.Dir(filepath.Dir(copyDir)) != filepath.Dir(dir) {
+		t.Fatalf("copy dir %s is not next to %s", copyDir, dir)
+	}
+	if err := os.MkdirAll(copyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(copyIndex, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(copyDir, CopyDone), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteHistory(ctx, db, opts); err != nil {

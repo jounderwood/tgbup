@@ -23,6 +23,7 @@ import (
 	"gitlab.com/joeunderwood/tgbup/internal/diskcrypt"
 	"gitlab.com/joeunderwood/tgbup/internal/notify"
 	"gitlab.com/joeunderwood/tgbup/internal/serve"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -421,6 +422,40 @@ type restoreOutcome struct {
 	// PasswordKept: the password differs from the one in use, so the place was
 	// not added to the backups and the current password stays.
 	PasswordKept bool
+}
+
+// restoreCopy restores a snapshot into its own folder next to the archive,
+// only to be looked at: unlike restoreArchive it leaves the config, the
+// secrets and the archive alone, and needs no run.lock, so runs go on. The
+// marker file says the copy is complete.
+func restoreCopy(ctx context.Context, st setup, repo, password, snapshot string) (string, error) {
+	repo = expandTilde(repo, st.paths.Home)
+	o, err := restoreOptions(ctx, st, repo, password)
+	if err != nil {
+		return "", err
+	}
+	snaps, err := backup.Snapshots(ctx, o, repo)
+	if err != nil {
+		return "", err
+	}
+	i := slices.IndexFunc(snaps, func(s backup.Snapshot) bool { return s.ID == snapshot || s.ShortID == snapshot })
+	if i < 0 {
+		return "", badInput("no snapshot %s in %s", snapshot, tildePath(repo, st.paths.Home))
+	}
+	// The folder is named by the short id, whatever named the snapshot.
+	dir := render.SnapshotCopyDir(st.cfg.ArchiveDir, snaps[i].ShortID)
+	if _, err := backup.Restore(ctx, o, repo, snaps[i].ID, dir, time.Now()); err != nil {
+		return "", err
+	}
+	db, err := store.Open(filepath.Join(dir, "archive.sqlite"))
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	if _, err := renderArchive(ctx, db, dir, true); err != nil {
+		return "", fmt.Errorf("restored, but drawing the pages failed: %w", err)
+	}
+	return dir, os.WriteFile(filepath.Join(dir, render.CopyDone), nil, 0o644)
 }
 
 // restoreArchive brings a snapshot back into archiveDir (or the configured

@@ -145,11 +145,9 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 			if !s.Partial && !s.Forgotten && !slices.Contains(hu.IDs, short) {
 				hu.IDs = append(hu.IDs, short)
 			}
-			// Restored versions go next to the archive, one folder each.
-			to := filepath.Join(filepath.Dir(opts.OutDir), filepath.Base(opts.OutDir)+"-snapshots", short)
-			hs := historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten,
-				Restore: "tgbup restore --from " + shellQuote(place) + " --snapshot " + short + " --to " + shellQuote(tilde(to, home))}
-			if _, err := os.Stat(filepath.Join(to, "html", "index.html")); err == nil {
+			to := SnapshotCopyDir(opts.OutDir, short)
+			hs := historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten, Restore: RestoreCommand(place, short)}
+			if _, err := os.Stat(filepath.Join(to, CopyDone)); err == nil {
 				if rel, err := filepath.Rel(filepath.Join(opts.OutDir, "html"), filepath.Join(to, "html", "index.html")); err == nil {
 					hs.Open = escapePath(filepath.ToSlash(rel))
 				}
@@ -169,6 +167,22 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 		return historyHTML.Execute(w, page)
 	})
 }
+
+// SnapshotCopyDir is where a snapshot of the archive in archiveDir is
+// restored to be looked at: next to the archive, one folder each.
+func SnapshotCopyDir(archiveDir, shortID string) string {
+	archiveDir = filepath.Clean(archiveDir) // a trailing slash would put it inside the archive
+	return filepath.Join(filepath.Dir(archiveDir), filepath.Base(archiveDir)+"-snapshots", shortID)
+}
+
+// RestoreCommand restores a copy of snapshot id from place (as shown to
+// people, ~ for the home folder) into SnapshotCopyDir, for a shell.
+func RestoreCommand(place, id string) string {
+	return "tgbup restore --copy --from " + shellQuote(place) + " --snapshot " + id
+}
+
+// CopyDone marks a snapshot copy restored and drawn to the end.
+const CopyDone = ".tgbup-copy-done"
 
 func anySnapshots(us []store.Update) bool {
 	for _, u := range us {

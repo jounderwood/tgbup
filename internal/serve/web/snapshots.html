@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="tgbup-token" content="{{.Token}}">
+<title>Snapshots · tgbup</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/common.js" defer></script>
+<script src="/static/snapshots.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <b class="logo">tgbup</b>
+  <nav><a href="/">Overview</a><a href="/settings">Settings</a><a href="/snapshots" class="on">Snapshots</a></nav>
+  <span class="host" id="host"></span>
+</header>
+<main>
+  <p class="muted">Every snapshot in each backup place, newest first, with what changed since the one before. A snapshot is
+  kept encrypted: to look at one, restore a copy. It goes into a folder of its own next to the archive, with all the files
+  of then; the archive and the settings are not touched, and runs go on meanwhile. The command does the same from a
+  terminal.</p>
+  <div id="places"><p class="muted">reading the backup places…</p></div>
+  <div id="toast" class="toast" hidden></div>
+</main>
+</body>
+</html>

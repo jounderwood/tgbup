@@ -22,14 +22,19 @@ func cmdRestore(ctx context.Context, args []string, env Env) int {
 	snapshot := fs.String("snapshot", "", "snapshot ID to restore, or latest (default: asked)")
 	to := fs.String("to", "", "archive folder to restore into (default: archive_dir from the config)")
 	list := fs.Bool("list", false, "only list the snapshots")
+	asCopy := fs.Bool("copy", false, "restore a copy to look at, next to the archive; the archive and the config stay as they are")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *asCopy && *to != "" {
+		fmt.Fprintln(env.Stderr, "tgbup restore: --copy goes next to the archive by itself; leave out --to")
 		return 2
 	}
 	w := &wizard{env: env, out: env.Stdout,
 		in: newLineReader(env.Stdin, func(err error) { fmt.Fprintln(env.Stderr, "read input:", err) })}
 	st, err := w.load()
 	if err == nil {
-		err = w.restoreWith(ctx, st, restoreRequest{repo: *from, snapshot: *snapshot, dir: *to, listOnly: *list})
+		err = w.restoreWith(ctx, st, restoreRequest{repo: *from, snapshot: *snapshot, dir: *to, listOnly: *list, asCopy: *asCopy})
 	}
 	switch {
 	case err == nil:
@@ -45,6 +50,8 @@ func cmdRestore(ctx context.Context, args []string, env Env) int {
 type restoreRequest struct {
 	repo, snapshot, dir string
 	listOnly            bool
+	// asCopy: a copy to look at (restoreCopy), not the archive brought back.
+	asCopy bool
 }
 
 // restore is the tgbup init way in: everything is asked.
@@ -120,6 +127,16 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 			snapshot = snaps[n-1].ID
 		}
 	}
+	if req.asCopy {
+		fmt.Fprintln(w.out, "  restoring a copy next to the archive…")
+		dir, err := restoreCopy(ctx, st, repo, password, snapshot)
+		if err != nil {
+			return err
+		}
+		refreshHistory(ctx, st.cfg.ArchiveDir)
+		fmt.Fprintf(w.out, "  ✓ open it: %s\n", filepath.Join(tildePath(dir, home), "html", "index.html"))
+		return nil
+	}
 	dir := req.dir
 	if dir == "" {
 		dir = st.cfg.ArchiveDir
@@ -156,12 +173,6 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	}
 	if res.PasswordKept {
 		fmt.Fprintf(w.out, "  %s opens with another password than your backups use now; the current one stays,\n  and that place was not added to the backups\n", tildePath(repo, home))
-	}
-	if live := expandTilde(st.cfg.ArchiveDir, home); filepath.Clean(dir) != filepath.Clean(live) {
-		// An older version opened next to the archive: the archive's history links it.
-		refreshHistory(ctx, live)
-		fmt.Fprintf(w.out, "  open it: %s\n", filepath.Join(tildePath(dir, home), "html", "index.html"))
-		return nil
 	}
 	fmt.Fprintln(w.out, "  the pages are redrawn; log in to Telegram to keep the archive growing")
 	return nil

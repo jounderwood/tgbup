@@ -2,13 +2,14 @@
 const $ = (id) => document.getElementById(id);
 let running = false;
 let showLog = false;
+let logHidden = false; // hidden by hand: stays hidden until the next start
 const openRuns = new Set();   // runs whose details are shown, by start time
-const snapshots = new Map();  // backup place index -> snapshots, once asked for
 let timer;
 // gen changes on "Update now": a status asked for before the click is stale.
 let gen = 0;
 
 function renderStatus(s) {
+  if (s.running && !running) logHidden = false; // a new run, from here or the schedule
   running = s.running;
   $("host").textContent = s.host;
   document.title = "tgbup · " + s.host;
@@ -58,8 +59,7 @@ function renderStatus(s) {
     const old = isZero(b.last_success) || Date.now() - new Date(b.last_success) > 2 * 86400e3;
     return el("li", {}, el("span", { class: old ? "bad" : "ok" }, "● "), b.repo, el("br"),
       el("span", { class: "muted" }, (isZero(b.last_success) ? "no snapshot yet" : "up to date " + ago(b.last_success)) + " · "),
-      el("button", { type: "button", class: "link", onclick: () => toggleSnapshots(i) }, snapshots.has(i) ? "hide snapshots" : "show snapshots"),
-      snapshotList(i));
+      el("a", { href: "/snapshots#place-" + i }, "snapshots"));
   }));
   if (!(s.backups || []).length) $("backups").replaceChildren(
     el("li", {}, "Off: the archive is kept as files in " + s.archive.dir),
@@ -92,25 +92,6 @@ function renderStatus(s) {
   }));
 }
 
-function snapshotList(i) {
-  const list = snapshots.get(i);
-  if (!list) return null;
-  if (list.error) return el("div", { class: "bad" }, list.error);
-  if (list.loading) return el("div", { class: "muted" }, "reading the snapshots…");
-  if (!list.length) return el("div", { class: "muted" }, "no snapshots");
-  return el("ul", { class: "snapshots" }, list.map((sn) => el("li", {}, when(sn.time) + " · " + sn.host + " · ", el("code", {}, sn.id),
-    sn.changes ? el("span", { class: "muted" }, " · " + sn.changes) : null)));
-}
-
-async function toggleSnapshots(i) {
-  if (snapshots.has(i)) { snapshots.delete(i); refresh(); return; }
-  snapshots.set(i, { loading: true });
-  refresh();
-  try { snapshots.set(i, await api("GET", "/api/backups/" + i + "/snapshots")); }
-  catch (e) { snapshots.set(i, { error: "Could not read the snapshots: " + e.message }); }
-  refresh();
-}
-
 async function refresh() {
   const asked = gen;
   try {
@@ -121,7 +102,9 @@ async function refresh() {
     $("problems").replaceChildren(el("li", {}, "Could not read the status: " + e.message));
     $("problems").hidden = false;
   }
-  if (running || showLog) await refreshLog();
+  if ((running || showLog) && !logHidden) await refreshLog();
+  else $("log-box").hidden = true;
+  $("log-show").hidden = !(running && logHidden);
   clearTimeout(timer);
   timer = setTimeout(refresh, running ? 3000 : 30000);
 }
@@ -134,6 +117,14 @@ async function refreshLog() {
   try { log.textContent = await api("GET", "/api/run/log"); } catch (e) { log.textContent = e.message; }
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
+
+$("log-hide").addEventListener("click", () => {
+  logHidden = true;
+  showLog = false;
+  $("log-box").hidden = true;
+  $("log-show").hidden = !running;
+});
+$("log-show").addEventListener("click", () => { logHidden = false; showLog = true; refresh(); });
 
 $("open-archive").addEventListener("click", async () => {
   try { await api("POST", "/api/archive/open"); } catch (e) { toast("Could not open the archive: " + e.message); }
@@ -158,6 +149,7 @@ async function startRun(path) {
   }
   running = true;
   showLog = true;
+  logHidden = false;
   $("run-state").textContent = " running…";
   clearTimeout(timer);
   timer = setTimeout(refresh, 1500);

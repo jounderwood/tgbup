@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ import (
 
 	"gitlab.com/joeunderwood/tgbup/internal/backup"
 	"gitlab.com/joeunderwood/tgbup/internal/config"
+	"gitlab.com/joeunderwood/tgbup/internal/render"
 	"gitlab.com/joeunderwood/tgbup/internal/selector"
 	"gitlab.com/joeunderwood/tgbup/internal/serve"
 	"gitlab.com/joeunderwood/tgbup/internal/stats"
@@ -95,6 +97,8 @@ type serveBackend struct {
 	// probeMu serializes run.lock probes: two in this process would see each
 	// other's lock as a run in progress.
 	probeMu sync.Mutex
+	// copyMu: one snapshot copy is restored at a time.
+	copyMu sync.Mutex
 
 	mu     sync.Mutex
 	child  *exec.Cmd // a run started from the page, until it exits
@@ -810,12 +814,108 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 	updates := b.snapshotUpdates(ctx, st, repos[place])
 	out := make([]serve.Snapshot, len(snaps))
 	for i, sn := range snaps {
-		out[i] = serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host}
+		out[i] = snapshotView(st, repos[place], sn)
 		if u, ok := updates[sn.ID]; ok {
 			out[i].Changes = u.Diff.Summary()
 		}
 	}
 	return out, nil
+}
+
+// snapshotView is a snapshot as the page shows it, with where a copy of it
+// goes and the command that restores one.
+func snapshotView(st setup, repo string, sn backup.Snapshot) serve.Snapshot {
+	home := st.paths.Home
+	dir := render.SnapshotCopyDir(st.cfg.ArchiveDir, sn.ShortID)
+	return serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host, Copy: tildePath(dir, home),
+		Restored: isFile(filepath.Join(dir, render.CopyDone)),
+		Command:  render.RestoreCommand(tildePath(repo, home), sn.ShortID)}
+}
+
+// shortSnapshotID is what Snapshots gives as a snapshot's id: it also names
+// the copy's folder, so nothing else may pass.
+var shortSnapshotID = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// placeSnapshot finds snapshot id in the place-th backup place.
+func (b *serveBackend) placeSnapshot(ctx context.Context, place int, id string) (setup, string, backup.Snapshot, error) {
+	if !shortSnapshotID.MatchString(id) {
+		return setup{}, "", backup.Snapshot{}, fmt.Errorf("%w: no snapshot %q", serve.ErrBadRequest, id)
+	}
+	st, err := b.load()
+	if err != nil {
+		return setup{}, "", backup.Snapshot{}, err
+	}
+	repos := st.cfg.Backup.Repositories
+	if place < 0 || place >= len(repos) {
+		return setup{}, "", backup.Snapshot{}, fmt.Errorf("%w: no backup place %d", serve.ErrBadRequest, place)
+	}
+	if checkRepo(repos[place], st.secrets.ResticPassword) != nil {
+		return setup{}, "", backup.Snapshot{}, errBadPlace
+	}
+	o, err := backupOptions(ctx, st)
+	if err != nil {
+		return setup{}, "", backup.Snapshot{}, err
+	}
+	snaps, err := backup.Snapshots(ctx, o, repos[place])
+	if err != nil {
+		return setup{}, "", backup.Snapshot{}, err
+	}
+	for _, sn := range snaps {
+		if sn.ShortID == id {
+			return st, repos[place], sn, nil
+		}
+	}
+	return setup{}, "", backup.Snapshot{}, fmt.Errorf("%w: no snapshot %s in %s", serve.ErrBadRequest, id, tildePath(repos[place], st.paths.Home))
+}
+
+// RestoreCopy restores a snapshot into its own folder next to the archive,
+// for looking at; the archive's history then links it.
+func (b *serveBackend) RestoreCopy(ctx context.Context, place int, id string) (serve.Snapshot, error) {
+	st, repo, sn, err := b.placeSnapshot(ctx, place, id)
+	if err != nil {
+		return serve.Snapshot{}, err
+	}
+	if !b.copyMu.TryLock() {
+		return serve.Snapshot{}, fmt.Errorf("%w: another copy is being restored; wait for it", serve.ErrBadRequest)
+	}
+	defer b.copyMu.Unlock()
+	if v := snapshotView(st, repo, sn); v.Restored {
+		return v, nil
+	}
+	if err := ensureRcloneFor(ctx, st, repo, b.quietWizard(io.Discard)); err != nil {
+		return serve.Snapshot{}, err
+	}
+	b.logger().Info("restore a copy", "snapshot", sn.ShortID)
+	if _, err := restoreCopy(ctx, st, repo, st.secrets.ResticPassword, sn.ID); err != nil {
+		return serve.Snapshot{}, err
+	}
+	b.dbMu.RLock()
+	refreshHistory(ctx, st.cfg.ArchiveDir)
+	b.dbMu.RUnlock()
+	return snapshotView(st, repo, sn), nil
+}
+
+// OpenCopy shows a restored copy's pages in the default browser.
+func (b *serveBackend) OpenCopy(place int, id string) error {
+	if !shortSnapshotID.MatchString(id) {
+		return fmt.Errorf("%w: no snapshot %q", serve.ErrBadRequest, id)
+	}
+	st, err := b.load()
+	if err != nil {
+		return err
+	}
+	if place < 0 || place >= len(st.cfg.Backup.Repositories) {
+		return fmt.Errorf("%w: no backup place %d", serve.ErrBadRequest, place)
+	}
+	dir := render.SnapshotCopyDir(st.cfg.ArchiveDir, id)
+	index := filepath.Join(dir, "html", "index.html")
+	if !isFile(filepath.Join(dir, render.CopyDone)) {
+		return fmt.Errorf("%w: snapshot %s is not restored yet", serve.ErrBadRequest, id)
+	}
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, index)
+	}
+	return exec.Command("open", index).Run()
 }
 
 // snapshotUpdates is what the archive knows of repo's snapshots; without an

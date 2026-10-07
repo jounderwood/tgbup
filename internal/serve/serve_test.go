@@ -23,6 +23,16 @@ func (f *fakeBackend) Snapshots(_ context.Context, place int) ([]Snapshot, error
 	return []Snapshot{{ID: "abcd1234", Host: "mac"}}, nil
 }
 
+func (f *fakeBackend) RestoreCopy(_ context.Context, place int, id string) (Snapshot, error) {
+	if id != "abcd1234" {
+		return Snapshot{}, fmt.Errorf("%w: no snapshot %s", ErrBadRequest, id)
+	}
+	f.restored = append(f.restored, id)
+	return Snapshot{ID: id, Restored: true, Copy: "/x/abcd1234"}, nil
+}
+
+func (f *fakeBackend) OpenCopy(place int, id string) error { f.openedCopies = append(f.openedCopies, id); return nil }
+
 type fakeBackend struct {
 	takeouts []bool
 	opened   int
@@ -31,6 +41,8 @@ type fakeBackend struct {
 	busy     bool
 	runs     int
 	saved    *Selection
+
+	restored, openedCopies []string
 }
 
 func (f *fakeBackend) Status(context.Context) (Status, error) {
@@ -261,6 +273,23 @@ func TestArchiveAndSnapshots(t *testing.T) {
 	}
 	if w := do(t, s, "POST", "/api/archive/open", host, "", ""); w.Code != http.StatusForbidden {
 		t.Errorf("open without the token: %d", w.Code)
+	}
+	w = do(t, s, "POST", "/api/backups/0/snapshots/abcd1234/restore", host, tok, "")
+	var snap Snapshot
+	if err := json.NewDecoder(w.Body).Decode(&snap); err != nil || w.Code != 200 || !snap.Restored || !slices.Equal(f.restored, []string{"abcd1234"}) {
+		t.Errorf("restore a copy: %d %+v %v", w.Code, snap, err)
+	}
+	if w := do(t, s, "POST", "/api/backups/0/snapshots/nope/restore", host, tok, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("an unknown snapshot: %d", w.Code)
+	}
+	if w := do(t, s, "POST", "/api/backups/0/snapshots/abcd1234/restore", host, "", ""); w.Code != http.StatusForbidden {
+		t.Errorf("restore without the token: %d", w.Code)
+	}
+	if w := do(t, s, "POST", "/api/backups/0/snapshots/abcd1234/open", host, tok, ""); w.Code != 200 || !slices.Equal(f.openedCopies, []string{"abcd1234"}) {
+		t.Errorf("open a copy: %d %v", w.Code, f.openedCopies)
+	}
+	if w := do(t, s, "GET", "/snapshots", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "snapshots.js") {
+		t.Errorf("the snapshots page: %d", w.Code)
 	}
 }
 

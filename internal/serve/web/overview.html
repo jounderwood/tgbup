@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <b class="logo">tgbup</b>
-  <nav><a href="/" class="on">Overview</a><a href="/settings" id="settings-tab">Settings</a></nav>
+  <nav><a href="/" class="on">Overview</a><a href="/settings" id="settings-tab">Settings</a><a href="/snapshots">Snapshots</a></nav>
   <span class="host" id="host"></span>
 </header>
 <main>
@@ -31,6 +31,7 @@
         <button id="first-plain" type="button" class="secondary">Without the export</button>
       </div>
       <span id="run-state" class="muted"></span>
+      <button type="button" class="link" id="log-show" hidden>show the log</button>
     </div>
     <div class="box">
       <h2>Archive</h2>
@@ -49,7 +50,7 @@
     </div>
   </section>
   <section id="log-box" hidden>
-    <h2>Run log <span class="muted" id="log-note"></span></h2>
+    <h2>Run log <span class="muted" id="log-note"></span> <button type="button" class="link" id="log-hide">hide</button></h2>
     <pre id="log" class="log"></pre>
   </section>
   <section>

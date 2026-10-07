@@ -52,6 +52,11 @@ type Backend interface {
 	OpenArchive() error
 	// Snapshots lists the snapshots in the place-th backup place of Status.
 	Snapshots(ctx context.Context, place int) ([]Snapshot, error)
+	// RestoreCopy restores a snapshot of the place (by the id Snapshots gave)
+	// into a folder of its own next to the archive; the archive is not touched.
+	RestoreCopy(ctx context.Context, place int, id string) (Snapshot, error)
+	// OpenCopy shows a restored copy's pages in the default browser.
+	OpenCopy(place int, id string) error
 }
 
 type Snapshot struct {
@@ -61,6 +66,10 @@ type Snapshot struct {
 	// Changes is what changed in the archive since the snapshot before; ""
 	// for a snapshot tgbup has no record of.
 	Changes string `json:"changes"`
+	// Command restores it into Copy, a folder of its own; Restored: it is there.
+	Command  string `json:"command"`
+	Copy     string `json:"copy"`
+	Restored bool   `json:"restored"`
 }
 
 type Status struct {
@@ -214,6 +223,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /chats", http.RedirectHandler("/settings#chats", http.StatusFound))
 	mux.Handle("GET /setup", http.RedirectHandler("/settings", http.StatusFound))
 	mux.HandleFunc("GET /settings", s.page("setup.html"))
+	mux.HandleFunc("GET /snapshots", s.page("snapshots.html"))
 	static, _ := fs.Sub(webFS, "web/static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 
@@ -229,6 +239,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/setup/{action...}", s.setupAction)
 	mux.HandleFunc("POST /api/archive/open", s.openArchive)
 	mux.HandleFunc("GET /api/backups/{place}/snapshots", s.snapshots)
+	mux.HandleFunc("POST /api/backups/{place}/snapshots/{id}/restore", s.restoreCopy)
+	mux.HandleFunc("POST /api/backups/{place}/snapshots/{id}/open", s.openCopy)
 	// The guard comes first: requests it refuses (any website can send them)
 	// do not reach the log.
 	return s.guard(s.logged(mux))
@@ -430,6 +442,26 @@ func (s *Server) snapshots(w http.ResponseWriter, r *http.Request) {
 	}
 	snaps, err := s.backend.Snapshots(r.Context(), place)
 	reply(w, snaps, err)
+}
+
+func (s *Server) restoreCopy(w http.ResponseWriter, r *http.Request) {
+	place, err := strconv.Atoi(r.PathValue("place"))
+	if err != nil {
+		http.Error(w, "bad place", http.StatusBadRequest)
+		return
+	}
+	// Not tied to the page: closing the tab must not stop a restore half-way.
+	snap, err := s.backend.RestoreCopy(context.WithoutCancel(r.Context()), place, r.PathValue("id"))
+	reply(w, snap, err)
+}
+
+func (s *Server) openCopy(w http.ResponseWriter, r *http.Request) {
+	place, err := strconv.Atoi(r.PathValue("place"))
+	if err != nil {
+		http.Error(w, "bad place", http.StatusBadRequest)
+		return
+	}
+	reply(w, map[string]bool{"ok": true}, s.backend.OpenCopy(place, r.PathValue("id")))
 }
 
 func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
