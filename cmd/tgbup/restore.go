@@ -157,6 +157,12 @@ func (w *wizard) restoreWith(ctx context.Context, st setup, req restoreRequest) 
 	if res.PasswordKept {
 		fmt.Fprintf(w.out, "  %s opens with another password than your backups use now; the current one stays,\n  and that place was not added to the backups\n", tildePath(repo, home))
 	}
+	if live := expandTilde(st.cfg.ArchiveDir, home); filepath.Clean(dir) != filepath.Clean(live) {
+		// An older version opened next to the archive: the archive's history links it.
+		refreshHistory(ctx, live)
+		fmt.Fprintf(w.out, "  open it: %s\n", filepath.Join(tildePath(dir, home), "html", "index.html"))
+		return nil
+	}
 	fmt.Fprintln(w.out, "  the pages are redrawn; log in to Telegram to keep the archive growing")
 	return nil
 }

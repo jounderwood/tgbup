@@ -99,7 +99,6 @@ func TestPageHTML(t *testing.T) {
 		`<a class="file" href="../../../media/sticker/1.tgs">📄`,
 		`<audio class="lazy" controls preload="none" data-src="../../../media/audio/1.mp3"></audio> <a class="file" href="../../../media/audio/1.mp3">song.mp3</a>`,
 		"⏳ photo not downloaded yet",
-		`<span class="local" data-href="../../../media/document/9.pdf">💾</span>`,
 		`<script src="../../assets/updated.js" defer></script>`, `<span class="asof"></span>`,
 		`<script src="nav.js" defer></script>`, `<header class="bar">`, `<form class="search" role="search" data-root="../../"`,
 		`placeholder="Search this chat…"`, `name="all"`, `<span class="jump" data-page="3"></span>`,
@@ -112,6 +111,9 @@ func TestPageHTML(t *testing.T) {
 	}
 	if strings.Contains(got, "<world>") {
 		t.Error("message text not escaped")
+	}
+	if strings.Contains(got, "💾") || strings.Contains(got, "local.js") {
+		t.Error("files are still marked as on this Mac")
 	}
 	if t.Failed() {
 		t.Log(got)

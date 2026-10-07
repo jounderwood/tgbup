@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -127,4 +128,19 @@ func cmdRender(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	return 0
+}
+
+// refreshHistory rewrites the history of the archive in archiveDir, if there
+// is one; failing to is not worth an error.
+func refreshHistory(ctx context.Context, archiveDir string) {
+	path := filepath.Join(archiveDir, "archive.sqlite")
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	_ = render.WriteHistory(ctx, db, archiveRender(archiveDir))
 }

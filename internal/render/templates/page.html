@@ -6,7 +6,6 @@
 <title>{{.Title}}</title>
 <link rel="stylesheet" href="{{.Root}}assets/style.css">
 <script src="{{.Root}}assets/updated.js" defer></script>
-<script src="{{.Root}}assets/local.js" defer></script>
 <script src="nav.js" defer></script>
 <script src="{{.Root}}assets/page.js" defer></script>
 </head>
@@ -56,7 +55,6 @@
 {{- else}}
 <a class="file" href="{{.Href}}">📄 {{.Name}}</a> <span class="size">{{.Size}}</span>
 {{- end}}
-{{- if .Href}} <span class="local" data-href="{{.Href}}">💾</span>{{end}}
 {{- end}}
 {{- if .HTML}}
 <div class="text">{{.HTML}}</div>

@@ -609,7 +609,9 @@ func writeIndexes(ctx context.Context, db *store.Store, l *layout, opts Options,
 	if err := WriteHistory(ctx, db, opts); err != nil {
 		return err
 	}
-	for _, a := range []string{"style.css", "page.js", "search.js", "media.js", "local.js"} {
+	// local.js marked files on this Mac with 💾; the marks are gone.
+	_ = os.Remove(filepath.Join(opts.OutDir, "html", "assets", "local.js"))
+	for _, a := range []string{"style.css", "page.js", "search.js", "media.js"} {
 		body, err := files.ReadFile("assets/" + a)
 		if err != nil {
 			return err

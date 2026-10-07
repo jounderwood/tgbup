@@ -132,7 +132,6 @@ window.tgbupMedia = {
       if (window.tgbupLazy) window.tgbupLazy(v); // else page.js picks it up when it loads
     }
     div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'));
-    if (this.isLocal(it.f)) div.append(this.local(it.f));
     return div;
   },
 
@@ -144,11 +143,6 @@ window.tgbupMedia = {
   // isLocal: f is a file in the archive, not an outside link or a map.
   isLocal(f) { return !!f && !/^[a-z][a-z0-9+.-]*:/i.test(f); },
 
-  // local marks a file on this Mac with its path (see local.js).
-  local(href) {
-    const m = Object.assign(document.createElement('span'), { className: 'local', textContent: '💾' });
-    return window.tgbupLocal ? window.tgbupLocal(m, href) : m;
-  },
 
   row(it) {
     const div = document.createElement('div');
@@ -162,7 +156,6 @@ window.tgbupMedia = {
       div.append(au);
       if (window.tgbupLazy) window.tgbupLazy(au);
     }
-    if (this.isLocal(it.f)) div.append(this.local(it.f));
     const meta = [it.s, it.x, it.t, it.d].filter(Boolean).join(' · ');
     div.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: meta }));
     div.append(this.link(it.m, 'message', 'when'));

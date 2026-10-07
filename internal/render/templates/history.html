@@ -14,19 +14,20 @@
 <h1>History</h1>
 <p class="count">Every change of the archive, newest first, and the snapshot that holds it. The pages are redrawn on every
 run, but a snapshot is taken only when something changed; the newest of every day is kept. To look at an older version,
-restore its snapshot into a folder of its own with the command shown and open <code>html/index.html</code> there: the
-archive itself stays as it is.</p>
+restore its snapshot with the command shown: a snapshot is kept encrypted, not as files you could open in Finder. The
+copy goes into a folder of its own next to the archive, which stays as it is, and a link to it appears here.</p>
 {{- if not .Updates}}
 <p class="missing">Nothing yet: the history starts with the first download.</p>
 {{- end}}
 {{- range .Updates}}
 <section class="update" id="u{{.N}}">
-<h2><a href="#u{{.N}}">{{.When}}</a>{{with .IDs}} · snapshot{{if gt (len .) 1}}s{{end}} {{range $i, $id := .}}{{if $i}}, {{end}}<code>{{$id}}</code>{{end}}{{end}}{{with .NoSnapshot}} <span class="when">· {{.}}</span>{{end}}</h2>
+<h2>{{.When}}{{with .IDs}} · snapshot{{if gt (len .) 1}}s{{end}} {{range $i, $id := .}}{{if $i}}, {{end}}<code>{{$id}}</code>{{end}}{{end}}{{with .NoSnapshot}} <span class="when">· {{.}}</span>{{end}}</h2>
 <p>{{.What}}{{with .Chats}}: {{range $i, $c := .}}{{if $i}}, {{end}}{{$c}}{{end}}{{end}}</p>
 {{- if .Snapshots}}
 <ul class="snaps">
 {{- range .Snapshots}}
-<li>{{if .Gone}}<s>{{.Place}} <code>{{.ID}}</code></s> — removed by retention{{else}}{{.Place}} <code>{{.ID}}</code>{{if .Partial}} — some files could not be read into it{{end}}<br><code class="cmd">{{.Restore}}</code>{{end}}</li>
+<li>{{if .Gone}}<s>{{.Place}} <code>{{.ID}}</code></s> — removed by retention{{else}}{{.Place}} <code>{{.ID}}</code>{{if .Partial}} — some files could not be read into it{{end}}<br>
+{{- if .Open}}<a href="{{.Open}}">open the restored copy</a>{{else}}to open it, restore it: <code class="cmd">{{.Restore}}</code>{{end}}{{end}}</li>
 {{- end}}
 </ul>
 {{- end}}

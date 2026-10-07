@@ -41,6 +41,7 @@ type historySnap struct {
 	Partial   bool   // some files could not be read
 	Gone      bool   // retention removed it
 	Restore   string // the command that opens this version in a folder of its own
+	Open      string // the restored copy's index.html, relative; "" until restored
 }
 
 // updatedJS fills every ".asof" element with when the archive was drawn and,
@@ -144,9 +145,16 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 			if !s.Partial && !s.Forgotten && !slices.Contains(hu.IDs, short) {
 				hu.IDs = append(hu.IDs, short)
 			}
-			to := tilde(filepath.Join(filepath.Dir(opts.OutDir), "snapshot-"+short), home)
-			hu.Snapshots = append(hu.Snapshots, historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten,
-				Restore: "tgbup restore --from " + shellQuote(place) + " --snapshot " + short + " --to " + shellQuote(to)})
+			// Restored versions go next to the archive, one folder each.
+			to := filepath.Join(filepath.Dir(opts.OutDir), filepath.Base(opts.OutDir)+"-snapshots", short)
+			hs := historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten,
+				Restore: "tgbup restore --from " + shellQuote(place) + " --snapshot " + short + " --to " + shellQuote(tilde(to, home))}
+			if _, err := os.Stat(filepath.Join(to, "html", "index.html")); err == nil {
+				if rel, err := filepath.Rel(filepath.Join(opts.OutDir, "html"), filepath.Join(to, "html", "index.html")); err == nil {
+					hs.Open = escapePath(filepath.ToSlash(rel))
+				}
+			}
+			hu.Snapshots = append(hu.Snapshots, hs)
 		}
 		switch {
 		case len(hu.IDs) > 0 || !backups:

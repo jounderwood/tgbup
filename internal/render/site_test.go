@@ -78,7 +78,7 @@ func TestRenderSite(t *testing.T) {
 	if u := read(t, filepath.Join(dir, "html/assets/updated.js")); !strings.Contains(u, `"2026-10-04T06:31:00Z"`) {
 		t.Errorf("updated.js = %s", u)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "html/assets/local.js")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "html/assets/page.js")); err != nil {
 		t.Error(err)
 	}
 	// The page and day pickers read the thread's pages and days from nav.js.
@@ -352,9 +352,9 @@ func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
 	}
 	page := read(t, filepath.Join(dir, "html/history.html"))
 	for _, want := range []string{
-		`<h2><a href="#u2">2026-03-06 10:00</a> · snapshot <code>3333bbbb</code></h2>`,
+		`<h2>2026-03-06 10:00 · snapshot <code>3333bbbb</code></h2>`,
 		"&#43;1 message · 1 page redrawn: ../Mom/ &#43;1",
-		`<a href="#u1">2026-03-06 09:00</a> <span class="when">· no snapshot of its own: the next one holds it</span>`,
+		`<h2>2026-03-06 09:00 <span class="when">· no snapshot of its own: the next one holds it</span>`,
 		"first recorded: 5 messages, 0 files",
 		"/Volumes/My Disk/tgbup <code>3333bbbb</code>",
 		"tgbup restore --from &#39;/Volumes/My Disk/tgbup&#39; --snapshot 3333bbbb --to",
@@ -363,6 +363,21 @@ func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q:\n%s", want, page)
 		}
+	}
+	// Restored next to the archive, the copy gets a link instead of the command.
+	copyIndex := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-snapshots", "3333bbbb", "html", "index.html")
+	if err := os.MkdirAll(filepath.Dir(copyIndex), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copyIndex, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteHistory(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	want := `<a href="../../` + filepath.Base(dir) + `-snapshots/3333bbbb/html/index.html">open the restored copy</a>`
+	if page := read(t, filepath.Join(dir, "html/history.html")); !strings.Contains(page, want) {
+		t.Errorf("history.html lacks %s", want)
 	}
 	js := read(t, filepath.Join(dir, "html/assets/updated.js"))
 	for _, want := range []string{`"anchor":"u2"`, `"snapshot":"3333bbbb"`, `"snapshot_at":"2026-03-06T10:00:00Z"`, `"what":"+1 message · 1 page redrawn"`} {
