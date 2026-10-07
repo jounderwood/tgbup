@@ -390,14 +390,15 @@ type MediaItem struct {
 	Text         string
 	EntitiesJSON string
 	MetaJSON     string
+	Sender       string
 	Media        *RenderMedia
 }
 
 func (s *Store) MediaItems(ctx context.Context, chatID int64) ([]MediaItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT msg.id, COALESCE(msg.topic_id, 0), msg.date, msg.text, COALESCE(msg.entities_json, ''), COALESCE(msg.meta_json, ''),
-       m.key, m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
-FROM messages msg
+       `+senderName+`, m.key, m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
+FROM messages msg`+senderJoins+`
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key
 WHERE msg.chat_id = ? AND (m.key IS NOT NULL OR msg.meta_json IS NOT NULL
@@ -414,7 +415,7 @@ ORDER BY msg.date, msg.id`, chatID)
 			key, kind, name, mime, status, path, mer sql.NullString
 			size                                     sql.NullInt64
 		)
-		if err := rows.Scan(&it.ID, &it.TopicID, &it.Date, &it.Text, &it.EntitiesJSON, &it.MetaJSON,
+		if err := rows.Scan(&it.ID, &it.TopicID, &it.Date, &it.Text, &it.EntitiesJSON, &it.MetaJSON, &it.Sender,
 			&key, &kind, &name, &mime, &size, &status, &path, &mer); err != nil {
 			return nil, err
 		}

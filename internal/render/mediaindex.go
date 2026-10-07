@@ -24,12 +24,15 @@ type mediaEntry struct {
 	N string `json:"n,omitempty"` // name or title
 	S string `json:"s,omitempty"` // size
 	X string `json:"x,omitempty"` // why a file is not there
+	V string `json:"v,omitempty"` // how a file is shown, PageMedia.View
 }
 
 var mediaKinds = map[string]string{
 	"photo": "photo", "video": "video", "video_note": "round", "animation": "gif", "sticker": "sticker",
 	"voice": "voice", "audio": "audio", "document": "file",
 }
+
+var voiceLabels = map[string]string{"voice": "Voice message", "video_note": "Round video"}
 
 func mediaEntries(it store.MediaItem, msgHref, thread string, loc *time.Location) []mediaEntry {
 	base := mediaEntry{D: time.Unix(it.Date, 0).In(loc).Format("2006-01-02 15:04"), T: thread, M: msgHref}
@@ -40,6 +43,14 @@ func mediaEntries(it store.MediaItem, msgHref, thread string, loc *time.Location
 		pm := media(m, "../")
 		e := base
 		e.K, e.F, e.N, e.S, e.X = orDefault(mediaKinds[m.Kind], "file"), pm.Href, pm.Name, pm.Size, pm.Note
+		e.V = pm.View
+		if m.Kind == "voice" || m.Kind == "video_note" {
+			// They have no name of their own: say whose they are.
+			e.N = orDefault(voiceLabels[m.Kind], m.Kind)
+			if it.Sender != "" {
+				e.N += " from " + it.Sender
+			}
+		}
 		if hasMeta && meta.WebPage != nil && meta.WebPage.PhotoKey == m.Key {
 			e = mediaEntry{} // a link preview's picture: the link entry below stands for it
 		}

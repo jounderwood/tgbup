@@ -172,7 +172,7 @@ func TestMediaItems(t *testing.T) {
 	if fmt.Sprint(ids) != "[11 13]" {
 		t.Fatalf("media items = %v", ids)
 	}
-	if got[0].Media == nil || got[0].Media.FileName != "lease.pdf" || got[0].MetaJSON == "" || got[1].EntitiesJSON == "" {
+	if got[0].Media == nil || got[0].Media.FileName != "lease.pdf" || got[0].Sender == "" || got[0].MetaJSON == "" || got[1].EntitiesJSON == "" {
 		t.Fatalf("items = %+v", got)
 	}
 }

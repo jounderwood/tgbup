@@ -36,6 +36,14 @@ func samplePage(t *testing.T) Page {
 		{Message: store.Message{ID: 11, Date: at("2026-03-02", "10:08"), ServiceActionJSON: `{"type":"messageActionTopicCreate","data":{"Title":"Recipes"}}`}, SenderName: "Ann"},
 		{Message: store.Message{ID: 12, Date: at("2026-03-02", "10:09"), ServiceActionJSON: `{"type":"messageActionPinMessage","data":{}}`}, SenderName: "Bob"},
 		{Message: store.Message{ID: 13, Date: at("2026-03-02", "10:10"), Text: "nice", ReactionsJSON: `[{"emoji":"👍","count":3},{"custom_emoji_id":5,"count":2}]`}, SenderName: "Bob"},
+		{Message: store.Message{ID: 14, Date: at("2026-03-02", "10:11")}, SenderName: "Ann",
+			Media: &store.RenderMedia{Kind: "animation", Mime: "video/mp4", Status: "done", LocalPath: "media/gif/1.mp4"}},
+		{Message: store.Message{ID: 15, Date: at("2026-03-02", "10:12")}, SenderName: "Ann",
+			Media: &store.RenderMedia{Kind: "video_note", Mime: "video/mp4", Status: "done", LocalPath: "media/round/1.mp4"}},
+		{Message: store.Message{ID: 16, Date: at("2026-03-02", "10:13")}, SenderName: "Ann",
+			Media: &store.RenderMedia{Kind: "sticker", Mime: "application/x-tgsticker", Status: "done", LocalPath: "media/sticker/1.tgs"}},
+		{Message: store.Message{ID: 17, Date: at("2026-03-02", "10:14")}, SenderName: "Ann",
+			Media: &store.RenderMedia{Kind: "audio", FileName: "song.mp3", Mime: "audio/mpeg", Status: "done", LocalPath: "media/audio/1.mp3"}},
 	}
 	refs := map[int]store.MessageRef{
 		1:  {ID: 1, TopicID: 160, SenderName: "Ann", Text: "hello <world>"},
@@ -83,11 +91,15 @@ func TestPageHTML(t *testing.T) {
 		"Forwarded from Old Friend", "Forwarded from News",
 		`<img loading="lazy" src="../../../media/photo/7.jpg"`,
 		`href="../../../media/document/9.pdf"`, "lease 2026.pdf", "2.0 MB",
-		`<video controls preload="none" src="../../../media/video/8.mp4">`,
-		`<audio controls preload="none" src="../../../media/voice/9.ogg">`,
+		`<video class="lazy" controls playsinline preload="none" data-src="../../../media/video/8.mp4">`,
+		`<div class="voice">🎤 <audio class="lazy" controls preload="none" data-src="../../../media/voice/9.ogg">`,
 		"⛔ video not downloaded: larger than max_file_size",
+		`<a class="media" href="../../../media/gif/1.mp4"><video class="lazy" muted loop playsinline preload="none" data-src="../../../media/gif/1.mp4">`,
+		`<video class="lazy round" playsinline preload="none" data-src="../../../media/round/1.mp4" tabindex="0"`,
+		`<a class="file" href="../../../media/sticker/1.tgs">📄`,
+		`<audio class="lazy" controls preload="none" data-src="../../../media/audio/1.mp3"></audio> <a class="file" href="../../../media/audio/1.mp3">song.mp3</a>`,
 		"⏳ photo not downloaded yet",
-		`<button type="button" class="local" data-href="../../../media/document/9.pdf">💾</button>`,
+		`<span class="local" data-href="../../../media/document/9.pdf">💾</span>`,
 		`<script src="../../assets/updated.js" defer></script>`, `<span class="asof"></span>`,
 		`<script src="nav.js" defer></script>`, `<header class="bar">`, `<form class="search" role="search" data-root="../../"`,
 		`placeholder="Search this chat…"`, `name="all"`, `<span class="jump" data-page="3"></span>`,
@@ -213,5 +225,38 @@ func TestMetaSearchText(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("search text %q lacks %q", got, want)
 		}
+	}
+}
+
+func TestMediaView(t *testing.T) {
+	for _, c := range []struct{ kind, mime, want string }{
+		{"photo", "image/jpeg", "img"},
+		{"sticker", "image/webp", "img"},
+		{"sticker", "video/webm", "loop"},
+		{"sticker", "application/x-tgsticker", "file"},
+		{"animation", "video/mp4", "loop"},
+		{"animation", "image/gif", "img"},
+		{"video", "video/mp4", "video"},
+		{"video_note", "video/mp4", "round"},
+		{"voice", "audio/ogg", "voice"},
+		{"audio", "audio/mpeg", "audio"},
+		{"document", "application/pdf", "file"},
+	} {
+		if got := mediaView(c.kind, c.mime); got != c.want {
+			t.Errorf("mediaView(%q, %q) = %q, want %q", c.kind, c.mime, got, c.want)
+		}
+	}
+}
+
+func TestMediaEntryNamesVoiceBySender(t *testing.T) {
+	it := store.MediaItem{ID: 5, Date: 1772400000, Sender: "Катерина",
+		Media: &store.RenderMedia{Kind: "voice", Status: "done", LocalPath: "media/2026/voice/a.ogg"}}
+	got := mediaEntries(it, "Mom/p1.html#m5", "", time.UTC)
+	if len(got) != 1 || got[0].V != "voice" || got[0].K != "voice" || got[0].N != "Voice message from Катерина" {
+		t.Fatalf("entries = %+v", got)
+	}
+	it.Sender, it.Media.Kind = "", "video_note"
+	if got := mediaEntries(it, "Mom/p1.html#m5", "", time.UTC); len(got) != 1 || got[0].N != "Round video" || got[0].V != "round" {
+		t.Fatalf("no sender: %+v", got)
 	}
 }

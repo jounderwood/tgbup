@@ -41,16 +41,22 @@
 {{- with .Media}}
 {{- if not .Href}}
 <div class="missing" title="{{.State}}">{{if eq .State "failed"}}⚠️{{else if eq .State "skipped"}}⛔{{else}}⏳{{end}} {{.Note}}</div>
-{{- else if or (eq .Kind "photo") (eq .Kind "sticker")}}
+{{- else if eq .View "img"}}
 <a class="media" href="{{.Href}}"><img loading="lazy" src="{{.Href}}" alt="{{.Name}}"></a>
-{{- else if or (eq .Kind "video") (eq .Kind "video_note") (eq .Kind "animation")}}
-<video controls preload="none" src="{{.Href}}"></video>
-{{- else if or (eq .Kind "voice") (eq .Kind "audio")}}
-<audio controls preload="none" src="{{.Href}}"></audio>{{if eq .Kind "audio"}} <a class="file" href="{{.Href}}">{{.Name}}</a>{{end}}
+{{- else if eq .View "video"}}
+<video class="lazy" controls playsinline preload="none" data-src="{{.Href}}"></video>
+{{- else if eq .View "loop"}}
+<a class="media" href="{{.Href}}"><video class="lazy" muted loop playsinline preload="none" data-src="{{.Href}}"></video></a>
+{{- else if eq .View "round"}}
+<video class="lazy round" playsinline preload="none" data-src="{{.Href}}" tabindex="0" title="Round video: click to play"></video>
+{{- else if eq .View "voice"}}
+<div class="voice">🎤 <audio class="lazy" controls preload="none" data-src="{{.Href}}"></audio></div>
+{{- else if eq .View "audio"}}
+<audio class="lazy" controls preload="none" data-src="{{.Href}}"></audio> <a class="file" href="{{.Href}}">{{.Name}}</a>
 {{- else}}
 <a class="file" href="{{.Href}}">📄 {{.Name}}</a> <span class="size">{{.Size}}</span>
 {{- end}}
-{{- if .Href}} <button type="button" class="local" data-href="{{.Href}}">💾</button>{{end}}
+{{- if .Href}} <span class="local" data-href="{{.Href}}">💾</span>{{end}}
 {{- end}}
 {{- if .HTML}}
 <div class="text">{{.HTML}}</div>

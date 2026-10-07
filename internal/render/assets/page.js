@@ -4,10 +4,68 @@ document.addEventListener('click', (e) => {
   if (s) s.classList.toggle('open');
 });
 
+// Videos and voice messages load when they come near the screen: a page can
+// have hundreds. A video then shows its first frame; a looping one (a GIF, a
+// video sticker) plays, silently, only while it is in view.
+window.tgbupLazy = (() => {
+  const load = (el) => {
+    if (el.getAttribute('src')) return;
+    el.preload = 'metadata';
+    // #t=0.1 makes Safari draw the first frame instead of a black box.
+    el.src = el.dataset.src + (el.tagName === 'VIDEO' && !el.loop ? '#t=0.1' : '');
+  };
+  if (!('IntersectionObserver' in window)) return load;
+  const seen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.target.isConnected) { // the media page redrew its tiles
+        seen.unobserve(e.target);
+        continue;
+      }
+      if (e.isIntersecting) load(e.target);
+      if (!e.target.loop) {
+        if (e.isIntersecting) seen.unobserve(e.target);
+      } else {
+        if (e.isIntersecting) e.target.play().catch(() => {});
+        else e.target.pause();
+      }
+    }
+  }, { rootMargin: '300px' });
+  return (el) => seen.observe(el);
+})();
+
+document.addEventListener('DOMContentLoaded', () => {
+  for (const el of document.querySelectorAll('.lazy[data-src]')) window.tgbupLazy(el);
+});
+
+// A round video plays and pauses on a click (or Enter, Space), with sound,
+// as in Telegram.
+const toggleRound = (e) => {
+  const v = e.target.closest && e.target.closest('video.round');
+  if (!v || v.closest('a')) return;
+  if (e.type === 'keydown') {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+  }
+  if (!v.getAttribute('src')) v.src = v.dataset.src;
+  if (v.paused) v.play().catch(() => {});
+  else v.pause();
+};
+document.addEventListener('click', toggleRound);
+document.addEventListener('keydown', toggleRound);
+
 // A chat opens on its newest messages, at the bottom, as in a messenger;
 // a link to a message (#m123) or a day keeps its place.
+// Videos near the bottom grow as they load, so it keeps to the bottom until
+// the reader scrolls themselves.
 window.addEventListener('load', () => {
-  if (!location.hash) window.scrollTo(0, document.documentElement.scrollHeight);
+  if (location.hash) return;
+  const bottom = () => window.scrollTo(0, document.documentElement.scrollHeight);
+  let stick = true;
+  for (const ev of ['wheel', 'touchstart', 'keydown', 'mousedown']) {
+    window.addEventListener(ev, () => { stick = false; }, { once: true, passive: true });
+  }
+  document.addEventListener('loadedmetadata', () => { if (stick) bottom(); }, true);
+  bottom();
 });
 
 // The bar on every page: search from here (this chat, or all chats), and

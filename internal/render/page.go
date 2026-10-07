@@ -80,6 +80,9 @@ type PageMedia struct {
 	Note string // why the file is not there
 	// State is why it is not there: pending, skipped or failed.
 	State string
+	// View is how the file is shown: img, video, loop (a GIF or a video
+	// sticker, playing silently), round, voice, audio or file.
+	View string
 }
 
 type pageInput struct {
@@ -263,7 +266,7 @@ var kindLabels = map[string]string{"video_note": "round video", "animation": "GI
 
 func media(m *store.RenderMedia, archive string) *PageMedia {
 	label := orDefault(kindLabels[m.Kind], m.Kind)
-	pm := &PageMedia{Kind: m.Kind, Name: orDefault(m.FileName, label)}
+	pm := &PageMedia{Kind: m.Kind, Name: orDefault(m.FileName, label), View: mediaView(m.Kind, m.Mime)}
 	if m.Size > 0 {
 		pm.Size = byteSize(m.Size)
 	}
@@ -278,6 +281,33 @@ func media(m *store.RenderMedia, archive string) *PageMedia {
 		pm.Note, pm.State = label+" not downloaded yet", "pending"
 	}
 	return pm
+}
+
+func mediaView(kind, mime string) string {
+	switch kind {
+	case "photo":
+		return "img"
+	case "sticker":
+		switch {
+		case strings.HasPrefix(mime, "video/"):
+			return "loop"
+		case strings.HasPrefix(mime, "image/"):
+			return "img"
+		}
+		return "file" // an animated .tgs: a browser cannot draw it
+	case "animation":
+		if strings.HasPrefix(mime, "image/") {
+			return "img" // a real .gif file
+		}
+		return "loop"
+	case "video":
+		return "video"
+	case "video_note":
+		return "round"
+	case "voice", "audio":
+		return kind
+	}
+	return "file"
 }
 
 func byteSize(n int64) string {

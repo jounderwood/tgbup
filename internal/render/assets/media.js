@@ -32,10 +32,12 @@ window.tgbupMedia = {
       types.append(label);
     }
     this.read();
+    let typing;
     document.getElementById('filters').addEventListener('input', (e) => {
       if (e.target.id === 'chat') { document.getElementById('topic').value = ''; this.topics(); }
-      this.write();
-      this.show();
+      clearTimeout(typing);
+      // Each redraw reloads the tiles' previews: wait for a pause in typing.
+      typing = setTimeout(() => { this.write(); this.show(); }, e.target.id === 'q' ? 250 : 0);
     });
     window.addEventListener('hashchange', () => { this.read(); this.show(); });
     document.getElementById('more').addEventListener('click', () => { this.shown += this.pageSize; this.render(); });
@@ -94,7 +96,10 @@ window.tgbupMedia = {
     grid.replaceChildren();
     list.replaceChildren();
     const page = this.matched.slice(0, this.shown);
-    for (const it of page) (this.visual.has(it.k) && it.f ? grid : list).append(this.visual.has(it.k) && it.f ? this.tile(it) : this.row(it));
+    for (const it of page) {
+      const shot = it.f && this.visual.has(it.k) && it.v && it.v !== 'file';
+      (shot ? grid : list).append(shot ? this.tile(it) : this.row(it));
+    }
     document.getElementById('count').textContent = this.matched.length + ' items' + (this.matched.length > page.length ? ', showing ' + page.length : '');
     document.getElementById('more').hidden = this.matched.length <= page.length;
   },
@@ -110,14 +115,30 @@ window.tgbupMedia = {
     const div = document.createElement('div');
     div.className = 'tile';
     const a = this.link(it.f, '');
-    if (it.k === 'photo' || it.k === 'sticker') {
+    a.className = 'shot';
+    const view = it.v;
+    if (view === 'img') {
       a.append(Object.assign(document.createElement('img'), { src: it.f, loading: 'lazy', alt: it.n || '' }));
     } else {
-      a.append(Object.assign(document.createElement('span'), { className: 'play', textContent: '▶ ' + it.k }));
+      const v = Object.assign(document.createElement('video'), { muted: true, playsInline: true, preload: 'none', loop: view === 'loop' });
+      v.className = 'lazy' + (view === 'round' ? ' round' : '');
+      v.dataset.src = it.f;
+      a.append(v);
+      if (view !== 'loop') {
+        const badge = Object.assign(document.createElement('span'), { className: 'badge', textContent: '▶' });
+        v.addEventListener('loadedmetadata', () => { if (isFinite(v.duration)) badge.textContent = '▶ ' + this.clock(v.duration); });
+        a.append(badge);
+      }
+      if (window.tgbupLazy) window.tgbupLazy(v); // else page.js picks it up when it loads
     }
     div.append(a, this.link(it.m, it.d.slice(0, 10), 'when'));
     if (this.isLocal(it.f)) div.append(this.local(it.f));
     return div;
+  },
+
+  clock(s) {
+    s = Math.round(s);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   },
 
   // isLocal: f is a file in the archive, not an outside link or a map.
@@ -125,8 +146,8 @@ window.tgbupMedia = {
 
   // local marks a file on this Mac with its path (see local.js).
   local(href) {
-    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'local', textContent: '💾' });
-    return window.tgbupLocal ? window.tgbupLocal(b, href) : b;
+    const m = Object.assign(document.createElement('span'), { className: 'local', textContent: '💾' });
+    return window.tgbupLocal ? window.tgbupLocal(m, href) : m;
   },
 
   row(it) {
@@ -134,6 +155,13 @@ window.tgbupMedia = {
     div.className = 'row-item';
     div.append(Object.assign(document.createElement('span'), { className: 'kind', textContent: it.k }));
     div.append(it.f ? this.link(it.f, it.n || it.f, 'name') : Object.assign(document.createElement('span'), { className: 'name', textContent: (it.x ? '⏳ ' : '') + (it.n || it.k) }));
+    if ((it.k === 'voice' || it.k === 'audio') && this.isLocal(it.f)) {
+      const au = Object.assign(document.createElement('audio'), { controls: true, preload: 'none' });
+      au.className = 'lazy';
+      au.dataset.src = it.f;
+      div.append(au);
+      if (window.tgbupLazy) window.tgbupLazy(au);
+    }
     if (this.isLocal(it.f)) div.append(this.local(it.f));
     const meta = [it.s, it.x, it.t, it.d].filter(Boolean).join(' · ');
     div.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: meta }));
