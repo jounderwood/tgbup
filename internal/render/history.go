@@ -51,8 +51,10 @@ const updatedJS = `window.tgbupUpdated = %s;
   const fmt = (t) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   document.addEventListener('DOMContentLoaded', () => {
     const u = window.tgbupUpdated;
+    if (u.anchor) for (const h of document.querySelectorAll('.history')) h.hidden = false;
     for (const s of document.querySelectorAll('.asof')) {
-      s.textContent = '· archive as of ' + fmt(u.at);
+      // After the crumbs it goes on the line; on its own it starts it.
+      s.textContent = (s.previousSibling ? '· archive' : 'Archive') + ' as of ' + fmt(u.at);
       if (!u.anchor || !here) continue;
       const a = document.createElement('a');
       a.href = new URL('../history.html#' + u.anchor, here).href;
@@ -92,12 +94,15 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 			return err
 		}
 	}
+	// Backups are on once one was made, also before tgbup kept their history.
+	_, backups, _ := db.Meta(ctx, "backup:host")
+	backups = backups || anySnapshots(updates)
 	if len(updates) > 0 {
 		u := updates[0]
 		stamp["anchor"], stamp["what"] = "u"+strconv.Itoa(u.N), u.Diff.Summary()
 		if snap, ok := fullSnapshot(u); ok {
 			stamp["snapshot"], stamp["snapshot_at"] = shortID(snap.ID), snap.At.UTC().Format(time.RFC3339)
-		} else if !anySnapshots(updates) {
+		} else if !backups {
 			delete(stamp, "anchor") // backups are off: nothing to say
 		}
 	}
@@ -125,7 +130,6 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 		page.Older = updates[historyLimit].N
 		updates = updates[:historyLimit]
 	}
-	backups := anySnapshots(updates)
 	for i, u := range updates {
 		hu := historyUpdate{N: u.N, When: u.At.In(opts.Loc).Format("2006-01-02 15:04"), What: u.Diff.Summary()}
 		if !u.Diff.First {

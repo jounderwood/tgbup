@@ -411,3 +411,35 @@ func TestShellQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryBeforeTheFirstRecordedSnapshot(t *testing.T) {
+	db, dir := siteFixture(t)
+	ctx := context.Background()
+	if _, _, _, err := db.NoteUpdate(ctx, 0, time.Unix(1772800000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{OutDir: dir, Track: true, Loc: time.UTC}
+	if _, err := Render(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	// Backups off: the page says nothing of snapshots.
+	if js := read(t, filepath.Join(dir, "html/assets/updated.js")); strings.Contains(js, `"anchor"`) {
+		t.Errorf("backups off: %s", js)
+	}
+	// Backups on, from before tgbup kept their history: not in a snapshot yet.
+	if err := db.SetMeta(ctx, "backup:host", "mac"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteHistory(ctx, db, opts); err != nil {
+		t.Fatal(err)
+	}
+	if js := read(t, filepath.Join(dir, "html/assets/updated.js")); !strings.Contains(js, `"anchor":"u1"`) || strings.Contains(js, `"snapshot"`) {
+		t.Errorf("backups on: %s", js)
+	}
+	if page := read(t, filepath.Join(dir, "html/history.html")); !strings.Contains(page, "· not in a snapshot yet") {
+		t.Error("history does not say the change is not in a snapshot yet")
+	}
+	if idx := read(t, filepath.Join(dir, "html/index.html")); !strings.Contains(idx, `<a href="history.html">History</a>`) || strings.Contains(idx, `id="scope" class="asof"`) {
+		t.Error("index.html: no History link, or the search note is taken for the date line")
+	}
+}

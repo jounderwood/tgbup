@@ -84,7 +84,7 @@ body.wide { max-width: 1100px; }
 #more { margin: 12px 0; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
 .local { padding: 0 2px; cursor: help; font-size: 14px; opacity: .7; }
 .local:hover { opacity: 1; }
-.asof { color: #888; font-size: 13px; }
+.asof, .note { color: #888; font-size: 13px; }
 
 /* The bar: where you are, search, and the page and day pickers; it stays in view. */
 header.bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
