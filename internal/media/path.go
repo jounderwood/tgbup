@@ -75,7 +75,8 @@ func PartPath(final string) string {
 
 // RelPath is the n-th candidate name of a file (n > 1 adds " (n)"):
 // media/<year>/<kind>/<date>_<time>_<name><ext>. The name is the sender's file name
-// as it was, made safe, or the chat's title when the file has none.
+// as it was, made safe, or the chat's title when the file has none; a voice
+// message adds who said it: "Семья_Катерина".
 func RelPath(j store.MediaJob, loc *time.Location, n int) string {
 	t := time.Unix(j.Date, 0).In(loc)
 	prefix := t.Format("2006-01-02_150405") + "_"
@@ -87,7 +88,11 @@ func RelPath(j store.MediaJob, loc *time.Location, n int) string {
 	room := maxFileName - len(prefix) - len(suffix) - len(ext)
 	name := names.CleanBytes(baseName(j.FileName), room)
 	if name == "" {
-		name = names.CleanBytes(j.ChatTitle, room)
+		title := j.ChatTitle
+		if j.Kind == "voice" && j.Sender != "" && j.Sender != title {
+			title = strings.TrimPrefix(title+"_"+j.Sender, "_")
+		}
+		name = names.CleanBytes(title, room)
 	}
 	if name == "" {
 		name = kindNames[j.Kind]

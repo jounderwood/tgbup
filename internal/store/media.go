@@ -16,9 +16,11 @@ type MediaJob struct {
 	Attempts  int
 	ChatID    int64
 	MessageID int
-	// Date and ChatTitle are the message's the file is downloaded through; they name the file.
+	// Date, ChatTitle and Sender are the message's the file is downloaded
+	// through; they name the file.
 	Date      int64
 	ChatTitle string
+	Sender    string
 	// LocalPath is the name chosen by an earlier attempt; "" until one is chosen.
 	LocalPath string
 }
@@ -35,11 +37,11 @@ func (s *Store) PendingMedia(ctx context.Context) ([]MediaJob, error) {
 	// chats has several links, and mixing them points at a message that does not exist.
 	rows, err := s.db.QueryContext(ctx, `
 SELECT m.key, m.kind, m.file_name, m.mime, m.size, m.attempts, mm.chat_id, mm.message_id,
-       msg.date, c.title, COALESCE(m.local_path, '')
+       msg.date, ch.title, `+senderName+`, COALESCE(m.local_path, '')
 FROM media m
 JOIN message_media mm ON mm.rowid = (SELECT min(rowid) FROM message_media WHERE media_key = m.key)
 JOIN messages msg ON msg.chat_id = mm.chat_id AND msg.id = mm.message_id
-JOIN chats c ON c.id = mm.chat_id
+JOIN chats ch ON ch.id = mm.chat_id`+senderJoins+`
 WHERE m.status = 'pending'
 ORDER BY m.rowid`)
 	if err != nil {
@@ -50,7 +52,7 @@ ORDER BY m.rowid`)
 	for rows.Next() {
 		var j MediaJob
 		if err := rows.Scan(&j.Key, &j.Kind, &j.FileName, &j.Mime, &j.Size, &j.Attempts, &j.ChatID, &j.MessageID,
-			&j.Date, &j.ChatTitle, &j.LocalPath); err != nil {
+			&j.Date, &j.ChatTitle, &j.Sender, &j.LocalPath); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
