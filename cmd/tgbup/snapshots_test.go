@@ -135,3 +135,47 @@ func TestSnapshotCopyRefusesOddIDs(t *testing.T) {
 		t.Errorf("open a copy never restored = %v", err)
 	}
 }
+
+// A new backup password must open the places configured until now too: saved
+// together with a list that drops them, it would otherwise overwrite the only
+// password their snapshots open with.
+func TestNewPasswordMustOpenTheOldPlaces(t *testing.T) {
+	restic := os.Getenv("TGBUP_TEST_RESTIC")
+	if restic == "" {
+		t.Skip("set TGBUP_TEST_RESTIC to a restic binary")
+	}
+	w, _, p := testWizard(t, "")
+	ctx := context.Background()
+	old, fresh := filepath.Join(p.Home, "old"), filepath.Join(p.Home, "fresh")
+	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetValue(p.Config, []string{"deps", "restic"}, restic); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetSecrets(p.Secrets, map[string]string{"RESTIC_PASSWORD": "the old password 1"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := loadLocalSetup(w.env, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := backupOptions(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := backup.Init(ctx, o); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	err = saveBackup(ctx, st, []string{fresh}, "a brand new password 2")
+	if err == nil || !strings.Contains(err.Error(), "does not open") {
+		t.Fatalf("saved a password the old place does not open: %v", err)
+	}
+	if sec, _ := config.LoadSecrets(p.Secrets, func(string) string { return "" }); sec.ResticPassword != "the old password 1" {
+		t.Fatal("the old password was overwritten")
+	}
+	// Keeping the password, the places can change freely.
+	if err := saveBackup(ctx, st, []string{fresh}, ""); err != nil {
+		t.Fatal(err)
+	}
+}

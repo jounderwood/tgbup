@@ -155,7 +155,7 @@ func metaPage(t *testing.T) Page {
 			MetaJSON: `{"webpage":{"url":"https://example.com/a","site_name":"Example","title":"A <title>","description":"Some text","photo_key":"photo:7"}}`},
 			SenderName: "Ann", Media: &store.RenderMedia{Key: "photo:7", Kind: "photo", Status: "done", LocalPath: "media/photo/7.jpg"}},
 		{Message: store.Message{ID: 2, Date: at("2026-03-01", "09:01"),
-			MetaJSON: `{"geo":{"lat":44.8125,"long":20.4612},"venue":{"title":"Kafana","address":"Knez Mihailova 1"}}`}, SenderName: "Ann"},
+			MetaJSON: `{"geo":{"lat":48.8584,"long":2.2945},"venue":{"title":"Cafe","address":"Rue de Rivoli 1"}}`}, SenderName: "Ann"},
 		{Message: store.Message{ID: 3, Date: at("2026-03-01", "09:02"), MetaJSON: `{"geo":{"lat":1,"long":2},"live":{"period":900}}`}, SenderName: "Ann"},
 		{Message: store.Message{ID: 4, Date: at("2026-03-01", "09:03"),
 			MetaJSON: `{"contact":{"first_name":"Bob","last_name":"Lee","phone":"+381601234567"}}`}, SenderName: "Ann"},
@@ -179,7 +179,7 @@ func TestMetaHTML(t *testing.T) {
 	got := b.String()
 	for _, want := range []string{
 		`<a class="card link" href="https://example.com/a" rel="noopener">`, `src="../../media/photo/7.jpg"`, "Example", "A &lt;title&gt;", "Some text",
-		"📍 Kafana, Knez Mihailova 1", `href="https://www.google.com/maps/search/?api=1&amp;query=44.8125,20.4612"`,
+		"📍 Cafe, Rue de Rivoli 1", `href="https://www.google.com/maps/search/?api=1&amp;query=48.8584,2.2945"`,
 		"live location (last point)",
 		"👤 Bob Lee", `href="tel:&#43;381601234567"`,
 		"📊 Dacha?", "Yes — 75% (3)", "No — 25% (1) ✓", "4 votes · quiz · closed",
@@ -207,7 +207,7 @@ func TestMetaMarkdown(t *testing.T) {
 	got := b.String()
 	for _, want := range []string{
 		"> [**A \\<title\\>**](<https://example.com/a>) · Example", "> Some text", "> ![](../../media/photo/7.jpg)",
-		"📍 Kafana, Knez Mihailova 1 — [44.8125, 20.4612](<https://www.google.com/maps/search/?api=1&query=44.8125,20.4612>)",
+		"📍 Cafe, Rue de Rivoli 1 — [48.8584, 2.2945](<https://www.google.com/maps/search/?api=1&query=48.8584,2.2945>)",
 		"👤 Bob Lee · +381601234567",
 		"**📊 Dacha?**", "- No — 25% (1) ✓", "_4 votes · quiz · closed_",
 		"- [x] Passports — Bob · 2026-03-01", "- [ ] Chargers",
@@ -222,8 +222,8 @@ func TestMetaMarkdown(t *testing.T) {
 }
 
 func TestMetaSearchText(t *testing.T) {
-	got := metaText(`{"venue":{"title":"Kafana","address":"Knez Mihailova 1"},"poll":{"question":"Dacha?","answers":[{"text":"Yes"}]},"todo":{"title":"Packing","items":[{"title":"Passports"}]},"webpage":{"title":"A","description":"B"}}`)
-	for _, want := range []string{"Kafana", "Knez Mihailova 1", "Dacha?", "Yes", "Packing", "Passports", "A", "B"} {
+	got := metaText(`{"venue":{"title":"Cafe","address":"Rue de Rivoli 1"},"poll":{"question":"Dacha?","answers":[{"text":"Yes"}]},"todo":{"title":"Packing","items":[{"title":"Passports"}]},"webpage":{"title":"A","description":"B"}}`)
+	for _, want := range []string{"Cafe", "Rue de Rivoli 1", "Dacha?", "Yes", "Packing", "Passports", "A", "B"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("search text %q lacks %q", got, want)
 		}
@@ -251,10 +251,10 @@ func TestMediaView(t *testing.T) {
 }
 
 func TestMediaEntryNamesVoiceBySender(t *testing.T) {
-	it := store.MediaItem{ID: 5, Date: 1772400000, Sender: "Катерина",
+	it := store.MediaItem{ID: 5, Date: 1772400000, Sender: "Анна",
 		Media: &store.RenderMedia{Kind: "voice", Status: "done", LocalPath: "media/2026/voice/a.ogg"}}
 	got := mediaEntries(it, "Mom/p1.html#m5", "", time.UTC)
-	if len(got) != 1 || got[0].V != "voice" || got[0].K != "voice" || got[0].N != "Voice message from Катерина" {
+	if len(got) != 1 || got[0].V != "voice" || got[0].K != "voice" || got[0].N != "Voice message from Анна" {
 		t.Fatalf("entries = %+v", got)
 	}
 	it.Sender, it.Media.Kind = "", "video_note"

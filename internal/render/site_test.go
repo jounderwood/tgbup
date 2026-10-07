@@ -261,7 +261,7 @@ func TestRenderMediaIndex(t *testing.T) {
 		{ChatID: 10, ID: 2, Date: at("2026-03-06", "09:00"), Text: "see example.com and docs", Raw: []byte{1},
 			EntitiesJSON: `[{"type":"messageEntityUrl","offset":4,"length":11},{"type":"messageEntityTextUrl","offset":20,"length":4,"url":"https://docs.example.com/x"}]`},
 		{ChatID: 10, ID: 3, Date: at("2026-03-06", "10:00"), Raw: []byte{1},
-			MetaJSON: `{"geo":{"lat":44.81,"long":20.46},"venue":{"title":"Kafana","address":"Knez Mihailova 1"}}`},
+			MetaJSON: `{"geo":{"lat":48.85,"long":2.29},"venue":{"title":"Cafe","address":"Rue de Rivoli 1"}}`},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestRenderMediaIndex(t *testing.T) {
 	}
 	mom := read(t, filepath.Join(dir, "html/media/10.js"))
 	for _, want := range []string{`"k":"link"`, `"f":"https://example.com"`, `"f":"https://docs.example.com/x"`,
-		`"k":"place"`, `"n":"Kafana, Knez Mihailova 1"`, `"m":"Mom/p1.html#m3"`} {
+		`"k":"place"`, `"n":"Cafe, Rue de Rivoli 1"`, `"m":"Mom/p1.html#m3"`} {
 		if !strings.Contains(mom, want) {
 			t.Errorf("Mom media index lacks %s:\n%s", want, mom)
 		}

@@ -441,10 +441,10 @@ func newLayout(chats []store.RenderChat) *layout {
 				name = "Topic " + strconv.Itoa(id)
 			}
 			topics[id] = name
-			seen[strings.ToLower(name)]++
+			seen[names.Key(name)]++
 		}
 		for id, name := range topics {
-			if seen[strings.ToLower(name)] > 1 {
+			if seen[names.Key(name)] > 1 || names.ThreadFile(name) {
 				topics[id] = fmt.Sprintf("%s #%d", name, id)
 			}
 		}

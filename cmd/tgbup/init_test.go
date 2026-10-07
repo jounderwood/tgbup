@@ -601,7 +601,8 @@ func TestCheckRepo(t *testing.T) {
 		"/Users/me/TelegramBackup": true, "sftp:nas:/backup": true, "rclone:gdrive:TelegramBackup": true,
 		"s3:s3.amazonaws.com/bucket": true,
 		pw:                           false, "TelegramBackup": false, "./backup": false, "": false, "sftp:": false,
-		"/Users/me/" + pw: false, // a password pasted after a path
+		"/Users/me/" + pw:          false, // a password pasted after a path
+		"sftp:-oProxyCommand=x:/b": false, "sftp:me@-oProxyCommand=x:/b": false, "rclone:-x": false,
 	} {
 		err := checkRepo(repo, pw)
 		if (err == nil) != ok {

@@ -12,8 +12,8 @@ schedule, and encrypted backups go to every place you choose.
   your account (see [Security and privacy](#security-and-privacy)).
 - **Nothing is deleted.** Messages deleted in Telegram stay in the archive. Restoring from a backup never overwrites
   what is already on disk.
-- **Everything stays with you.** The control page opens only on this computer. Keys and passwords are in a hidden
-  file with mode 600, backups are encrypted.
+- **Everything stays with you.** The control page opens only on this computer, and only with the key in the address
+  tgbup prints. Keys and passwords are in a hidden file with mode 600, backups are encrypted.
 
 Made for macOS. On Linux (a NAS, say) downloading, backups, restore and the control page work; the schedule is set up
 there with cron or systemd (`tgbup run`), and there is no folder picker or clipboard.
@@ -117,7 +117,8 @@ finishes (what is new, which snapshots were made), and when setup is done (the s
 where backups go, when runs happen. To turn these messages off: `notify: {progress: false}`; errors always come.
 
 To see how things are — `tgbup serve --open` (or `make setup`). The page at http://localhost:8640 opens only on this
-computer and has three tabs:
+computer, and only through the address `tgbup serve` prints (or opens itself with `--open`): it carries a key that
+changes on every start, so other programs and other accounts on the computer cannot use the page. It has three tabs:
 - **Overview** — the last run, the archive size, backups, schedule and warnings. Until setup is finished, a «Setup is
   not finished» banner at the top says what is missing, with a «Continue setup» button. A run with errors opens all
   its errors and warnings on a click. Each backup place shows when it was last up to date, with a link to its
@@ -247,7 +248,8 @@ changed in each snapshot.
 
 Backups are made by [restic](https://restic.net); Google Drive without its app is reached through
 [rclone](https://rclone.org). There is no need to install them: tgbup downloads the versions it needs and checks their
-checksums (`tgbup deps` shows where they are).
+checksums (`tgbup deps` shows where they are). A restic or rclone set in `deps:` in the config, lying next to the
+`tgbup` binary or found on `PATH` is used as it is, without that check.
 
 ## Restore
 
@@ -320,17 +322,22 @@ All that shows in the account:
 History is read without marking it as read; nobody you talk to sees anything.
 
 **The archive on disk.** Backups are encrypted (restic), while the archive itself is plain files: what protects it is
-disk encryption — FileVault on a Mac, an encrypted volume (LUKS), an encrypted shared folder or ZFS encryption on a
-NAS. tgbup checks the disk with the archive and, if it is not encrypted, warns on the overview, in Settings and at the
-end of `tgbup init`. When it cannot tell (another OS, a network folder), it says nothing.
+disk encryption — FileVault on a Mac (or an encrypted APFS volume for an external disk), an encrypted volume (LUKS),
+an encrypted shared folder or ZFS encryption on a NAS. tgbup checks the disk the archive is on and, if it is not
+encrypted, warns on the overview, in Settings and at the end of `tgbup init`. When it cannot tell (another OS, a network folder), it says nothing.
 
-**Files sent to you.** Extensions that run on a double click (`.command`, `.sh`, `.pkg`, `.dmg`…) get `.txt` appended.
+**Files sent to you.** Extensions that run on a double click (`.command`, `.sh`, `.pkg`, `.dmg`…) or in a browser
+(`.html`, `.svg`, `.xml`…; a page someone sent could otherwise read the archive's search index) get `.txt` appended,
+also on files downloaded before.
 Files from other people get macOS's «downloaded from the internet» mark: macOS asks before running such a file. Your
 own files (sent by you, not forwarded) come without the mark.
 
 **Secrets.** The keys, the backup password and the bot token are only in `~/.local/state/tgbup/secrets.env` (mode
-600), neither in the backups nor in the logs. The control page is reachable only from this computer, and its actions
-need a token that only its own pages know.
+600), neither in the backups nor in the logs. A password inside a backup address (`rest:https://user:pass@…`) is shown
+as `***` in pages, logs and messages. The control page is reachable only from this computer and opens only with the key
+from the address `tgbup serve` prints, which it turns into a cookie; its actions also need a token that only its own
+pages know. A restored archive is readable by its owner only, and a snapshot's config never chooses the restic or
+rclone tgbup runs.
 
 ## Commands
 

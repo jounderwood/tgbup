@@ -1,6 +1,23 @@
 /bin/
+/tgbup
 .DS_Store
 *.part
-secrets.env
 e2e/.fixture.json
-/tgbup
+
+# Never commit an archive, a Telegram session or secrets, even from a test
+# setup made inside the checkout.
+secrets.env
+*.env
+session
+session-test
+*.sqlite
+*.sqlite-*
+*.sqlite.before-restore-*
+/archive/
+/backup/
+/logs/
+config.yaml
+
+# Local tool state.
+.claude/
+.superpowers/

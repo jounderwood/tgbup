@@ -171,7 +171,7 @@ func TestWebLoginStepByStep(t *testing.T) {
 
 func TestAdoptRestoredConfig(t *testing.T) {
 	w, _, p := testWizard(t, "")
-	snap := []byte("archive_dir: ~/Old\ntargets:\n  include: [10] # Mom\nbackup:\n  repositories: [~/TelegramBackup]\n")
+	snap := []byte("archive_dir: ~/Old\ntargets:\n  include: [10] # Mom\nbackup:\n  repositories: [~/TelegramBackup]\ndeps:\n  restic: /tmp/evil-restic\n")
 	// A config with backups set first and no chats: the snapshot's is taken, places from both.
 	if err := config.SetValue(p.Config, []string{"backup", "repositories"}, []string{"rclone:gdrive:TelegramBackup"}); err != nil {
 		t.Fatal(err)
@@ -191,6 +191,9 @@ func TestAdoptRestoredConfig(t *testing.T) {
 	if cfg.ArchiveDir != filepath.Join(p.Home, "New") || len(cfg.Targets.Include) != 1 ||
 		!slices.Equal(cfg.Backup.Repositories, []string{filepath.Join(p.Home, "TelegramBackup"), "rclone:gdrive:TelegramBackup", filepath.Join(p.Home, "Ext")}) {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if cfg.Deps.Restic != "" {
+		t.Errorf("a snapshot chose the restic to run: %q", cfg.Deps.Restic)
 	}
 	// A config with chats keeps its archive folder: restoring elsewhere only to look must not move it.
 	if st, err = w.load(); err != nil {

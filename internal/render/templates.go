@@ -4,9 +4,10 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"io/fs"
+	"fmt"
 	htmltemplate "html/template"
 	"io"
+	"io/fs"
 	texttemplate "text/template"
 )
 
@@ -32,7 +33,8 @@ func htmlTemplate(name string) *htmltemplate.Template {
 }
 
 func mdTemplate(name string) *texttemplate.Template {
-	return texttemplate.Must(texttemplate.New(name).Funcs(texttemplate.FuncMap{"md": mdEscaper.Replace}).ParseFS(files, "templates/"+name))
+	return texttemplate.Must(texttemplate.New(name).Funcs(texttemplate.FuncMap{"md": mdEscaper.Replace,
+		"mdurl": func(v any) string { return mdURL(fmt.Sprint(v)) }}).ParseFS(files, "templates/"+name))
 }
 
 func writePageHTML(w io.Writer, p Page) error { return pageHTML.Execute(w, p) }

@@ -21,15 +21,15 @@ func actionJSON(t *testing.T, a tg.MessageActionClass) string {
 }
 
 func TestTodoEvents(t *testing.T) {
-	checklist := `{"todo":{"title":"💳","items":[{"id":1,"title":"Оплатить кассу"},{"id":2,"title":"Аренда"}]}}`
+	checklist := `{"todo":{"title":"💳","items":[{"id":1,"title":"Оплатить счета"},{"id":2,"title":"Вынести мусор"}]}}`
 	done := actionJSON(t, &tg.MessageActionTodoCompletions{Completed: []int{1, 2}})
 	undo := actionJSON(t, &tg.MessageActionTodoCompletions{Incompleted: []int{2}})
 	add := actionJSON(t, &tg.MessageActionTodoAppendTasks{List: []tg.TodoItem{{ID: 3, Title: tg.TextWithEntities{Text: "Налоги"}}}})
 
-	if got := TodoEventText(done, checklist); got != "marked done «Оплатить кассу», «Аренда»" {
+	if got := TodoEventText(done, checklist); got != "marked done «Оплатить счета», «Вынести мусор»" {
 		t.Errorf("done text = %q", got)
 	}
-	if got := TodoEventText(undo, checklist); got != "marked not done «Аренда»" {
+	if got := TodoEventText(undo, checklist); got != "marked not done «Вынести мусор»" {
 		t.Errorf("undo text = %q", got)
 	}
 	if got := TodoEventText(add, ""); got != "added to the checklist «Налоги»" {

@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/joeunderwood/tgbup/internal/media"
 	"github.com/joeunderwood/tgbup/internal/render"
 	"github.com/joeunderwood/tgbup/internal/store"
 )
@@ -23,6 +25,9 @@ func renderArchive(ctx context.Context, db *store.Store, archiveDir string, full
 	opts := archiveRender(archiveDir)
 	opts.Full = full
 	var res render.Result
+	if err := defuseMedia(ctx, db, archiveDir); err != nil {
+		return res, fmt.Errorf("rename files that would run: %w", err)
+	}
 	err := applyTodoEvents(ctx, db)
 	if err != nil {
 		err = fmt.Errorf("update checklists: %w", err)
@@ -41,6 +46,33 @@ func renderArchive(ctx context.Context, db *store.Store, archiveDir string, full
 		err = render.WriteHistory(ctx, db, opts)
 	}
 	return res, err
+}
+
+// defuseMedia appends .txt to files downloaded before their extension was
+// known to run in a browser or on a double click (media.Runnable), and points
+// the archive at the new names.
+func defuseMedia(ctx context.Context, db *store.Store, archiveDir string) error {
+	files, err := db.DoneMediaPaths(ctx)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !media.Runnable(f.Path) {
+			continue
+		}
+		next := f.Path + ".txt"
+		from, to := filepath.Join(archiveDir, filepath.FromSlash(f.Path)), filepath.Join(archiveDir, filepath.FromSlash(next))
+		if _, err := os.Lstat(to); err == nil {
+			continue // never over another file; it stays as it was
+		}
+		if err := os.Rename(from, to); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := db.MoveMediaPath(ctx, f.Key, next, media.PathKey(next)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func archiveRender(archiveDir string) render.Options {

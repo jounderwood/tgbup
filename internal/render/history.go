@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joeunderwood/tgbup/internal/backup"
 	"github.com/joeunderwood/tgbup/internal/store"
 )
 
@@ -140,7 +141,7 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 			hu.When = snap.At.In(opts.Loc).Format("2006-01-02 15:04")
 		}
 		for _, s := range u.Snapshots {
-			place := tilde(s.Repo, home)
+			place := tilde(backup.Display(s.Repo), home)
 			short := shortID(s.ID)
 			if !s.Partial && !s.Forgotten && !slices.Contains(hu.IDs, short) {
 				hu.IDs = append(hu.IDs, short)

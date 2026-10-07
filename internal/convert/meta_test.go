@@ -49,10 +49,10 @@ func TestMessageMeta(t *testing.T) {
 		mm   tg.MessageMediaClass
 		want map[string]any
 	}{
-		{"geo", &tg.MessageMediaGeo{Geo: &tg.GeoPoint{Lat: 44.8, Long: 20.46}},
-			map[string]any{"geo": map[string]any{"lat": 44.8, "long": 20.46}}},
-		{"venue", &tg.MessageMediaVenue{Geo: &tg.GeoPoint{Lat: 1, Long: 2}, Title: "Kafana", Address: "Knez Mihailova 1", Provider: "foursquare"},
-			map[string]any{"geo": map[string]any{"lat": 1.0, "long": 2.0}, "venue": map[string]any{"title": "Kafana", "address": "Knez Mihailova 1", "provider": "foursquare"}}},
+		{"geo", &tg.MessageMediaGeo{Geo: &tg.GeoPoint{Lat: 48.8, Long: 2.29}},
+			map[string]any{"geo": map[string]any{"lat": 48.8, "long": 2.29}}},
+		{"venue", &tg.MessageMediaVenue{Geo: &tg.GeoPoint{Lat: 1, Long: 2}, Title: "Cafe", Address: "Rue de Rivoli 1", Provider: "foursquare"},
+			map[string]any{"geo": map[string]any{"lat": 1.0, "long": 2.0}, "venue": map[string]any{"title": "Cafe", "address": "Rue de Rivoli 1", "provider": "foursquare"}}},
 		{"live", &tg.MessageMediaGeoLive{Geo: &tg.GeoPoint{Lat: 3, Long: 4}, Period: 900},
 			map[string]any{"geo": map[string]any{"lat": 3.0, "long": 4.0}, "live": map[string]any{"period": 900.0}}},
 		{"contact", &tg.MessageMediaContact{FirstName: "Ann", LastName: "Lee", PhoneNumber: "+381601234567", UserID: 9},

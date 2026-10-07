@@ -30,15 +30,15 @@ _{{md .Service}}_ · {{md .Sender}} · {{.Time}} ^m{{.ID}}
 {{end}}
 {{- with .Meta}}
 {{- with .Link}}
-> {{if .Href}}[**{{md .Title}}**](<{{.Href}}>){{else}}**{{md .Title}}**{{end}}{{with .Site}} · {{md .}}{{end}}
+> {{if .Href}}[**{{md .Title}}**](<{{mdurl .Href}}>){{else}}**{{md .Title}}**{{end}}{{with .Site}} · {{md .}}{{end}}
 {{- with .Description}}
 > {{md .}}{{end}}
 {{- with .Photo}}
 > ![]({{.}}){{end}}
 {{end}}
-{{- with .Place}}📍 {{with .Name}}{{md .}} — {{end}}[{{.Coords}}](<{{.MapURL}}>){{if .Live}} · live location (last point){{end}}
+{{- with .Place}}📍 {{with .Name}}{{md .}} — {{end}}[{{.Coords}}](<{{mdurl .MapURL}}>){{if .Live}} · live location (last point){{end}}
 {{end}}
-{{- with .Contact}}👤 {{md .Name}}{{with .Phone}} · {{.}}{{end}}
+{{- with .Contact}}👤 {{md .Name}}{{with .Phone}} · {{md .}}{{end}}
 {{end}}
 {{- with .Poll}}**📊 {{md .Question}}**
 {{range .Answers}}- {{md .Text}} — {{.Percent}}% ({{.Voters}}){{if .Correct}} ✓{{end}}

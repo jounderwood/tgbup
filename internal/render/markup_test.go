@@ -2,6 +2,7 @@ package render
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,20 @@ func TestMarkdownText(t *testing.T) {
 		if got := MarkdownText(c.text, c.ents); got != c.want {
 			t.Errorf("%s: got %q\nwant %q", c.name, got, c.want)
 		}
+	}
+}
+
+// Message text cannot break out of code or a link in the Markdown export and
+// reach Obsidian as HTML (a remote image is a read receipt).
+func TestMarkdownCannotBreakOut(t *testing.T) {
+	text := "x ``` <img src=https://evil/p.png> y"
+	ents := `[{"type":"messageEntityCode","offset":0,"length":36}]`
+	got := MarkdownText(text, ents)
+	if strings.Count(got, "`") != 2 {
+		t.Errorf("code broken out of: %q", got)
+	}
+	link := MarkdownText("here", `[{"type":"messageEntityTextUrl","offset":0,"length":4,"url":"https://a.example/?q=><img src=x>"}]`)
+	if strings.Contains(link, "><img") {
+		t.Errorf("link broken out of: %q", link)
 	}
 }

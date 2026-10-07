@@ -28,10 +28,12 @@ func TestCheck(t *testing.T) {
 		outputs map[string]string
 		want    State
 	}{
-		{"FileVault on", "darwin", map[string]string{"fdesetup": "FileVault is On.\n"}, Encrypted},
-		{"FileVault encrypting", "darwin", map[string]string{"fdesetup": "FileVault is On.\nEncryption in progress: Percent completed = 12.3\n"}, Encrypted},
-		{"FileVault off", "darwin", map[string]string{"fdesetup": "FileVault is Off.\n"}, Plain},
-		{"no fdesetup", "darwin", nil, Unknown},
+		{"FileVault on", "darwin", map[string]string{"df": dfData, "diskutil": "   Volume Name: Data\n   Device Location: Internal\n   FileVault:                 Yes\n"}, Encrypted},
+		{"FileVault off", "darwin", map[string]string{"df": dfData, "diskutil": "   Device Location: Internal\n   FileVault:                 No\n"}, Plain},
+		{"external disk, plain, FileVault on", "darwin", map[string]string{"df": dfExternal, "diskutil": "   Device Location: External\n   FileVault:                 No\n"}, Plain},
+		{"external disk, encrypted", "darwin", map[string]string{"df": dfExternal, "diskutil": "   Device Location: External\n   FileVault:                 Yes\n"}, Encrypted},
+		{"network share", "darwin", map[string]string{"df": "Filesystem 512-blocks Used Available Capacity Mounted on\n//me@nas/share 1 1 1 1% /Volumes/share\n"}, Unknown},
+		{"no df", "darwin", nil, Unknown},
 		{"LUKS", "linux", map[string]string{"findmnt": "/dev/mapper/data ext4\n", "lsblk": "crypt\npart\ndisk\n"}, Encrypted},
 		{"plain partition", "linux", map[string]string{"findmnt": "/dev/sda1[/@home] btrfs\n", "lsblk": "part\ndisk\n"}, Plain},
 		{"Synology encrypted folder", "linux", map[string]string{"findmnt": "/volume1/@Archive@ ecryptfs\n"}, Encrypted},
@@ -39,7 +41,7 @@ func TestCheck(t *testing.T) {
 		{"ZFS plain", "linux", map[string]string{"findmnt": "tank/archive zfs\n", "zfs": "off\n"}, Plain},
 		{"network share", "linux", map[string]string{"findmnt": "nas:/export nfs4\n"}, Unknown},
 		{"no findmnt", "linux", nil, Unknown},
-		{"other OS", "windows", map[string]string{"fdesetup": "FileVault is Off."}, Unknown},
+		{"other OS", "windows", map[string]string{"df": dfData, "diskutil": "FileVault: No"}, Unknown},
 	} {
 		fake(t, c.outputs)
 		r := check(ctx, c.goos, "/archive")
@@ -51,3 +53,8 @@ func TestCheck(t *testing.T) {
 		}
 	}
 }
+
+const (
+	dfData     = "Filesystem 512-blocks Used Available Capacity Mounted on\n/dev/disk3s5 965595304 668414464 216144544 76% /System/Volumes/Data\n"
+	dfExternal = "Filesystem 512-blocks Used Available Capacity Mounted on\n/dev/disk6s1 1000 10 990 1% /Volumes/My Disk\n"
+)

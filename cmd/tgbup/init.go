@@ -866,11 +866,11 @@ func (w *wizard) createRepos(ctx context.Context) error {
 	var failed []string
 	for _, r := range backup.Init(ctx, o) {
 		if r.Err != nil {
-			fmt.Fprintf(w.out, "  %s: %v\n", tildePath(r.Repo, st.paths.Home), r.Err)
-			failed = append(failed, tildePath(r.Repo, st.paths.Home))
+			fmt.Fprintf(w.out, "  %s: %v\n", placeName(r.Repo, st.paths.Home), r.Err)
+			failed = append(failed, placeName(r.Repo, st.paths.Home))
 			continue
 		}
-		fmt.Fprintf(w.out, "  %s: ready\n", tildePath(r.Repo, st.paths.Home))
+		fmt.Fprintf(w.out, "  %s: ready\n", placeName(r.Repo, st.paths.Home))
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("could not open or create %s. If a repository already exists from an earlier setup, "+
@@ -1465,6 +1465,10 @@ func (w *wizard) finish(ctx context.Context, skipped []string) {
 }
 
 // tildePath shows paths under home as ~/…, which the config also accepts.
+// placeName is a backup place as shown to people: ~ for the home folder, and
+// no password from inside an address.
+func placeName(repo, home string) string { return tildePath(backup.Display(repo), home) }
+
 func tildePath(p, home string) string {
 	if rel, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok && home != "" {
 		return "~/" + rel

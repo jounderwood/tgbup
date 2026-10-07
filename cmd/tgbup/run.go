@@ -89,7 +89,7 @@ func runOnce(ctx context.Context, p runParts) int {
 			rec.BackupErrors = append(rec.BackupErrors, backupWarning(r))
 		}
 		if !r.Skipped {
-			rec.Snapshots = append(rec.Snapshots, r.Repo+": "+r.Snapshot)
+			rec.Snapshots = append(rec.Snapshots, backup.Display(r.Repo)+": "+r.Snapshot)
 			rec.Unchanged, made = false, true
 		}
 	}
@@ -133,9 +133,9 @@ func runOnce(ctx context.Context, p runParts) int {
 			switch {
 			case r.Err != nil:
 			case r.Skipped:
-				same = append(same, tildePath(r.Repo, p.home))
+				same = append(same, placeName(r.Repo, p.home))
 			default:
-				places = append(places, tildePath(r.Repo, p.home)+" "+shortID(r.Snapshot))
+				places = append(places, placeName(r.Repo, p.home)+" "+shortID(r.Snapshot))
 			}
 		}
 		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.NewMedia, places, same))
@@ -208,7 +208,7 @@ func (p runParts) summary(ctx context.Context, since time.Time) (notify.Summary,
 	s.ArchiveBytes = archiveSize(p.archiveDir)
 	for _, repo := range p.repos {
 		at, _ := backup.LastSuccess(ctx, p.db, repo)
-		s.LastBackup = append(s.LastBackup, notify.RepoTime{Repo: repo, At: at})
+		s.LastBackup = append(s.LastBackup, notify.RepoTime{Repo: backup.Display(repo), At: at})
 	}
 	return s, nil
 }
@@ -242,7 +242,7 @@ func printBackup(w io.Writer, r backup.Report) {
 	}
 	for _, rr := range r.Repos {
 		if rr.Err != nil {
-			fmt.Fprintf(w, "backup → %s: failed: %v\n", rr.Repo, rr.Err)
+			fmt.Fprintf(w, "backup → %s: failed: %v\n", backup.Display(rr.Repo), rr.Err)
 			continue
 		}
 		extra := ""
@@ -253,10 +253,10 @@ func printBackup(w io.Writer, r backup.Report) {
 			extra += " · repository checked"
 		}
 		if rr.Skipped {
-			fmt.Fprintf(w, "backup → %s: nothing changed since snapshot %s, no new one%s\n", rr.Repo, shortID(rr.Snapshot), extra)
+			fmt.Fprintf(w, "backup → %s: nothing changed since snapshot %s, no new one%s\n", backup.Display(rr.Repo), shortID(rr.Snapshot), extra)
 			continue
 		}
-		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", rr.Repo, shortID(rr.Snapshot), extra)
+		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", backup.Display(rr.Repo), shortID(rr.Snapshot), extra)
 		if rr.Warning != "" {
 			fmt.Fprintf(w, "  warning: %s\n", backupWarning(rr))
 		}
@@ -266,7 +266,7 @@ func printBackup(w io.Writer, r backup.Report) {
 // backupWarning reports a snapshot that misses files restic could not read
 // (on macOS often a denied folder access): the backup is not complete.
 func backupWarning(r backup.RepoResult) string {
-	return r.Repo + ": snapshot made, but some files could not be read: " + r.Warning
+	return backup.Display(r.Repo) + ": snapshot made, but some files could not be read: " + r.Warning
 }
 
 func shortID(id string) string {

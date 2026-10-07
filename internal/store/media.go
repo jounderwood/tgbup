@@ -198,3 +198,30 @@ func (s *Store) SetMessageMeta(ctx context.Context, chatID int64, id int, meta s
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET meta_json = ? WHERE chat_id = ? AND id = ?`, meta, chatID, id)
 	return err
 }
+
+// DoneMediaPath is a downloaded file and where it is, relative to the archive.
+type DoneMediaPath struct{ Key, Path string }
+
+// DoneMediaPaths lists every downloaded file.
+func (s *Store) DoneMediaPaths(ctx context.Context) ([]DoneMediaPath, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, local_path FROM media WHERE status = 'done' AND local_path IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DoneMediaPath
+	for rows.Next() {
+		var m DoneMediaPath
+		if err := rows.Scan(&m.Key, &m.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MoveMediaPath records that a downloaded file was renamed.
+func (s *Store) MoveMediaPath(ctx context.Context, key, path, pathKey string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media SET local_path = ?, path_key = ? WHERE key = ?`, path, pathKey, key)
+	return err
+}

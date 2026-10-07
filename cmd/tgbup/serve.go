@@ -70,14 +70,15 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	}
 	srv.Log = b.log
 	shown, _, _ := net.SplitHostPort(*listen)
-	url := "http://" + net.JoinHostPort(shown, port) + "/"
-	fmt.Fprintf(env.Stdout, "tgbup is at %s (this computer only). Ctrl+C stops it.\n", url)
+	base := "http://" + net.JoinHostPort(shown, port) + "/"
+	fmt.Fprintf(env.Stdout, "tgbup is at %s?key=%s (this computer only). Ctrl+C stops it.\n", base, srv.Key())
 	if *open && runtime.GOOS == "darwin" {
+		page := ""
 		// Until the archive can be filled, the page to start from is Settings.
 		if s, err := b.SetupState(ctx); err == nil && !s.(setupState).Complete {
-			url += "settings"
+			page = "settings"
 		}
-		openURL(url)
+		openURL(base + page + "?key=" + srv.Key())
 	}
 	if err := srv.Serve(ctx, ln); err != nil {
 		return fail(err)
@@ -154,7 +155,7 @@ func (b *serveBackend) Status(ctx context.Context) (serve.Status, error) {
 
 func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Status) error {
 	for _, r := range st.cfg.Backup.Repositories {
-		shown := tildePath(r, st.paths.Home)
+		shown := placeName(r, st.paths.Home)
 		if checkRepo(r, st.secrets.ResticPassword) != nil {
 			shown = "a place that is not a full path (fix it in Settings → Backups)" // may be a pasted password
 		}

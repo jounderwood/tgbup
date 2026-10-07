@@ -126,12 +126,12 @@ func TestPrivateChatSkipsGroupsAndWaits(t *testing.T) {
 		case 2: // nothing yet
 			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
 		default:
-			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":11,"message":{"chat":{"id":99,"type":"private","first_name":"Andrey","username":"andrey"}}}]}`))
+			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":11,"message":{"chat":{"id":99,"type":"private","first_name":"Ann","username":"ann"}}}]}`))
 		}
 	}))
 	defer srv.Close()
 	c, err := Bot{Token: "1:a", BaseURL: srv.URL}.PrivateChat(context.Background(), 0)
-	if err != nil || c.ID != 99 || c.Name != "Andrey @andrey" {
+	if err != nil || c.ID != 99 || c.Name != "Ann @ann" {
 		t.Fatalf("chat = %+v, %v", c, err)
 	}
 	if offsets[0] != 0 || offsets[1] != 11 {

@@ -461,13 +461,15 @@ func TestRelPath(t *testing.T) {
 		{store.MediaJob{Kind: "document", FileName: "Договор аренды.pdf"}, 2, "file/2024-06-14_180233_Договор аренды (2).pdf"},
 		{store.MediaJob{Kind: "document", FileName: "../../etc/passwd", Mime: "application/pdf"}, 1, "file/2024-06-14_180233_etcpasswd.pdf"},
 		{store.MediaJob{Kind: "photo", ChatTitle: "Семья / дом"}, 1, "photo/2024-06-14_180233_Семья дом.jpg"},
-		{store.MediaJob{Kind: "voice", ChatTitle: "Семья", Sender: "Катерина"}, 1, "voice/2024-06-14_180233_Семья_Катерина.ogg"},
-		{store.MediaJob{Kind: "voice", ChatTitle: "Катерина", Sender: "Катерина"}, 1, "voice/2024-06-14_180233_Катерина.ogg"},
-		{store.MediaJob{Kind: "voice", Sender: "Катерина"}, 1, "voice/2024-06-14_180233_Катерина.ogg"},
-		{store.MediaJob{Kind: "photo", ChatTitle: "Семья", Sender: "Катерина"}, 1, "photo/2024-06-14_180233_Семья.jpg"},
+		{store.MediaJob{Kind: "voice", ChatTitle: "Семья", Sender: "Анна"}, 1, "voice/2024-06-14_180233_Семья_Анна.ogg"},
+		{store.MediaJob{Kind: "voice", ChatTitle: "Анна", Sender: "Анна"}, 1, "voice/2024-06-14_180233_Анна.ogg"},
+		{store.MediaJob{Kind: "voice", Sender: "Анна"}, 1, "voice/2024-06-14_180233_Анна.ogg"},
+		{store.MediaJob{Kind: "photo", ChatTitle: "Семья", Sender: "Анна"}, 1, "photo/2024-06-14_180233_Семья.jpg"},
 		{store.MediaJob{Kind: "video_note"}, 1, "round/2024-06-14_180233_round.mp4"},
 		{store.MediaJob{Kind: "document", FileName: "install.command"}, 1, "file/2024-06-14_180233_install.command.txt"},
 		{store.MediaJob{Kind: "document", FileName: "run.SH", ChatTitle: "x"}, 1, "file/2024-06-14_180233_run.SH.txt"},
+		{store.MediaJob{Kind: "document", FileName: "invoice.HTML", ChatTitle: "x"}, 1, "file/2024-06-14_180233_invoice.HTML.txt"},
+		{store.MediaJob{Kind: "document", FileName: "logo.svg", ChatTitle: "x"}, 1, "file/2024-06-14_180233_logo.svg.txt"},
 	} {
 		c.job.Date = date
 		got := media.RelPath(c.job, time.UTC, c.n)

@@ -49,3 +49,20 @@ func TestFolderNamesSeparateSameTitles(t *testing.T) {
 		}
 	}
 }
+
+// A contact may name themselves after one of the site's files, or in another
+// Unicode normalization of a name already taken: neither may take its place.
+func TestFolderNamesAvoidSiteFilesAndLookalikes(t *testing.T) {
+	nfc, nfd := "Café", "Café"
+	got := names.FolderNames([]names.FolderChat{{ID: 1, Title: "index.html"}, {ID: 2, Title: "Media"}, {ID: 3, Title: nfc}, {ID: 4, Title: nfd}, {ID: 5, Title: "Mom"}})
+	for id, want := range map[int64]string{1: "index.html (1)", 2: "Media (2)", 3: nfc + " (3)", 4: nfd + " (4)", 5: "Mom"} {
+		if got[id] != want {
+			t.Errorf("chat %d: %q, want %q", id, got[id], want)
+		}
+	}
+	for name, taken := range map[string]bool{"index.html": true, "P12.html": true, "dates.md": true, "nav.js": true, "p1x.html": false, "Recipes": false} {
+		if names.ThreadFile(name) != taken {
+			t.Errorf("ThreadFile(%q) = %v", name, !taken)
+		}
+	}
+}

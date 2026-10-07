@@ -124,11 +124,11 @@ func cmdBackup(ctx context.Context, args []string, env Env) int {
 		code := 0
 		for _, r := range backup.Init(ctx, o) {
 			if r.Err != nil {
-				fmt.Fprintf(env.Stdout, "%s: %v\n", r.Repo, r.Err)
+				fmt.Fprintf(env.Stdout, "%s: %v\n", backup.Display(r.Repo), r.Err)
 				code = 1
 				continue
 			}
-			fmt.Fprintf(env.Stdout, "%s: ready\n", r.Repo)
+			fmt.Fprintf(env.Stdout, "%s: ready\n", backup.Display(r.Repo))
 		}
 		return code
 	}

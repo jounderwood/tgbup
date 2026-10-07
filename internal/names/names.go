@@ -8,6 +8,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 const maxName = 100
@@ -20,9 +23,36 @@ type FolderChat struct {
 	UpgradedTitle string
 }
 
+// Key is a name as the disk compares names (macOS: case and Unicode
+// normalization do not matter), for telling whether two names are one.
+func Key(s string) string { return norm.NFD.String(cases.Fold().String(norm.NFD.String(s))) }
+
+// siteFiles are the names html/ and md/ use themselves: a chat named after
+// one gets its id appended, or its folder would take the file's place.
+var siteFiles = map[string]bool{"index.html": true, "index.md": true, "media.html": true, "history.html": true,
+	"assets": true, "search": true, "media": true}
+
+// ThreadFile says name is taken in a chat's folder, so a topic's folder must
+// not use it: the index, the calendar, the page list and the pages.
+func ThreadFile(name string) bool {
+	k := Key(name)
+	switch k {
+	case "index.html", "index.md", "dates.html", "dates.md", "nav.js":
+		return true
+	}
+	if rest, ok := strings.CutPrefix(k, "p"); ok {
+		rest = strings.TrimSuffix(strings.TrimSuffix(rest, ".html"), ".md")
+		if _, err := strconv.Atoi(rest); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // FolderNames names each chat's folder by its title; a group upgraded to a
-// supergroup files under the supergroup, and chats sharing a title get their
-// id appended so they never mix.
+// supergroup files under the supergroup, and chats whose titles the disk
+// would see as one (or as one of the site's own files) get their id appended
+// so they never mix.
 func FolderNames(chats []FolderChat) map[int64]string {
 	titles := map[int64]string{}
 	for _, c := range chats {
@@ -38,11 +68,11 @@ func FolderNames(chats []FolderChat) map[int64]string {
 	}
 	seen := map[string]int{}
 	for _, t := range titles {
-		seen[strings.ToLower(t)]++
+		seen[Key(t)]++
 	}
 	out := map[int64]string{}
 	for id, t := range titles {
-		if seen[strings.ToLower(t)] > 1 {
+		if seen[Key(t)] > 1 || siteFiles[Key(t)] {
 			t = fmt.Sprintf("%s (%d)", t, id)
 		}
 		out[id] = t

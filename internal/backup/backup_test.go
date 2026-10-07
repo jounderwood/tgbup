@@ -270,6 +270,9 @@ func TestRestoreBringsTheArchiveBackWithoutDeletingAnything(t *testing.T) {
 	if res.MediaAdded != 1 || res.MovedAside != "" || !strings.Contains(string(res.Config), "archive_dir") {
 		t.Errorf("result = %+v", res)
 	}
+	if info, err := os.Stat(fresh); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("a restored archive must be the owner's only: %v %v", info.Mode(), err)
+	}
 	if _, err := os.Stat(filepath.Join(fresh, "html")); !os.IsNotExist(err) {
 		t.Errorf("html/ restored, but tgbup redraws it: %v", err)
 	}

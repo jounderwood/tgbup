@@ -227,7 +227,7 @@ func checkMediaNames(t *testing.T, archive string) {
 func checkMeta(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for id, want := range map[int]string{
-		fx.GeoMsg: `"lat":44.8125`, fx.VenueMsg: `"title":"Kafana Question Mark"`,
+		fx.GeoMsg: `"lat":48.8584`, fx.VenueMsg: `"title":"Cafe de Flore"`,
 		fx.ContactMsg: `"phone":"+99966612345"`, fx.PollMsg: `"question":"Dacha on Saturday?"`,
 	} {
 		got := scalar[sql.NullString](t, db, `SELECT meta_json FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id)
@@ -274,7 +274,7 @@ func checkRendered(t *testing.T, archive string) {
 		b, _ := os.ReadFile(p)
 		all.Write(b)
 	}
-	for _, want := range []string{"📍 Kafana Question Mark, Kralja Petra 6", "google.com/maps/search/?api=1&amp;query=44.81",
+	for _, want := range []string{"📍 Cafe de Flore, 172 Boulevard Saint-Germain", "google.com/maps/search/?api=1&amp;query=48.85",
 		"👤 Test Contact", "📊 Dacha on Saturday?"} {
 		if !strings.Contains(all.String(), want) {
 			t.Errorf("forum pages lack %q", want)

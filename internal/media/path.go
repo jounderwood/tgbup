@@ -43,8 +43,11 @@ func kindDir(kind string) string {
 }
 
 // runnable extensions get .txt appended: a double click in Finder must not run
-// a file someone sent.
+// a file someone sent, and a page someone sent must not run in the browser
+// next to the archive, where it could load the search indexes of every chat.
 var runnable = map[string]bool{
+	".html": true, ".htm": true, ".xhtml": true, ".xht": true, ".shtml": true, ".mht": true, ".mhtml": true,
+	".svg": true, ".svgz": true, ".xml": true, ".xsl": true, ".xslt": true, ".js": true, ".mjs": true, ".hta": true,
 	".app": true, ".command": true, ".tool": true, ".terminal": true, ".sh": true, ".bash": true, ".zsh": true,
 	".csh": true, ".ksh": true, ".fish": true, ".py": true, ".pl": true, ".rb": true, ".php": true,
 	".pkg": true, ".mpkg": true, ".dmg": true, ".jar": true, ".scpt": true, ".scptd": true, ".applescript": true,
@@ -76,7 +79,7 @@ func PartPath(final string) string {
 // RelPath is the n-th candidate name of a file (n > 1 adds " (n)"):
 // media/<year>/<kind>/<date>_<time>_<name><ext>. The name is the sender's file name
 // as it was, made safe, or the chat's title when the file has none; a voice
-// message adds who said it: "Семья_Катерина".
+// message adds who said it: "Семья_Анна".
 func RelPath(j store.MediaJob, loc *time.Location, n int) string {
 	t := time.Unix(j.Date, 0).In(loc)
 	prefix := t.Format("2006-01-02_150405") + "_"
@@ -110,6 +113,10 @@ func baseName(fileName string) string {
 	}
 	return fileName
 }
+
+// Runnable says a file name's extension would run on a double click or in a
+// browser; such a downloaded file gets .txt appended.
+func Runnable(name string) bool { return runnable[strings.ToLower(filepath.Ext(name))] }
 
 // Ext is the file's extension as the sender named it when it is plain letters
 // and digits, else one from the MIME type or kind; runnable ones get .txt.

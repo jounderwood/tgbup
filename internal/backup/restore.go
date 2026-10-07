@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -79,7 +80,9 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 	}
 	res.Snapshot = snaps[i]
 
-	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+	// Only the owner may read an archive: on a shared Mac or a NAS the files
+	// inside keep their usual 0644.
+	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
 		return res, err
 	}
 	// Left by a restore that was killed; only tgbup writes these folders.
@@ -105,6 +108,14 @@ func Restore(ctx context.Context, o Options, repo, snapshotID, archiveDir string
 	var work, media string
 	for _, p := range res.Snapshot.Paths {
 		restored := filepath.Join(tmp, p)
+		// The paths come from the snapshot's own record: one made by someone
+		// else could point outside the restore, or at a link out of it.
+		if rel, err := filepath.Rel(tmp, restored); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return res, fmt.Errorf("snapshot %s lists a path outside it: %q", res.Snapshot.ShortID, p)
+		}
+		if fi, err := os.Lstat(restored); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			return res, fmt.Errorf("snapshot %s: %q is a link", res.Snapshot.ShortID, p)
+		}
 		switch {
 		case filepath.Base(p) == "media":
 			media = restored

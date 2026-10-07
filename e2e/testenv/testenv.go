@@ -353,11 +353,11 @@ func Seed(ctx context.Context, raw *tg.Client) (Fixture, error) {
 // seedMeta sends a location, a place, a contact and a poll into the forum's General topic.
 func seedMeta(ctx context.Context, raw *tg.Client, peer tg.InputPeerClass, f *Fixture) error {
 	var err error
-	point := &tg.InputGeoPoint{Lat: 44.8125, Long: 20.4612}
+	point := &tg.InputGeoPoint{Lat: 48.8584, Long: 2.2945}
 	if f.GeoMsg, err = sendMedia(ctx, raw, peer, &tg.InputMediaGeoPoint{GeoPoint: point}); err != nil {
 		return fmt.Errorf("send location: %w", err)
 	}
-	venue := &tg.InputMediaVenue{GeoPoint: point, Title: "Kafana Question Mark", Address: "Kralja Petra 6", Provider: "foursquare", VenueType: "food"}
+	venue := &tg.InputMediaVenue{GeoPoint: point, Title: "Cafe de Flore", Address: "172 Boulevard Saint-Germain", Provider: "foursquare", VenueType: "food"}
 	if f.VenueMsg, err = sendMedia(ctx, raw, peer, venue); err != nil {
 		return fmt.Errorf("send venue: %w", err)
 	}

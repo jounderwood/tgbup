@@ -193,6 +193,10 @@ func safeURL(raw string) (string, bool) {
 
 var mdEscaper = strings.NewReplacer(`\`, `\\`, "*", `\*`, "_", `\_`, "[", `\[`, "]", `\]`, "`", "\\`", "<", `\<`, ">", `\>`, "|", `\|`, "~", `\~`, "#", `\#`)
 
+// mdURL keeps a link inside <…>: the characters that would end it or start
+// HTML are percent-encoded.
+var mdURL = strings.NewReplacer("<", "%3C", ">", "%3E", " ", "%20", "\n", "%0A").Replace
+
 // MarkdownText renders message text as Markdown for Obsidian.
 func MarkdownText(text, entitiesJSON string) string {
 	open := func(s *span) string {
@@ -228,7 +232,7 @@ func MarkdownText(text, entitiesJSON string) string {
 			return "\n```\n"
 		case "messageEntityTextUrl", "messageEntityMentionName":
 			if href, ok := entityHref(s); ok {
-				return "](<" + href + ">)"
+				return "](<" + mdURL(href) + ">)"
 			}
 		}
 		return ""
@@ -236,8 +240,12 @@ func MarkdownText(text, entitiesJSON string) string {
 	return walk(segments(text, entitiesJSON), open, close, func(seg segment) string {
 		for _, s := range seg.active {
 			switch s.Type {
-			case "messageEntityCode", "messageEntityPre", "messageEntityUrl", "messageEntityEmail":
-				return seg.text // literal: code, and autolinks Obsidian detects itself
+			case "messageEntityCode", "messageEntityPre":
+				// Literal, but a backtick would end the code and let what
+				// follows be read as Markdown or HTML: it becomes a lookalike.
+				return strings.ReplaceAll(seg.text, "`", "\u02cb")
+			case "messageEntityUrl", "messageEntityEmail":
+				return mdURL(seg.text) // autolinks Obsidian detects itself
 			}
 		}
 		return mdEscaper.Replace(seg.text)

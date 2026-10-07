@@ -130,7 +130,12 @@ func checkRepo(repo, password string) error {
 		return nil
 	}
 	for _, s := range resticSchemes {
-		if len(repo) > len(s) && strings.HasPrefix(repo, s) {
+		if rest, ok := strings.CutPrefix(repo, s); ok && rest != "" {
+			// restic hands an sftp host to ssh as an argument: one that starts
+			// with "-" would be an option (-oProxyCommand=…).
+			if strings.HasPrefix(rest, "-") || strings.Contains(rest, "@-") {
+				return errNotAPlace
+			}
 			return nil
 		}
 	}
@@ -314,7 +319,9 @@ func splitPlaces(st setup) (good []string, bad int) {
 
 // saveBackup writes the backup places and, when given, a new password. A
 // password replacing one in use must open the repositories that already
-// exist: a typo would otherwise replace the working password.
+// exist, the ones configured until now as well as the ones given: a typo, or
+// dropping the old places in the same save, would otherwise lose the only
+// password that opens their snapshots.
 func saveBackup(ctx context.Context, st setup, repos []string, password string) error {
 	if len(repos) == 0 {
 		return badInput("choose at least one backup place")
@@ -332,7 +339,14 @@ func saveBackup(ctx context.Context, st setup, repos []string, password string) 
 			return err
 		}
 		if st.secrets.ResticPassword != "" && password != st.secrets.ResticPassword {
-			if err := checkOpens(ctx, st, repos, password); err != nil {
+			old, _ := splitPlaces(st)
+			all := slices.Clone(repos)
+			for _, r := range old {
+				if !slices.Contains(all, expandTilde(r, st.paths.Home)) && !slices.Contains(all, r) {
+					all = append(all, r)
+				}
+			}
+			if err := checkOpens(ctx, st, all, password); err != nil {
 				return err
 			}
 		}
@@ -357,7 +371,7 @@ func checkOpens(ctx context.Context, st setup, repos []string, password string) 
 	}
 	for _, r := range backup.Opens(ctx, o) {
 		if r.Err != nil {
-			return badInput("the new password does not open %s: keep the one the repositories were made with", tildePath(r.Repo, st.paths.Home))
+			return badInput("the new password does not open %s: keep the one the repositories were made with", placeName(r.Repo, st.paths.Home))
 		}
 	}
 	return nil
@@ -539,6 +553,12 @@ func adoptRestoredConfig(st setup, snapshotConfig []byte, archiveDir, repo strin
 		}
 		if err := config.SetValue(st.paths.Config, []string{"archive_dir"}, tildePath(archiveDir, home)); err != nil {
 			return false, err
+		}
+		// Programs tgbup runs are this computer's choice, never a snapshot's.
+		for key, v := range map[string]string{"restic": current.Deps.Restic, "rclone": current.Deps.Rclone} {
+			if err := config.SetValue(st.paths.Config, []string{"deps", key}, v); err != nil {
+				return false, err
+			}
 		}
 		restored, err := config.LoadWithoutTargets(st.paths.Config, home)
 		if err != nil {

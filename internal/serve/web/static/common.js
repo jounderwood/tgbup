@@ -1,6 +1,9 @@
 "use strict";
 // Shared by the pages: API calls carry the token only our pages know.
 const token = document.querySelector('meta[name="tgbup-token"]').content;
+// The key in the address has become a cookie: keep it out of the address bar
+// and the history.
+if (new URLSearchParams(location.search).has("key")) history.replaceState(null, "", location.pathname + location.hash);
 
 async function api(method, path, body) {
   const opts = { method, headers: { "X-Tgbup-Token": token } };

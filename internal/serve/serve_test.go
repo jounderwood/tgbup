@@ -136,7 +136,10 @@ func do(t *testing.T, s *Server, method, path, host, token, body string) *httpte
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Host = host
 	if token != "" {
+		// A browser that opened the address with the key: the cookie, and
+		// the token the page gave its script.
 		r.Header.Set("X-Tgbup-Token", token)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: token})
 	}
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -147,7 +150,7 @@ const host = "localhost:8640"
 
 func token(t *testing.T, s *Server) string {
 	t.Helper()
-	page := do(t, s, "GET", "/", host, "", "").Body.String()
+	page := do(t, s, "GET", "/?key="+s.Key(), host, "", "").Body.String()
 	m := regexp.MustCompile(`name="tgbup-token" content="([0-9a-f]{32})"`).FindStringSubmatch(page)
 	if m == nil {
 		t.Fatalf("no token in the page:\n%s", page)
@@ -233,25 +236,26 @@ func TestAPI(t *testing.T) {
 
 func TestStaticAndPages(t *testing.T) {
 	s, _, _ := testServer(t)
-	for _, p := range []string{"/", "/settings", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
-		w := do(t, s, "GET", p, host, "", "")
+	tok := token(t, s)
+	for _, p := range []string{"/", "/settings", "/snapshots", "/static/app.css", "/static/common.js", "/static/overview.js", "/static/chats.js"} {
+		w := do(t, s, "GET", p, host, tok, "")
 		body, _ := io.ReadAll(w.Body)
 		if w.Code != 200 || len(body) == 0 {
 			t.Errorf("%s: %d", p, w.Code)
 		}
 	}
-	if csp := do(t, s, "GET", "/", host, "", "").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+	if csp := do(t, s, "GET", "/", host, tok, "").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP = %q", csp)
 	}
 	// Old addresses: the chat list is a step of Settings, which was called Setup.
 	for from, to := range map[string]string{"/chats": "/settings#chats", "/setup": "/settings"} {
-		if w := do(t, s, "GET", from, host, "", ""); w.Code != http.StatusFound || w.Header().Get("Location") != to {
+		if w := do(t, s, "GET", from, host, tok, ""); w.Code != http.StatusFound || w.Header().Get("Location") != to {
 			t.Errorf("%s: %d %s", from, w.Code, w.Header().Get("Location"))
 		}
 	}
 	// The archive is not served: its pages are opened from the disk.
 	for _, p := range []string{"/html/index.html", "/media/photo/1.jpg", "/archive.sqlite"} {
-		if w := do(t, s, "GET", p, host, "", ""); w.Code != http.StatusNotFound {
+		if w := do(t, s, "GET", p, host, tok, ""); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", p, w.Code)
 		}
 	}
@@ -288,7 +292,7 @@ func TestArchiveAndSnapshots(t *testing.T) {
 	if w := do(t, s, "POST", "/api/backups/0/snapshots/abcd1234/open", host, tok, ""); w.Code != 200 || !slices.Equal(f.openedCopies, []string{"abcd1234"}) {
 		t.Errorf("open a copy: %d %v", w.Code, f.openedCopies)
 	}
-	if w := do(t, s, "GET", "/snapshots", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "snapshots.js") {
+	if w := do(t, s, "GET", "/snapshots", host, tok, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "snapshots.js") {
 		t.Errorf("the snapshots page: %d", w.Code)
 	}
 }
@@ -317,15 +321,60 @@ func TestOtherOriginsCannotLoadTheInterface(t *testing.T) {
 	r.URL.Path = "/"
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("navigating from another site without the key: %d", w.Code)
+	}
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: token(t, s)})
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
-		t.Errorf("navigating from another site (a link): %d", w.Code)
+		t.Errorf("navigating from another site (a link), signed in: %d", w.Code)
+	}
+}
+
+// Another program or account on this computer can reach the port, but not
+// read the token off a page without the key from the printed address.
+func TestPagesNeedTheKey(t *testing.T) {
+	s, _, _ := testServer(t)
+	for _, p := range []string{"/", "/settings", "/snapshots", "/?key=0123456789abcdef0123456789abcdef"} {
+		w := do(t, s, "GET", p, host, "", "")
+		if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "tgbup-token") {
+			t.Errorf("%s without the key: %d", p, w.Code)
+		}
+	}
+	w := do(t, s, "GET", "/?key="+s.Key(), host, "", "")
+	var cookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName {
+			cookie = c
+		}
+	}
+	if w.Code != 200 || cookie == nil || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("with the key: %d, cookie %+v", w.Code, cookie)
+	}
+	r := httptest.NewRequest("GET", "/settings", nil)
+	r.Host = host
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Errorf("with the cookie: %d", w.Code)
+	}
+	// The cookie alone does not authorize the API: that needs the page's token.
+	r = httptest.NewRequest("POST", "/api/run", nil)
+	r.Host = host
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("API with the cookie only: %d", w.Code)
 	}
 }
 
 func TestSetupRoutes(t *testing.T) {
 	s, f, _ := testServer(t)
 	tok := token(t, s)
-	if w := do(t, s, "GET", "/settings", host, "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "setup.js") {
+	if w := do(t, s, "GET", "/settings", host, tok, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "setup.js") {
 		t.Fatalf("setup page: %d", w.Code)
 	}
 	if w := do(t, s, "GET", "/api/setup", host, tok, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "complete") {

@@ -39,3 +39,22 @@ func TestRcloneFoundThroughPath(t *testing.T) {
 		t.Fatal("RESTIC_PASSWORD_FILE leaked into restic's environment")
 	}
 }
+
+func TestDisplayHidesAddressPasswords(t *testing.T) {
+	for in, want := range map[string]string{
+		"rest:https://user:secret@host:8000/repo": "rest:https://user:***@host:8000/repo",
+		"rest:http://:secret@host/":               "rest:http://:***@host/",
+		"rest:https://host/repo":                  "rest:https://host/repo",
+		"sftp:me@nas:/backup":                     "sftp:me@nas:/backup",
+		"/Users/me/backup":                        "/Users/me/backup",
+		"rclone:gdrive:tgbup":                     "rclone:gdrive:tgbup",
+	} {
+		if got := Display(in); got != want {
+			t.Errorf("Display(%q) = %q, want %q", in, got, want)
+		}
+	}
+	err := &resticError{op: "snapshots", repo: "rest:https://u:secret@h/", msg: "unreachable"}
+	if strings.Contains(err.Error(), "secret") {
+		t.Errorf("error shows the password: %v", err)
+	}
+}

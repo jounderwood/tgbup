@@ -7,6 +7,7 @@ package serve
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -179,8 +180,14 @@ type Server struct {
 	// failed request; request bodies (passwords, codes, tokens) never.
 	Log     *slog.Logger
 	backend Backend
-	token   string
-	port    string
+	// key opens the interface: it is in the address tgbup prints and opens,
+	// and is exchanged for a cookie. Without it a page is refused, so another
+	// program or account on this computer cannot read token off a page.
+	key string
+	// token authorizes the API, in a header only our pages send; it is also
+	// the cookie's value.
+	token string
+	port  string
 	pages   *template.Template
 }
 
@@ -204,15 +211,35 @@ func localHost(h string) bool { return h == "localhost" || h == "127.0.0.1" || h
 
 // New builds a server for an address already bound to port.
 func New(b Backend, port string) (*Server, error) {
-	tok := make([]byte, 16)
+	tok, key := make([]byte, 16), make([]byte, 16)
 	if _, err := rand.Read(tok); err != nil {
+		return nil, err
+	}
+	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
 	pages, err := template.ParseFS(webFS, "web/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{backend: b, token: hex.EncodeToString(tok), port: port, pages: pages}, nil
+	return &Server{backend: b, token: hex.EncodeToString(tok), key: hex.EncodeToString(key), port: port, pages: pages}, nil
+}
+
+// Key is what an address needs (?key=…) to open the interface in a browser.
+func (s *Server) Key() string { return s.key }
+
+const cookieName = "tgbup"
+
+// signedIn: the request carries the cookie, or the key, which then sets it.
+func (s *Server) signedIn(w http.ResponseWriter, r *http.Request) bool {
+	if c, err := r.Cookie(cookieName); err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1 {
+		return true
+	}
+	if k := r.URL.Query().Get("key"); k != "" && subtle.ConstantTimeCompare([]byte(k), []byte(s.key)) == 1 {
+		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		return true
+	}
+	return false
 }
 
 func (s *Server) Handler() http.Handler {
@@ -313,8 +340,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-Tgbup-Token") != s.token {
+		if strings.HasPrefix(r.URL.Path, "/api/") && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Tgbup-Token")), []byte(s.token)) != 1 {
 			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/static/") && !s.signedIn(w, r) {
+			http.Error(w, "Open the address tgbup serve printed (it carries a key), or run tgbup serve --open.", http.StatusForbidden)
 			return
 		}
 		// Other sites may link here but not load anything.

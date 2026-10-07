@@ -162,7 +162,7 @@ func (f Finder) download(ctx context.Context, t Tool) (string, error) {
 		return "", fmt.Errorf("unpack %s: %w", t.Name, err)
 	}
 	dst := f.cached(t)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".download-*")

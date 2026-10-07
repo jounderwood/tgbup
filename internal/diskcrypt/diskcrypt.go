@@ -1,5 +1,6 @@
 // Package diskcrypt tells whether the disk that holds a folder is encrypted
-// at rest: FileVault on macOS; LUKS/dm-crypt, eCryptfs (Synology encrypted
+// at rest: the volume's own encryption on macOS (FileVault for the built-in
+// disk, an encrypted APFS volume for an external one); LUKS/dm-crypt, eCryptfs (Synology encrypted
 // shared folders) or ZFS encryption on Linux. Anything it cannot tell is
 // Unknown, never an error: the check only decides whether to warn.
 package diskcrypt
@@ -45,21 +46,45 @@ func Check(ctx context.Context, dir string) Result {
 func check(ctx context.Context, goos, dir string) Result {
 	switch goos {
 	case "darwin":
-		return checkMac(ctx)
+		return checkMac(ctx, dir)
 	case "linux":
 		return checkLinux(ctx, dir)
 	}
 	return Result{}
 }
 
-func checkMac(ctx context.Context) Result {
+// checkMac asks diskutil about the volume dir is on, not only FileVault: an
+// archive on an external disk is protected by that disk's encryption alone.
+func checkMac(ctx context.Context, dir string) Result {
 	r := Result{How: "FileVault", Hint: "turn on FileVault: System Settings → Privacy & Security → FileVault"}
-	out, err := run(ctx, "fdesetup", "status")
-	switch {
-	case err != nil:
-	case strings.Contains(out, "FileVault is On"):
+	out, err := run(ctx, "df", "-P", dir)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if err != nil || len(lines) < 2 {
+		return r
+	}
+	dev := strings.Fields(lines[len(lines)-1])[0]
+	if !strings.HasPrefix(dev, "/dev/") {
+		return r // a network share: its server decides
+	}
+	info, err := run(ctx, "diskutil", "info", dev)
+	if err != nil {
+		return r
+	}
+	field := func(name string) string {
+		for _, l := range strings.Split(info, "\n") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(l), ":"); ok && k == name {
+				return strings.TrimSpace(v)
+			}
+		}
+		return ""
+	}
+	if field("Device Location") == "External" || field("Removable Media") == "Removable" {
+		r.How, r.Hint = "the disk's encryption", "keep the archive on an encrypted disk (in Disk Utility, an APFS (Encrypted) volume)"
+	}
+	switch field("FileVault") {
+	case "Yes":
 		r.State = Encrypted
-	case strings.Contains(out, "FileVault is Off"):
+	case "No":
 		r.State = Plain
 	}
 	return r
