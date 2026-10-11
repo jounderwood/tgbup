@@ -1142,16 +1142,16 @@ func (w *wizard) job() (launchdJob, error) {
 }
 
 func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
+	st, err := w.load()
+	if err == nil && st.testDC {
+		// The job is one per Mac and runs the real archive.
+		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
+	}
 	if runtime.GOOS != "darwin" {
 		return "not on macOS: start `tgbup run` from cron or systemd 4 times a day", true, nil
 	}
-	st, err := w.load()
 	if err != nil {
 		return "", false, err
-	}
-	if st.testDC {
-		// The job is one per Mac and runs the real archive.
-		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
 	}
 	j, err := newLaunchdJob(st, w.env)
 	if err != nil {
