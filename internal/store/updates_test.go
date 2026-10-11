@@ -75,6 +75,10 @@ func TestNoteUpdate(t *testing.T) {
 	if len(us[0].Snapshots) != 2 || us[0].Snapshots[0].ID != "bbb" || !us[0].Snapshots[1].Partial || len(us[1].Snapshots) != 1 || !us[1].Snapshots[0].Forgotten {
 		t.Fatalf("snapshots: %+v / %+v", us[0].Snapshots, us[1].Snapshots)
 	}
+	by, err := s.SnapshotsByUpdate(ctx)
+	if err != nil || len(by[3]) != 2 || len(by[2]) != 0 {
+		t.Fatalf("by update = %+v, %v (update 2's only snapshot was forgotten)", by, err)
+	}
 	m, err := s.SnapshotUpdates(ctx, "/b")
 	if err != nil || m["bbb"].N != 3 || m["aaa"].N != 2 {
 		t.Fatalf("snapshot updates = %+v, %v", m, err)

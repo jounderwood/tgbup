@@ -39,6 +39,8 @@ function table(i, snaps) {
   return el("ul", { class: "snaps" }, snaps.map((sn) => el("li", {},
     el("div", {}, el("b", {}, when(sn.time)), " · ", el("code", {}, sn.id)),
     el("div", { class: "muted" }, (sn.changes || "no record of what changed (made before tgbup kept one)") + " · on " + sn.host),
+    (sn.same || []).length ? el("div", { class: "muted" }, "the same version as ",
+      sn.same.flatMap((s, i) => [i ? ", " : "", el("code", {}, s.id), " in " + s.place])) : null,
     el("div", { class: "actions" }, actions(i, sn)))));
 }
 

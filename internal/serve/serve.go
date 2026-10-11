@@ -67,10 +67,18 @@ type Snapshot struct {
 	// Changes is what changed in the archive since the snapshot before; ""
 	// for a snapshot tgbup has no record of.
 	Changes string `json:"changes"`
+	// Same are the snapshots of the same version of the archive in the other
+	// places: each place is a repository of its own, so the ids differ.
+	Same []SameSnapshot `json:"same,omitempty"`
 	// Command restores it into Copy, a folder of its own; Restored: it is there.
 	Command  string `json:"command"`
 	Copy     string `json:"copy"`
 	Restored bool   `json:"restored"`
+}
+
+type SameSnapshot struct {
+	Place string `json:"place"`
+	ID    string `json:"id"`
 }
 
 type Status struct {

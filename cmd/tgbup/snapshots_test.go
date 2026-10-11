@@ -27,8 +27,9 @@ func TestSnapshotCopyIsRestoredNextToTheArchive(t *testing.T) {
 	w, _, p := testWizard(t, "")
 	ctx := context.Background()
 	archive, repo := filepath.Join(p.Home, "Tgbup", "archive"), filepath.Join(p.Home, "Tgbup", "backup")
+	disk := filepath.Join(p.Home, "Second", "TelegramBackup")
 	for path, v := range map[string]any{
-		"archive_dir": archive, "backup.repositories": []string{repo}, "deps.restic": restic,
+		"archive_dir": archive, "backup.repositories": []string{repo, disk}, "deps.restic": restic,
 	} {
 		if err := config.SetValue(p.Config, strings.Split(path, "."), v); err != nil {
 			t.Fatal(err)
@@ -58,11 +59,12 @@ func TestSnapshotCopyIsRestoredNextToTheArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res := backup.Init(ctx, o); res[0].Err != nil {
-		t.Fatal(res[0].Err)
+	if res := backup.Init(ctx, o); res[0].Err != nil || res[1].Err != nil {
+		t.Fatal(res)
 	}
 	o.Update = latestUpdate(ctx, db)
-	if r := backup.Run(ctx, db, o); !r.OK() {
+	r := backup.Run(ctx, db, o)
+	if !r.OK() {
 		t.Fatalf("backup = %+v", r)
 	}
 	db.Close()
@@ -75,6 +77,10 @@ func TestSnapshotCopyIsRestoredNextToTheArchive(t *testing.T) {
 		t.Fatalf("snapshots = %+v, %v", snaps, err)
 	}
 	sn := snaps[0]
+	// The other place holds the same version under its own id.
+	if len(sn.Same) != 1 || sn.Same[0].ID != shortID(r.Repos[1].Snapshot) || sn.Same[0].Place != "~/Second/TelegramBackup" {
+		t.Errorf("same version = %+v, want %s in the second place", sn.Same, shortID(r.Repos[1].Snapshot))
+	}
 	wantCopy := "~/Tgbup/archive-snapshots/" + sn.ID
 	if sn.Restored || sn.Copy != wantCopy || sn.Changes == "" ||
 		sn.Command != "tgbup restore --copy --from ~/Tgbup/backup --snapshot "+sn.ID {

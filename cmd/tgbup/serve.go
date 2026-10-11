@@ -812,12 +812,19 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 	if err != nil {
 		return nil, err
 	}
-	updates := b.snapshotUpdates(ctx, st, repos[place])
+	updates, byUpdate := b.snapshotUpdates(ctx, st, repos[place])
 	out := make([]serve.Snapshot, len(snaps))
 	for i, sn := range snaps {
 		out[i] = snapshotView(st, repos[place], sn)
-		if u, ok := updates[sn.ID]; ok {
-			out[i].Changes = u.Diff.Summary()
+		u, ok := updates[sn.ID]
+		if !ok {
+			continue
+		}
+		out[i].Changes = u.Diff.Summary()
+		for _, other := range byUpdate[u.N] {
+			if other.Repo != repos[place] && !other.Partial {
+				out[i].Same = append(out[i].Same, serve.SameSnapshot{Place: placeName(other.Repo, st.paths.Home), ID: shortID(other.ID)})
+			}
 		}
 	}
 	return out, nil
@@ -919,20 +926,24 @@ func (b *serveBackend) OpenCopy(place int, id string) error {
 	return exec.Command("open", index).Run()
 }
 
-// snapshotUpdates is what the archive knows of repo's snapshots; without an
-// archive (a backup being looked at before a restore) it knows nothing.
-func (b *serveBackend) snapshotUpdates(ctx context.Context, st setup, repo string) map[string]store.Update {
+// snapshotUpdates is what the archive knows of repo's snapshots, and the
+// snapshots of each update in every place; without an archive (a backup
+// being looked at before a restore) it knows nothing.
+func (b *serveBackend) snapshotUpdates(ctx context.Context, st setup, repo string) (map[string]store.Update, map[int][]store.SnapshotRef) {
 	path := filepath.Join(st.cfg.ArchiveDir, "archive.sqlite")
 	if _, err := os.Stat(path); err != nil {
-		return nil
+		return nil, nil
 	}
+	b.dbMu.RLock()
+	defer b.dbMu.RUnlock()
 	db, err := store.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer db.Close()
 	m, _ := db.SnapshotUpdates(ctx, repo)
-	return m
+	all, _ := db.SnapshotsByUpdate(ctx)
+	return m, all
 }
 
 // diskWarning is cached: the page asks for the status every half minute, and

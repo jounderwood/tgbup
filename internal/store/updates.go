@@ -314,3 +314,28 @@ func signed(n int, noun string) string {
 	}
 	return countOf(n, noun)
 }
+
+// SnapshotsByUpdate lists the kept snapshots of every place by the update
+// they hold: one version of the archive in several places.
+func (s *Store) SnapshotsByUpdate(ctx context.Context) (map[int][]SnapshotRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT update_n, repo, id, at, partial FROM snapshots
+WHERE forgotten_at IS NULL ORDER BY at, repo`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int][]SnapshotRef{}
+	for rows.Next() {
+		var (
+			n int
+			r SnapshotRef
+			t int64
+		)
+		if err := rows.Scan(&n, &r.Repo, &r.ID, &t, &r.Partial); err != nil {
+			return nil, err
+		}
+		r.At = time.Unix(t, 0)
+		out[n] = append(out[n], r)
+	}
+	return out, rows.Err()
+}
