@@ -124,8 +124,8 @@ type Run struct {
 }
 
 type Backup struct {
-	Repo string `json:"repo"` // as people know it: «iCloud Drive › TelegramBackup»
-	Path string `json:"path"` // where it is: ~/Library/Mobile Documents/…
+	Repo        string    `json:"repo"`         // as people know it: «iCloud Drive › TelegramBackup»
+	Path        string    `json:"path"`         // where it is: ~/Library/Mobile Documents/…
 	LastSuccess time.Time `json:"last_success"` // zero: never
 }
 
@@ -197,7 +197,7 @@ type Server struct {
 	// the cookie's value.
 	token string
 	port  string
-	pages   *template.Template
+	pages *template.Template
 }
 
 //go:embed web

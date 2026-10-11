@@ -37,11 +37,11 @@ func text(s string) tg.TextWithEntities { return tg.TextWithEntities{Text: s} }
 func TestMessageMeta(t *testing.T) {
 	answers := []tg.PollAnswerClass{&tg.PollAnswer{Text: text("Yes"), Option: []byte{0}}, &tg.PollAnswer{Text: text("No"), Option: []byte{1}}}
 	poll := &tg.MessageMediaPoll{
-		Poll: tg.Poll{Question: text("Dacha on Saturday?"), Answers: answers, Closed: true},
+		Poll:    tg.Poll{Question: text("Dacha on Saturday?"), Answers: answers, Closed: true},
 		Results: tg.PollResults{Results: []tg.PollAnswerVoters{{Option: []byte{0}, Voters: 3}, {Option: []byte{1}, Voters: 1, Correct: true}}, TotalVoters: 4},
 	}
 	todo := &tg.MessageMediaToDo{
-		Todo: tg.TodoList{Title: text("Packing"), OthersCanComplete: true, List: []tg.TodoItem{{ID: 1, Title: text("Passports")}, {ID: 2, Title: text("Chargers")}}},
+		Todo:        tg.TodoList{Title: text("Packing"), OthersCanComplete: true, List: []tg.TodoItem{{ID: 1, Title: text("Passports")}, {ID: 2, Title: text("Chargers")}}},
 		Completions: []tg.TodoCompletion{{ID: 1, CompletedBy: &tg.PeerUser{UserID: 7}, Date: 1700000000}},
 	}
 	cases := []struct {

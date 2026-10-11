@@ -1157,7 +1157,7 @@ func (w *wizard) job() (schedJob, error) {
 func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 	st, err := w.load()
 	if err == nil && st.testDC {
-		// The job is one per Mac and runs the real archive.
+		// The job is one per computer and runs the real archive.
 		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
 	}
 	if err != nil {
@@ -1167,7 +1167,7 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if j.manual() {
+	if j.manual() && !j.cronInstalled() {
 		return "no launchd or systemd here: add the crontab line from «How this works» (crontab -e)", false, nil
 	}
 	if !j.installedHere() || !j.state().Loaded {
@@ -1253,9 +1253,14 @@ func (w *wizard) schedule(ctx context.Context) error {
 		return err
 	}
 	if j.manual() {
-		fmt.Fprintln(w.out, "  No launchd or systemd here: to run tgbup on its own, add this with crontab -e")
-		fmt.Fprintln(w.out, "  (or to the NAS's task scheduler):")
+		if j.cronInstalled() {
+			fmt.Fprintln(w.out, "  cron starts tgbup run (crontab -l shows the line)")
+			return nil
+		}
+		fmt.Fprintln(w.out, "  No launchd or systemd here: to run tgbup on its own, add this with crontab -e:")
 		fmt.Fprintln(w.out, indent(j.cronLine(), "    "))
+		fmt.Fprintf(w.out, "  Or in the NAS's task scheduler, a task at %s running:\n", clockList(j.Times))
+		fmt.Fprintln(w.out, indent(j.taskCommand(), "    "))
 		return nil
 	}
 	installed := j.installedHere() && j.state().Loaded
@@ -1313,7 +1318,7 @@ func (w *wizard) schedule(ctx context.Context) error {
 		notifySetup(ctx, st, func(err error) { fmt.Fprintf(w.out, "  could not tell the bot: %v\n", err) })
 	}
 	fmt.Fprintln(w.out, "  A first run in the background checks that it all works unattended.")
-	if j.Kind == kindLaunchd {
+	if j.isLaunchd() {
 		fmt.Fprintln(w.out, "  macOS may ask to let tgbup access iCloud or other folders: allow it.")
 	} else if !j.lingering() {
 		fmt.Fprintln(w.out, "  It runs while you are logged in; to run it always (a server): loginctl enable-linger "+j.User)
@@ -1389,7 +1394,7 @@ func (w *wizard) watchRun(ctx context.Context, j schedJob, archiveDir string, ev
 	}
 	tail := lastLogLines(j.LogPath, 15)
 	fmt.Fprintf(w.out, "  End of %s:\n%s\n", j.LogPath, indent(tail, "    "))
-	if strings.Contains(strings.ToLower(tail), "operation not permitted") {
+	if runtime.GOOS == "darwin" && strings.Contains(strings.ToLower(tail), "operation not permitted") {
 		fmt.Fprintf(w.out, "  macOS blocked file access: System Settings → Privacy & Security → Full Disk Access → + → %s\n", j.Exe)
 	}
 	return errors.New("the scheduled run failed")
@@ -1517,14 +1522,20 @@ func openURL(u string) { _ = openInBrowser(u) }
 // openInBrowser shows a page or a file in the default browser: open on
 // macOS, xdg-open on a Linux desktop; without either it says where it is.
 func openInBrowser(target string) error {
-	name := "open"
-	if runtime.GOOS != "darwin" {
-		if _, err := exec.LookPath("xdg-open"); err != nil {
-			return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, target)
-		}
-		name = "xdg-open"
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", target).Run()
 	}
-	return exec.Command(name, target).Start()
+	if _, err := exec.LookPath("xdg-open"); err != nil {
+		return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, target)
+	}
+	// xdg-open may wait for the browser; it is reaped when it ends, so a
+	// long-running tgbup serve keeps no zombies.
+	cmd := exec.Command("xdg-open", target)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func copyToClipboard(s string) error {

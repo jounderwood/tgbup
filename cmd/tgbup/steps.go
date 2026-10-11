@@ -22,8 +22,8 @@ import (
 	"github.com/jounderwood/tgbup/internal/config"
 	"github.com/jounderwood/tgbup/internal/diskcrypt"
 	"github.com/jounderwood/tgbup/internal/notify"
-	"github.com/jounderwood/tgbup/internal/serve"
 	"github.com/jounderwood/tgbup/internal/render"
+	"github.com/jounderwood/tgbup/internal/serve"
 	"github.com/jounderwood/tgbup/internal/store"
 )
 

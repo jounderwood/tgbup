@@ -111,8 +111,9 @@ as you. An install made before `~/Tgbup` (settings in `~/.config/tgbup`) keeps w
 The schedule starts `tgbup run` at the chosen times: a launchd agent named `tgbup` on macOS, a systemd user timer
 `tgbup.timer` on Linux. If the computer was asleep or off, a missed run starts when it is back. On a Linux server nobody
 logs in to, let systemd run your timers while you are logged out, once: `loginctl enable-linger $USER` (some systems
-need sudo); Settings says when it is needed. Without systemd (Synology, Alpine…) Settings gives the line to add with
-`crontab -e` or to the NAS's task scheduler; cron does not make up missed runs.
+need sudo); Settings says when it is needed. The timer needs systemd 240 or newer (Ubuntu 20.04, Debian 11 and later).
+Without systemd (Synology, Alpine…) Settings gives the line to add with `crontab -e`, and the command alone for a NAS's
+task scheduler (Synology: Control Panel → Task Scheduler → User-defined script); cron does not make up missed runs.
 A run:
 1. downloads new messages and media, and reads the last 3 days of every active chat again: edits, reactions and votes
    reach the archive, and an edited message keeps the versions before (Telegram itself keeps only the latest);

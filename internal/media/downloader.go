@@ -60,7 +60,7 @@ type Report struct {
 	// are tried again next run, so the run is not failed for them.
 	Retry       int
 	RetryErrors []error
-	AuthErr  error
+	AuthErr     error
 	// LocalErr is a disk-side failure (full disk, permissions); it stops the
 	// media phase and is not held against the files.
 	LocalErr error

@@ -144,10 +144,12 @@ func howItWorks(ctx context.Context, st setup, env Env) map[string]*howTo {
 				"tgbup run at " + clockList(j.Times) + " (a start missed while the computer is off is not made up)."}},
 			Check: []howLine{{Text: "The lines cron has for you:", Cmd: "crontab -l"},
 				{Text: "The last runs' output:", Cmd: "tail -n 50 " + q(j.LogPath)}},
-			Change: []howLine{{Text: "Add it with crontab -e, or in the NAS's task scheduler as a daily task at these times:", Cmd: j.cronLine()},
-				{Text: "Turn it off: remove the line with crontab -e."}},
+			Change: []howLine{{Text: "Add it with crontab -e:", Cmd: j.cronLine()},
+				{Text: "Or, in a NAS's task scheduler (Synology: Control Panel → Task Scheduler → User-defined script), " +
+					"a daily task at " + clockList(j.Times) + " running:", Cmd: j.taskCommand()},
+				{Text: "Turn it off: remove the line with crontab -e, or the task."}},
 		}
-	case j.Kind == kindLaunchd:
+	case j.isLaunchd():
 		target := "gui/$(id -u)/" + j.Label
 		out["schedule"] = &howTo{
 			What: []howLine{{Text: "A launchd agent, " + j.Label + ", in " + tildePath(j.path(), home) + " starts " +

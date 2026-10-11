@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"html"
@@ -9,9 +10,11 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +46,7 @@ type schedJob struct {
 	Exe       string
 	AgentsDir string // launchd
 	UnitDir   string // systemd: ~/.config/systemd/user
+	StampPath string // systemd: when the timer last started the job
 	LogPath   string
 	UID       int
 	User      string // systemd: whose lingering keeps the timer running logged out
@@ -51,6 +55,10 @@ type schedJob struct {
 	launchctl func(args ...string) ([]byte, error)
 	systemctl func(args ...string) ([]byte, error) // run with --user
 	loginctl  func(args ...string) ([]byte, error)
+	crontab   func(args ...string) ([]byte, error)
+	// noBus: systemd runs here, but its user manager is out of reach from
+	// this session.
+	noBus bool
 	// retryDelay is the pause between bootstrap attempts while launchd is still
 	// tearing down the job that was just booted out.
 	retryDelay time.Duration
@@ -58,6 +66,8 @@ type schedJob struct {
 
 // manual: nothing can be installed here; the person adds cronLine.
 func (j schedJob) manual() bool { return j.Kind == kindCron }
+
+func (j schedJob) isLaunchd() bool { return j.Kind == "" || j.Kind == kindLaunchd }
 
 func (j schedJob) path() string {
 	switch j.Kind {
@@ -114,6 +124,10 @@ func (j schedJob) install() error {
 	if err := os.MkdirAll(j.AgentsDir, 0o755); err != nil {
 		return err
 	}
+	if j.legacyInstalled() && j.legacy().state().Running {
+		// Removing the old job now would stop the run it is making.
+		return errors.New("a run is in progress: install the schedule again when it has finished")
+	}
 	if err := os.WriteFile(j.path(), j.plist(), 0o644); err != nil {
 		return err
 	}
@@ -139,7 +153,7 @@ func (j schedJob) uninstall() error {
 	case kindSystemd:
 		return j.systemdUninstall()
 	case kindCron:
-		return errors.New("remove the tgbup line with crontab -e")
+		return errors.New("cron starts it: remove the line with " + j.Exe + " in it, with crontab -e")
 	}
 	_, _ = j.launchctl("bootout", j.target())
 	if err := os.Remove(j.path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -156,7 +170,7 @@ func (j schedJob) legacy() schedJob {
 
 // legacyInstalled: a job under the old name is still there.
 func (j schedJob) legacyInstalled() bool {
-	if j.Kind != "" && j.Kind != kindLaunchd {
+	if !j.isLaunchd() {
 		return false
 	}
 	_, err := os.Stat(j.legacy().path())
@@ -180,6 +194,9 @@ func (j schedJob) status() string {
 	case kindSystemd:
 		return j.systemdStatus()
 	case kindCron:
+		if j.cronInstalled() {
+			return "cron starts it (crontab -l shows the line)"
+		}
 		return "no launchd or systemd here: add this line with crontab -e:\n" + j.cronLine()
 	}
 	if _, err := os.Stat(j.path()); err != nil {
@@ -211,7 +228,6 @@ func jobEnv(getenv func(string) string) map[string]string {
 	return out
 }
 
-// newSchedJob describes the job for this tgbup binary.
 // clockList is "00:30, 06:30".
 func clockList(times []config.Clock) string {
 	out := make([]string, len(times))
@@ -221,6 +237,8 @@ func clockList(times []config.Clock) string {
 	return strings.Join(out, ", ")
 }
 
+// newSchedJob describes the job for this tgbup binary and this computer's
+// scheduler.
 func newSchedJob(st setup, env Env) (schedJob, error) {
 	p := st.paths
 	exe, err := os.Executable()
@@ -236,22 +254,53 @@ func newSchedJob(st setup, env Env) (schedJob, error) {
 		retryDelay: time.Second,
 		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
 		systemctl: func(args ...string) ([]byte, error) {
-			return exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
+			return runShort("systemctl", append([]string{"--user"}, args...)...)
 		},
-		loginctl: func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() },
+		loginctl: func(args ...string) ([]byte, error) { return runShort("loginctl", args...) },
+		crontab:  func(args ...string) ([]byte, error) { return runShort("crontab", args...) },
 	}
 	if runtime.GOOS != "darwin" {
-		j.Kind, j.UnitDir, j.User = kindCron, systemdUnitDir(p.Home, env.Getenv), env.Getenv("USER")
-		// A user manager answers when systemd runs this login (most Linux, NAS
-		// systems with systemd); without it the person adds a cron line.
-		if _, err := j.systemctl("show-environment"); err == nil {
+		j.Kind, j.UnitDir, j.User = kindCron, systemdUnitDir(p.Home, env.Getenv), currentUser()
+		j.StampPath = filepath.Join(xdgData(p.Home, env.Getenv), "systemd", "timers", "stamp-"+j.Label+".timer")
+		// systemd runs the machine (most Linux, NAS systems with it): a user
+		// timer. Its user manager may be out of reach from this session (su,
+		// sudo -u, tmux after logout); then installing says how to reach it,
+		// rather than offering cron next to a timer that may be there.
+		if isDir("/run/systemd/system") {
 			j.Kind = kindSystemd
+			if _, err := j.systemctl("show-environment"); err != nil {
+				j.noBus = true
+			}
 		}
 	}
 	return j, nil
 }
 
-// jobState is what launchd reports about the job.
+func xdgData(home string, getenv func(string) string) string {
+	if x := getenv("XDG_DATA_HOME"); x != "" {
+		return x
+	}
+	return filepath.Join(home, ".local", "share")
+}
+
+// runShort runs a scheduler tool with a deadline: a user manager that hangs
+// must not hold up every page of tgbup serve.
+func runShort(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+// currentUser names the account for loginctl; its uid when the name is
+// unknown (loginctl takes either), never "" (which would mean root).
+func currentUser() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return strconv.Itoa(os.Getuid())
+}
+
+// jobState is what the scheduler reports about the job.
 type jobState struct {
 	Loaded  bool
 	Running bool
@@ -264,7 +313,7 @@ func (j schedJob) state() jobState {
 	case kindSystemd:
 		return j.systemdState()
 	case kindCron:
-		return jobState{}
+		return jobState{Loaded: j.cronInstalled()}
 	}
 	out, err := j.launchctl("print", j.target())
 	if err != nil {
@@ -293,7 +342,7 @@ func (j schedJob) installedHere() bool {
 		b, err := os.ReadFile(j.servicePath())
 		return err == nil && bytes.Contains(b, []byte("ExecStart="+unitQuote(j.Exe)+" run\n"))
 	case kindCron:
-		return false
+		return j.cronInstalled()
 	}
 	b, err := os.ReadFile(j.path())
 	return err == nil && bytes.Contains(b, []byte("<string>"+html.EscapeString(j.Exe)+"</string>"))
@@ -336,9 +385,14 @@ func cmdSchedule(args []string, env Env) int {
 		return 1
 	}
 	if j.manual() {
-		fmt.Fprintln(env.Stdout, j.status())
-		if args[0] == "status" {
+		switch args[0] {
+		case "status":
+			fmt.Fprintln(env.Stdout, j.status())
 			return 0
+		case "uninstall":
+			fmt.Fprintln(env.Stderr, "tgbup schedule:", j.uninstall())
+		default:
+			fmt.Fprintln(env.Stdout, j.status())
 		}
 		return 1
 	}

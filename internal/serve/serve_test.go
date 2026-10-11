@@ -31,7 +31,10 @@ func (f *fakeBackend) RestoreCopy(_ context.Context, place int, id string) (Snap
 	return Snapshot{ID: id, Restored: true, Copy: "/x/abcd1234"}, nil
 }
 
-func (f *fakeBackend) OpenCopy(place int, id string) error { f.openedCopies = append(f.openedCopies, id); return nil }
+func (f *fakeBackend) OpenCopy(place int, id string) error {
+	f.openedCopies = append(f.openedCopies, id)
+	return nil
+}
 
 type fakeBackend struct {
 	takeouts []bool

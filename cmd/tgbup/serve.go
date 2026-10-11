@@ -115,7 +115,7 @@ type serveBackend struct {
 	loginMu   sync.Mutex
 	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
 	log       *slog.Logger                                           // nil in tests
-	newJob    func(setup) (schedJob, error)                        // tests replace launchctl
+	newJob    func(setup) (schedJob, error)                          // tests replace launchctl
 	disk      struct {
 		dir, warning string
 		at           time.Time
@@ -220,11 +220,12 @@ func scheduleStatus(st setup, env Env, now time.Time) serve.Schedule {
 	times := st.cfg.Schedule.Clocks()
 	sc := serve.Schedule{Times: strings.Split(clockList(times), ", "), Next: nextRun(now, times)}
 	if j, err := newSchedJob(st, env); err == nil {
-		if j.manual() {
-			sc.Note = "Started by cron: Settings → Automatic updates has the line to add"
+		if j.manual() && !j.cronInstalled() {
+			sc.Note = "No launchd or systemd here: Settings → Automatic updates has the line to add with crontab -e"
 			return sc
 		}
-		sc.Installed = j.installedHere() && j.state().Loaded
+		// A job under the old name still runs until it is installed again.
+		sc.Installed = j.installedHere() && j.state().Loaded || j.legacyInstalled()
 	}
 	return sc
 }

@@ -374,7 +374,7 @@ func (b *serveBackend) installSchedule(st setup) error {
 	return nil
 }
 
-// launchd is the scheduled job; tests give one with a fake launchctl.
+// job is the scheduled job; tests give one with a fake launchctl.
 func (b *serveBackend) job(st setup) (schedJob, error) {
 	if b.newJob != nil {
 		return b.newJob(st)

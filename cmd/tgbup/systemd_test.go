@@ -131,3 +131,88 @@ func TestCronLine(t *testing.T) {
 		t.Error("a cron job installs itself")
 	}
 }
+
+// Out of reach of the user's systemd (su, sudo -u), installing says how to
+// reach it, and a timer installed earlier counts as on.
+func TestSystemdWithoutTheUserBus(t *testing.T) {
+	j, f := testSystemd(t)
+	if err := j.install(); err != nil {
+		t.Fatal(err)
+	}
+	j.noBus = true
+	f.calls = nil
+	for name, err := range map[string]error{"install": j.install(), "uninstall": j.uninstall()} {
+		if err == nil || !strings.Contains(err.Error(), "XDG_RUNTIME_DIR=/run/user/") {
+			t.Errorf("%s without the bus: %v", name, err)
+		}
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("systemctl was asked without a bus: %q", f.calls)
+	}
+	if s := j.state(); !s.Loaded {
+		t.Error("a timer installed earlier does not count as on")
+	}
+}
+
+// Turning the timer off removes its last-start stamp, or turning it on later
+// would start a run at once to make up for the time it was off.
+func TestSystemdUninstallForgetsTheLastStart(t *testing.T) {
+	j, _ := testSystemd(t)
+	j.StampPath = filepath.Join(t.TempDir(), "stamp-tgbup.timer")
+	if err := os.WriteFile(j.StampPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.uninstall(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j.StampPath); !os.IsNotExist(err) {
+		t.Error("the stamp stays")
+	}
+}
+
+func TestUnitQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/usr/bin/tgbup":        "/usr/bin/tgbup",
+		"/opt/My Apps/tgbup":    `"/opt/My Apps/tgbup"`,
+		`/x/a"b\c`:              `"/x/a\"b\\c"`,
+		"/home/$USER/50%/tgbup": "/home/$$USER/50%%/tgbup",
+	} {
+		if got := unitQuote(in); got != want {
+			t.Errorf("unitQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+	j, _ := testSystemd(t)
+	j.Env = map[string]string{"TGBUP_CONFIG": "/a\nExecStartPre=/bin/evil", "TGBUP_SECRETS": "/s.env"}
+	if svc := string(j.serviceUnit()); strings.Contains(svc, "evil") || !strings.Contains(svc, "TGBUP_SECRETS=/s.env") {
+		t.Errorf("a value with a new line reached the unit:\n%s", svc)
+	}
+}
+
+// cron reads % as a new line: escaped in the crontab line, not in the
+// command for a NAS's task scheduler. A crontab with the line counts as set.
+func TestCronEscapesPercentAndSeesItsLine(t *testing.T) {
+	j, _ := testSystemd(t)
+	j.Kind, j.Exe = kindCron, "/opt/100%/tgbup"
+	if line := j.cronLine(); !strings.Contains(line, `'/opt/100\%/tgbup' run`) {
+		t.Errorf("cron line: %s", line)
+	}
+	if cmd := j.taskCommand(); !strings.Contains(cmd, "'/opt/100%/tgbup' run") || strings.Contains(cmd, `\%`) || strings.Contains(cmd, "* * *") {
+		t.Errorf("task command: %s", cmd)
+	}
+	tab := ""
+	j.crontab = func(...string) ([]byte, error) { return []byte(tab), nil }
+	if j.installedHere() || j.state().Loaded {
+		t.Error("an empty crontab counts as set")
+	}
+	tab = "# " + strings.ReplaceAll(j.cronLine(), "\n", "\n# ") + "\n"
+	if j.installedHere() {
+		t.Error("a commented-out line counts as set")
+	}
+	tab = j.cronLine() + "\n"
+	if !j.installedHere() || !j.state().Loaded || !strings.Contains(j.status(), "cron starts it") {
+		t.Errorf("the crontab line is not seen: %s", j.status())
+	}
+}

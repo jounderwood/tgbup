@@ -25,14 +25,21 @@ func systemdUnitDir(home string, getenv func(string) string) string {
 func (j schedJob) servicePath() string { return filepath.Join(j.UnitDir, j.Label+".service") }
 func (j schedJob) timerPath() string   { return filepath.Join(j.UnitDir, j.Label+".timer") }
 
-// unitQuote makes s one word of a unit file line: quoted when it has spaces
-// or quotes, and % (systemd's specifiers) doubled always.
+// unitQuote makes s one word of a unit file line: % (specifiers) and $
+// (variables) doubled always, quoted when it has spaces or quotes.
 func unitQuote(s string) string {
-	s = strings.ReplaceAll(s, "%", "%%")
+	s = strings.NewReplacer("%", "%%", "$", "$$").Replace(s)
 	if !strings.ContainsAny(s, " \t\"'\\") {
 		return s
 	}
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// errNoBus: systemd runs here, but this session cannot reach the person's
+// systemd: su, sudo -u, a tmux or screen left from an earlier login.
+func (j schedJob) errNoBus() error {
+	return fmt.Errorf("this session cannot reach your systemd (su, sudo -u or a terminal left from an earlier login?): "+
+		"log in to this account directly, or run with XDG_RUNTIME_DIR=/run/user/%d", j.UID)
 }
 
 // serviceUnit runs tgbup run once, its output appended to run.log.
@@ -41,6 +48,9 @@ func (j schedJob) serviceUnit() []byte {
 	b.WriteString("[Unit]\nDescription=tgbup run: archive Telegram and back it up\n\n[Service]\nType=oneshot\n")
 	fmt.Fprintf(&b, "ExecStart=%s run\n", unitQuote(j.Exe))
 	for _, k := range slices.Sorted(maps.Keys(j.Env)) {
+		if strings.ContainsAny(j.Env[k], "\n\r") {
+			continue // no path has one; it would start another line of the unit
+		}
 		fmt.Fprintf(&b, "Environment=%s\n", unitQuote(k+"="+j.Env[k]))
 	}
 	log := strings.ReplaceAll(j.LogPath, "%", "%%")
@@ -61,6 +71,9 @@ func (j schedJob) timerUnit() []byte {
 }
 
 func (j schedJob) systemdInstall() error {
+	if j.noBus {
+		return j.errNoBus()
+	}
 	if err := os.MkdirAll(filepath.Dir(j.LogPath), 0o700); err != nil {
 		return err
 	}
@@ -83,8 +96,16 @@ func (j schedJob) systemdInstall() error {
 }
 
 func (j schedJob) systemdUninstall() error {
+	if j.noBus {
+		return j.errNoBus()
+	}
 	_, _ = j.systemctl("disable", "--now", j.Label+".timer")
-	for _, p := range []string{j.timerPath(), j.servicePath()} {
+	// The stamp of the last start: left, a timer installed again later would
+	// start at once to make up for the time it was off.
+	for _, p := range []string{j.timerPath(), j.servicePath(), j.StampPath} {
+		if p == "" {
+			continue
+		}
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -96,6 +117,11 @@ func (j schedJob) systemdUninstall() error {
 // systemdState reads the timer (enabled and waiting: Loaded) and the
 // service (Running, the last run's exit status).
 func (j schedJob) systemdState() jobState {
+	if j.noBus {
+		// Not asked: the timer installed earlier from a login is taken to be on.
+		_, err := os.Stat(j.timerPath())
+		return jobState{Loaded: err == nil}
+	}
 	out, err := j.systemctl("show", j.Label+".timer", j.Label+".service",
 		"--property=ActiveState,ExecMainStatus,ExecMainExitTimestampMonotonic")
 	if err != nil {
@@ -154,21 +180,51 @@ func (j schedJob) systemdStatus() string {
 	return s
 }
 
+// taskCommand is the command that runs tgbup the way the schedule would, for
+// a NAS's task scheduler, which takes the times in its own form.
+func (j schedJob) taskCommand() string {
+	env := ""
+	for _, k := range slices.Sorted(maps.Keys(j.Env)) {
+		env += k + "=" + render.ShellQuote(j.Env[k]) + " "
+	}
+	return fmt.Sprintf("%s%s run >> %s 2>&1", env, render.ShellQuote(j.Exe), render.ShellQuote(j.LogPath))
+}
+
 // cronLine is the crontab line that starts tgbup run at the times, one per
-// minute of the hour: cron takes one minute and a list of hours.
+// minute of the hour: cron takes one minute and a list of hours. cron reads %
+// in a command as a new line, so it is escaped.
 func (j schedJob) cronLine() string {
 	byMinute := map[int][]string{}
 	for _, t := range j.Times {
 		byMinute[t.Minute] = append(byMinute[t.Minute], fmt.Sprint(t.Hour))
 	}
-	env := ""
-	for _, k := range slices.Sorted(maps.Keys(j.Env)) {
-		env += k + "=" + render.ShellQuote(j.Env[k]) + " "
-	}
+	cmd := strings.ReplaceAll(j.taskCommand(), "%", `\%`)
 	var lines []string
 	for _, m := range slices.Sorted(maps.Keys(byMinute)) {
-		lines = append(lines, fmt.Sprintf("%d %s * * * %s%s run >> %s 2>&1", m, strings.Join(byMinute[m], ","), env,
-			render.ShellQuote(j.Exe), render.ShellQuote(j.LogPath)))
+		lines = append(lines, fmt.Sprintf("%d %s * * * %s", m, strings.Join(byMinute[m], ","), cmd))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// cronInstalled: a line of the person's crontab, not commented out, runs
+// this tgbup (written as cronLine does, or by hand).
+func (j schedJob) cronInstalled() bool {
+	if j.crontab == nil {
+		return false
+	}
+	out, err := j.crontab("-l")
+	if err != nil {
+		return false
+	}
+	escaped := strings.ReplaceAll(j.Exe, "%", `\%`)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, " run") {
+			continue
+		}
+		if strings.Contains(line, j.Exe) || strings.Contains(line, escaped) {
+			return true
+		}
+	}
+	return false
 }

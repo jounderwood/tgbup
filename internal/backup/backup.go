@@ -458,7 +458,7 @@ var addressPassword = regexp.MustCompile(`(://[^/@:\s]*):[^/@\s]*@`)
 
 // Display is a place as pages, logs and messages show it: a password inside
 // an address (rest:https://user:pass@host/) becomes ***, as restic shows it.
-func Display(repo string) string { return addressPassword.ReplaceAllString(repo, "$1:***@") }
+func Display(repo string) string     { return addressPassword.ReplaceAllString(repo, "$1:***@") }
 func (e *resticError) Unwrap() error { return e.err }
 
 func exitCode(err error) int {

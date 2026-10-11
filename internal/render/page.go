@@ -113,8 +113,8 @@ type pageInput struct {
 	Names map[int64]string
 	// Versions are the messages' versions before edits.
 	Versions map[int][]store.MessageVersion
-	Loc    *time.Location
-	Crumbs []string
+	Loc      *time.Location
+	Crumbs   []string
 }
 
 func pageName(n int) string { return "p" + strconv.Itoa(n) }
