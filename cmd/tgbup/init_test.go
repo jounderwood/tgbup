@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -254,7 +255,7 @@ func TestWatchRun(t *testing.T) {
 	}{
 		{"ok", &store.Run{OK: true}, "0", false, "the scheduled run worked"},
 		{"errors", &store.Run{OK: false, Summary: `{"backup_errors":["restic backup icloud: disk full"]}`}, "1", true, "disk full"},
-		{"no record", nil, "1", true, "Full Disk Access"},
+		{"no record", nil, "1", true, fullDiskAccessOrExit()},
 	} {
 		w, out, _ := testWizard(t, "")
 		archive := t.TempDir()
@@ -284,6 +285,15 @@ func TestWatchRun(t *testing.T) {
 			t.Errorf("%s: err=%v output:\n%s", tc.name, err, out.String())
 		}
 	}
+}
+
+// fullDiskAccessOrExit is what a failed run without a record says: on macOS
+// the hint for a denied folder, elsewhere its exit code.
+func fullDiskAccessOrExit() string {
+	if runtime.GOOS == "darwin" {
+		return "Full Disk Access"
+	}
+	return "failed with exit code 1"
 }
 
 func TestWatchRunGivesUpAsSkipped(t *testing.T) {
