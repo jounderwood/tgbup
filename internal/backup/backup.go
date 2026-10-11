@@ -499,3 +499,50 @@ func lastLines(b []byte, n int) string {
 	}
 	return strings.Join(lines, "; ")
 }
+
+// Label names a place as people know it: the cloud folders macOS keeps under
+// ~/Library by their app ("iCloud Drive › TelegramBackup"), a disk by its
+// name, Google Drive through rclone; anything else by its path, ~ for home.
+// A password inside an address is hidden (Display).
+func Label(repo, home string) string {
+	repo = Display(repo)
+	join := func(head, rest string) string {
+		parts := []string{head}
+		for _, p := range strings.Split(rest, string(filepath.Separator)) {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		return strings.Join(parts, " › ")
+	}
+	lib := filepath.Join(home, "Library")
+	if rest, ok := strings.CutPrefix(repo, filepath.Join(lib, "Mobile Documents", "com~apple~CloudDocs")+string(filepath.Separator)); ok && home != "" {
+		return join("iCloud Drive", rest)
+	}
+	if rest, ok := strings.CutPrefix(repo, filepath.Join(lib, "CloudStorage")+string(filepath.Separator)); ok && home != "" {
+		app, rest, _ := strings.Cut(rest, string(filepath.Separator))
+		name, acct, _ := strings.Cut(app, "-")
+		switch name {
+		case "GoogleDrive":
+			name = "Google Drive"
+		case "OneDrive", "Dropbox", "Box":
+		default:
+			name, acct = app, ""
+		}
+		if acct != "" {
+			name += " (" + acct + ")"
+		}
+		return join(name, rest)
+	}
+	if rest, ok := strings.CutPrefix(repo, "/Volumes/"); ok {
+		disk, rest, _ := strings.Cut(rest, "/")
+		return join("disk «"+disk+"»", rest)
+	}
+	if rest, ok := strings.CutPrefix(repo, "rclone:gdrive:"); ok {
+		return join("Google Drive (through rclone)", rest)
+	}
+	if home != "" && strings.HasPrefix(repo, home+string(filepath.Separator)) {
+		return "~" + strings.TrimPrefix(repo, home)
+	}
+	return repo
+}

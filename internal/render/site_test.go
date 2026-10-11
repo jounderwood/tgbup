@@ -356,9 +356,9 @@ func TestHistoryListsUpdatesAndSnapshots(t *testing.T) {
 		"&#43;1 message · 1 page redrawn: ../Mom/ &#43;1",
 		`<h2>2026-03-06 09:00 <span class="when">· no snapshot of its own: the next one holds it</span>`,
 		"first recorded: 5 messages, 0 files",
-		"/Volumes/My Disk/tgbup <code>3333bbbb</code>",
+		"disk «My Disk» › tgbup <code>3333bbbb</code>",
 		"tgbup restore --copy --from &#39;/Volumes/My Disk/tgbup&#39; --snapshot 3333bbbb",
-		"<s>/Volumes/My Disk/tgbup <code>1111aaaa</code></s>", "removed by retention",
+		"<s>disk «My Disk» › tgbup <code>1111aaaa</code></s>", "removed by retention",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q:\n%s", want, page)

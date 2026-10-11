@@ -57,7 +57,7 @@ function renderStatus(s) {
 
   $("backups").replaceChildren(...(s.backups || []).map((b, i) => {
     const old = isZero(b.last_success) || Date.now() - new Date(b.last_success) > 2 * 86400e3;
-    return el("li", {}, el("span", { class: old ? "bad" : "ok" }, "● "), b.repo, el("br"),
+    return el("li", { title: b.path || "" }, el("span", { class: old ? "bad" : "ok" }, "● "), b.repo, el("br"),
       el("span", { class: "muted" }, (isZero(b.last_success) ? "no snapshot yet" : "up to date " + ago(b.last_success)) + " · "),
       el("a", { href: "/snapshots#place-" + i }, "snapshots"));
   }));

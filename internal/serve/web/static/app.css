@@ -106,3 +106,5 @@ details.how li { margin: 4px 0; }
 details.how .cmd { display: flex; gap: 8px; align-items: flex-start; margin-top: 3px; }
 details.how .cmd code { flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
   white-space: pre-wrap; word-break: break-all; user-select: all; }
+label.check .note { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.place-name .path { font-weight: normal; font-size: 12px; }

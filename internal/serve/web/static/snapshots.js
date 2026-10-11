@@ -16,7 +16,8 @@ async function start() {
     return;
   }
   $("places").replaceChildren(...backups.map((b, i) => el("section", { class: "box place", id: "place-" + i },
-    el("div", { class: "place-name" }, b.repo), el("div", { id: "list-" + i, class: "muted" }, "reading the snapshots…"))));
+    el("div", { class: "place-name" }, b.repo, b.path && b.path !== b.repo ? el("span", { class: "muted path" }, " " + b.path) : null),
+    el("div", { id: "list-" + i, class: "muted" }, "reading the snapshots…"))));
   await Promise.all(backups.map((_, i) => load(i)));
   // After the lists: they push the place asked for down as they fill.
   document.getElementById(location.hash.slice(1))?.scrollIntoView();

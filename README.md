@@ -86,8 +86,11 @@ and enter the old one.
 - your own path or restic repository: a full path (`/…` or `~/…`) or a restic address (`sftp:`, `s3:`, `rclone:`…).
   Nothing else is taken — so a password pasted by mistake, say, never becomes a backup place.
 
-In Finder, mark the iCloud folder «Keep Downloaded». Backups can be turned off: the Backups step → «Keep backing up?
-n». The snapshots already made stay.
+Places are shown by the names people know: «iCloud Drive › TelegramBackup» is the folder macOS keeps at
+`~/Library/Mobile Documents/com~apple~CloudDocs/TelegramBackup`. Each choice says where the snapshots go and what to do
+for it: for iCloud Drive, right-click the folder in Finder → Keep Downloaded, and allow access to iCloud Drive when the
+first scheduled run asks. Backups can be turned off: the Backups step → «Keep backing up? n». The snapshots already
+made stay.
 
 ### Where things are
 

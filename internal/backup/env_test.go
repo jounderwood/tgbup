@@ -58,3 +58,20 @@ func TestDisplayHidesAddressPasswords(t *testing.T) {
 		t.Errorf("error shows the password: %v", err)
 	}
 }
+
+func TestLabelNamesPlacesAsPeopleKnowThem(t *testing.T) {
+	home := "/Users/me"
+	for in, want := range map[string]string{
+		"/Users/me/Library/Mobile Documents/com~apple~CloudDocs/TelegramBackup":       "iCloud Drive › TelegramBackup",
+		"/Users/me/Library/CloudStorage/GoogleDrive-me@x.com/My Drive/TelegramBackup": "Google Drive (me@x.com) › My Drive › TelegramBackup",
+		"/Users/me/Library/CloudStorage/Dropbox/TelegramBackup":                       "Dropbox › TelegramBackup",
+		"/Volumes/Backup Disk/TelegramBackup":                                         "disk «Backup Disk» › TelegramBackup",
+		"rclone:gdrive:TelegramBackup":                                                "Google Drive (through rclone) › TelegramBackup",
+		"/Users/me/TelegramBackup":                                                    "~/TelegramBackup",
+		"rest:https://u:secret@host/r":                                                "rest:https://u:***@host/r",
+	} {
+		if got := Label(in, home); got != want {
+			t.Errorf("Label(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

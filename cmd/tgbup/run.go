@@ -208,7 +208,7 @@ func (p runParts) summary(ctx context.Context, since time.Time) (notify.Summary,
 	s.ArchiveBytes = archiveSize(p.archiveDir)
 	for _, repo := range p.repos {
 		at, _ := backup.LastSuccess(ctx, p.db, repo)
-		s.LastBackup = append(s.LastBackup, notify.RepoTime{Repo: backup.Display(repo), At: at})
+		s.LastBackup = append(s.LastBackup, notify.RepoTime{Repo: backup.Label(repo, p.home), At: at})
 	}
 	return s, nil
 }

@@ -141,13 +141,14 @@ func WriteHistory(ctx context.Context, db *store.Store, opts Options) error {
 			hu.When = snap.At.In(opts.Loc).Format("2006-01-02 15:04")
 		}
 		for _, s := range u.Snapshots {
-			place := tilde(backup.Display(s.Repo), home)
+			place := backup.Label(s.Repo, home)
 			short := shortID(s.ID)
 			if !s.Partial && !s.Forgotten && !slices.Contains(hu.IDs, short) {
 				hu.IDs = append(hu.IDs, short)
 			}
 			to := SnapshotCopyDir(opts.OutDir, short)
-			hs := historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten, Restore: RestoreCommand(place, short)}
+			hs := historySnap{Place: place, ID: short, Partial: s.Partial, Gone: s.Forgotten,
+				Restore: RestoreCommand(tilde(backup.Display(s.Repo), home), short)}
 			if _, err := os.Stat(filepath.Join(to, CopyDone)); err == nil {
 				if rel, err := filepath.Rel(filepath.Join(opts.OutDir, "html"), filepath.Join(to, "html", "index.html")); err == nil {
 					hs.Open = escapePath(filepath.ToSlash(rel))

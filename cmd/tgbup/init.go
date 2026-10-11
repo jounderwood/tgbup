@@ -540,11 +540,11 @@ func (w *wizard) checkStorage(context.Context) (string, bool, error) {
 		// A folder repository shows whether it was created; remote ones are
 		// checked when used.
 		if filepath.IsAbs(r) && !strings.HasPrefix(r, "/Volumes/") && !isFile(filepath.Join(r, "config")) {
-			return tildePath(r, st.paths.Home) + " is not created yet", false, nil
+			return placeName(r, st.paths.Home) + " is not created yet", false, nil
 		}
-		names = append(names, tildePath(r, st.paths.Home))
+		names = append(names, placeName(r, st.paths.Home))
 	}
-	return strings.Join(names, "\n    "), true, nil
+	return strings.Join(names, ", "), true, nil
 }
 
 func isFile(p string) bool {
@@ -716,6 +716,8 @@ func splitRepos(repos []string, home string) (local string, others []string) {
 type storageChoice struct {
 	Label string `json:"label"`
 	Repo  string `json:"repo"` // "" asks for a path
+	// Note says where the snapshots go and what to do for it.
+	Note string `json:"note,omitempty"`
 }
 
 const repoDirName = "TelegramBackup"
@@ -726,10 +728,15 @@ func storageChoices(home, volumes string) []storageChoice {
 	var out []storageChoice
 	icloud := filepath.Join(home, "Library", "Mobile Documents", "com~apple~CloudDocs")
 	if isDir(icloud) {
-		out = append(out, storageChoice{Label: "iCloud Drive", Repo: filepath.Join(icloud, repoDirName)})
+		out = append(out, storageChoice{Label: "iCloud Drive", Repo: filepath.Join(icloud, repoDirName),
+			Note: "Into the folder " + repoDirName + " in iCloud Drive (macOS keeps iCloud Drive in ~/Library/Mobile Documents/com~apple~CloudDocs) " +
+				"and uploads it. In Finder → iCloud Drive, right-click " + repoDirName + " → Keep Downloaded, so a backup never waits for files " +
+				"to come back down. The first scheduled run asks to allow access to iCloud Drive: allow it."})
 	}
 	out = append(out, storageChoice{Label: "Google Drive, connected by rclone (sign in once in the browser; needs no Google Drive app)",
-		Repo: "rclone:gdrive:" + repoDirName})
+		Repo: "rclone:gdrive:" + repoDirName,
+		Note: "Into My Drive → " + repoDirName + ", straight over the network: tgbup fetches rclone and opens Google's sign-in once. " +
+			"rclone can then reach only the files it made itself."})
 	entries, _ := os.ReadDir(filepath.Join(home, "Library", "CloudStorage"))
 	for _, e := range entries {
 		dir := filepath.Join(home, "Library", "CloudStorage", e.Name())
@@ -743,7 +750,10 @@ func storageChoices(home, volumes string) []storageChoice {
 				dir = filepath.Join(dir, "My Drive")
 			}
 		}
-		out = append(out, storageChoice{Label: label, Repo: filepath.Join(dir, repoDirName)})
+		repo := filepath.Join(dir, repoDirName)
+		out = append(out, storageChoice{Label: label, Repo: repo,
+			Note: "Into " + backup.Label(repo, home) + ", which the app syncs. Make the folder available offline in Finder " +
+				"(right-click → Make Available Offline, or the app's own setting), so a backup never waits for downloads."})
 	}
 	vols, _ := os.ReadDir(volumes)
 	for _, e := range vols {
@@ -755,7 +765,9 @@ func storageChoices(home, volumes string) []storageChoice {
 			syscall.Access(filepath.Join(volumes, name), 2 /* W_OK */) != nil {
 			continue
 		}
-		out = append(out, storageChoice{Label: "external disk " + e.Name(), Repo: filepath.Join(volumes, e.Name(), repoDirName)})
+		out = append(out, storageChoice{Label: "external disk " + e.Name(), Repo: filepath.Join(volumes, e.Name(), repoDirName),
+			Note: "Into the folder " + repoDirName + " on the disk. While it is not connected, its backup fails and the bot says so; " +
+				"the other places go on, and it catches up when connected."})
 	}
 	return append(out, storageChoice{Label: "another folder or restic repository (sftp:, s3:, rclone:…)"})
 }
@@ -1465,9 +1477,12 @@ func (w *wizard) finish(ctx context.Context, skipped []string) {
 }
 
 // tildePath shows paths under home as ~/…, which the config also accepts.
-// placeName is a backup place as shown to people: ~ for the home folder, and
-// no password from inside an address.
-func placeName(repo, home string) string { return tildePath(backup.Display(repo), home) }
+// placeName is a backup place as people know it: «iCloud Drive › TelegramBackup»
+// (backup.Label). placePath is its path for a command: ~ for the home folder,
+// and neither shows a password from inside an address.
+func placeName(repo, home string) string { return backup.Label(repo, home) }
+
+func placePath(repo, home string) string { return tildePath(backup.Display(repo), home) }
 
 func tildePath(p, home string) string {
 	if rel, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok && home != "" {

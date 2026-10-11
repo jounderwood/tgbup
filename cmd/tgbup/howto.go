@@ -113,11 +113,11 @@ func howItWorks(ctx context.Context, st setup, env Env) map[string]*howTo {
 			}
 		}
 		bk.Check = append(bk.Check, howLine{Text: "The snapshots in " + placeName(p, home) + ":",
-			Cmd: prefix + render.ShellQuote(restic) + " -r " + render.ShellQuote(placeName(p, home)) + " snapshots --tag tgbup"})
+			Cmd: prefix + render.ShellQuote(restic) + " -r " + render.ShellQuote(placePath(p, home)) + " snapshots --tag tgbup"})
 	}
 	if len(places) > 0 {
 		bk.Check = append(bk.Check, howLine{Text: "That the data reads back (a part of it):",
-			Cmd: pw + render.ShellQuote(restic) + " -r " + render.ShellQuote(placeName(places[0], home)) + " check --read-data-subset=5%"})
+			Cmd: pw + render.ShellQuote(restic) + " -r " + render.ShellQuote(placePath(places[0], home)) + " check --read-data-subset=5%"})
 	}
 	if slicesHasPrefix(places, "rclone:") {
 		rclone, _ := deps.NewFinder(st.paths.StateDir, st.cfg.Deps.Rclone).Find(deps.Rclone)
