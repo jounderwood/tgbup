@@ -37,6 +37,15 @@ type Syncer struct {
 	// chats: older edits, reactions and deletions, a round at a time. 0: the
 	// default; negative: off.
 	AuditPages int
+	// Feeds reads Telegram's change feeds (see feed); nil: they are not
+	// read, only where a channel's stands is noted.
+	Feeds tgclient.Feeds
+	// FeedRequests caps the requests the change feeds take in a run, over
+	// all of them; the rest waits for the next run. 0: the default;
+	// negative: the feeds are not read.
+	FeedRequests int
+	// FeedProgress, if set, gets the feeds read so far and their number.
+	FeedProgress func(done, total int)
 }
 
 const (
@@ -60,6 +69,13 @@ type Report struct {
 
 func (r Report) OK() bool { return len(r.Failed) == 0 && r.AuthErr == nil }
 
+func (r *Report) count(st syncStats) {
+	r.NewMessages += st.New
+	r.Edited += st.Edited
+	r.Updated += st.Updated
+	r.Deleted += st.Deleted
+}
+
 func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs map[int64]bool) Report {
 	r := Report{Failed: map[int64]error{}}
 	deadline := s.Now().Add(s.Budget)
@@ -74,6 +90,7 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 	if err := s.markMissing(ctx, known, &r); err != nil {
 		r.Failed[0] = fmt.Errorf("mark missing chats: %w", err)
 	}
+	s.feed(ctx, targets, deadline, &r)
 
 	troubled := map[int64]bool{} // failed, deferred or gone this run: not audited
 	for _, t := range targets {
@@ -85,10 +102,13 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 		if err != nil {
 			troubled[t.Chat.ID] = true
 		}
-		r.NewMessages += st.New
-		r.Edited += st.Edited
-		r.Updated += st.Updated
-		r.Deleted += st.Deleted
+		if st.Pts > 0 {
+			// The channel's feed is followed from here on, if it was not.
+			if err := s.Store.StartFeed(ctx, store.Feed{Box: t.Chat.ID, Pts: st.Pts}); err != nil {
+				s.Log.Warn("change feed", "chat", t.Chat.ID, "err", err)
+			}
+		}
+		r.count(st)
 		s.progress(t.Chat, st.New, true)
 		if err == nil {
 			r.Chats++
@@ -192,8 +212,8 @@ func (s *Syncer) auditChat(ctx context.Context, t tgclient.Target, a store.Audit
 			if a.BeforeID == 0 {
 				hi = math.MaxInt32 // it showed nothing at all: a cleared history
 			}
-			n, err := s.confirmGone(ctx, t, nil, 0, hi, spend)
-			r.Deleted += n
+			st, err := s.confirmGone(ctx, t, nil, 0, hi, spend)
+			r.count(st)
 			if errors.Is(err, errBudget) {
 				return nil // asked again at the next round's end
 			}
@@ -214,8 +234,8 @@ func (s *Syncer) auditChat(ctx context.Context, t tgclient.Target, a store.Audit
 		if a.BeforeID == 0 {
 			hi = math.MaxInt32
 		}
-		n, err := s.confirmGone(ctx, t, page.Messages, minID(page.Messages), hi, spend)
-		r.Deleted += n
+		gone, err := s.confirmGone(ctx, t, page.Messages, minID(page.Messages), hi, spend)
+		r.count(gone)
 		if err != nil && !errors.Is(err, errBudget) {
 			return err
 		}
@@ -278,6 +298,7 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 			if err != nil {
 				return total, err
 			}
+			total.note(page.Pts)
 			if len(page.Messages) == 0 {
 				break
 			}
@@ -302,6 +323,7 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		st, err := s.refresh(ctx, t, &cur)
 		total.SaveStats = add(total.SaveStats, st.SaveStats)
 		total.Deleted += st.Deleted
+		total.note(st.Pts)
 		if err != nil {
 			s.Log.Warn("rereading recent messages stopped; the next run tries again", "chat", t.Chat.ID, "err", err)
 		}
@@ -312,6 +334,7 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		if err != nil {
 			return total, err
 		}
+		total.note(page.Pts)
 		if len(page.Messages) == 0 {
 			cur.BackfillDone = true
 			if err := s.Store.SaveBatch(ctx, store.Batch{ChatID: t.Chat.ID, Cursor: cur}); err != nil {
@@ -349,6 +372,14 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 type syncStats struct {
 	store.SaveStats
 	Deleted int
+	// Pts: where the channel's change feed stood at the first page read.
+	Pts int
+}
+
+func (st *syncStats) note(pts int) {
+	if st.Pts == 0 {
+		st.Pts = pts
+	}
 }
 
 // refresh reads again the chat's latest messages, back to RefreshWindow and
@@ -368,6 +399,7 @@ func (s *Syncer) refresh(ctx context.Context, t tgclient.Target, cur *store.Curs
 		if err != nil || len(page.Messages) == 0 {
 			return total, err
 		}
+		total.note(page.Pts)
 		cur.NewestID = max(cur.NewestID, maxID(page.Messages))
 		st, err := s.save(ctx, t, page, *cur)
 		total.SaveStats = add(total.SaveStats, st)
@@ -381,8 +413,9 @@ func (s *Syncer) refresh(ctx context.Context, t tgclient.Target, cur *store.Curs
 		if before == 0 {
 			hi = math.MaxInt32
 		}
-		n, err := s.markDeleted(ctx, t, page, minID(page.Messages), hi)
-		total.Deleted += n
+		gone, err := s.markDeleted(ctx, t, page, minID(page.Messages), hi)
+		total.SaveStats = add(total.SaveStats, gone.SaveStats)
+		total.Deleted += gone.Deleted
 		if err != nil || len(page.Messages) < s.PageSize || oldestDate(page.Messages) < since {
 			return total, err
 		}
@@ -393,18 +426,16 @@ func (s *Syncer) refresh(ctx context.Context, t tgclient.Target, cur *store.Curs
 
 // markDeleted marks the archived messages with ids from lo to hi that the
 // page lacks, once Telegram confirms each is gone.
-func (s *Syncer) markDeleted(ctx context.Context, t tgclient.Target, page tgclient.Page, lo, hi int) (int, error) {
+func (s *Syncer) markDeleted(ctx context.Context, t tgclient.Target, page tgclient.Page, lo, hi int) (syncStats, error) {
 	return s.confirmGone(ctx, t, page.Messages, lo, hi, func() bool { return true })
 }
 
-// confirmGone marks the archived messages with ids from lo to hi that got
-// lacks, once Telegram confirms each is gone: asked by id, it gives back
-// nothing or an empty message. One it still gives is left alone. spend is
-// asked before each request; false stops with errBudget.
-func (s *Syncer) confirmGone(ctx context.Context, t tgclient.Target, got []tg.MessageClass, lo, hi int, spend func() bool) (int, error) {
+// confirmGone reads again by id the archived messages with ids from lo to
+// hi that got lacks (see recheck).
+func (s *Syncer) confirmGone(ctx context.Context, t tgclient.Target, got []tg.MessageClass, lo, hi int, spend func() bool) (syncStats, error) {
 	archived, err := s.Store.ArchivedIDs(ctx, t.Chat.ID, lo, hi)
 	if err != nil || len(archived) == 0 {
-		return 0, err
+		return syncStats{}, err
 	}
 	seen := map[int]bool{}
 	for _, m := range got {
@@ -418,21 +449,45 @@ func (s *Syncer) confirmGone(ctx context.Context, t tgclient.Target, got []tg.Me
 			missing = append(missing, id)
 		}
 	}
-	marked := 0
-	for len(missing) > 0 {
+	return s.recheck(ctx, t, missing, spend)
+}
+
+// recheck reads archived messages again by id, up to 100 a request: each
+// one Telegram gives is saved as it is now; one it gives back empty, or not
+// at all, is gone, and marked so. spend is asked before each request; false
+// stops with errBudget.
+func (s *Syncer) recheck(ctx context.Context, t tgclient.Target, ids []int, spend func() bool) (syncStats, error) {
+	var total syncStats
+	for len(ids) > 0 {
 		if !spend() {
-			return marked, errBudget
+			return total, errBudget
 		}
-		batch := missing[:min(len(missing), 100)]
-		missing = missing[len(batch):]
+		batch := ids[:min(len(ids), 100)]
+		ids = ids[len(batch):]
 		res, err := s.TG.Messages(ctx, t.Peer, batch)
 		if err != nil {
-			return marked, err
+			return total, err
 		}
+		// messages.getMessages takes no chat: one given for another chat
+		// (an archive of another account) is neither saved nor gone.
 		there := map[int]bool{}
-		for _, m := range res.Messages {
-			if _, empty := m.(*tg.MessageEmpty); !empty {
-				there[m.GetID()] = true
+		res.Messages = slices.DeleteFunc(res.Messages, func(m tg.MessageClass) bool {
+			if _, empty := m.(*tg.MessageEmpty); empty || !slices.Contains(batch, m.GetID()) {
+				return true
+			}
+			there[m.GetID()] = true
+			chat, ok := chatOf(m)
+			return !ok || chat != t.Chat.ID
+		})
+		if len(res.Messages) > 0 {
+			cur, _, err := s.Store.GetCursor(ctx, t.Chat.ID)
+			if err != nil {
+				return total, err
+			}
+			st, err := s.save(ctx, t, res, cur)
+			total.SaveStats = add(total.SaveStats, st)
+			if err != nil {
+				return total, err
 			}
 		}
 		var gone []int
@@ -442,12 +497,12 @@ func (s *Syncer) confirmGone(ctx context.Context, t tgclient.Target, got []tg.Me
 			}
 		}
 		n, err := s.Store.MarkDeleted(ctx, t.Chat.ID, gone, s.Now().Unix())
-		marked += n
+		total.Deleted += n
 		if err != nil {
-			return marked, err
+			return total, err
 		}
 	}
-	return marked, nil
+	return total, nil
 }
 
 func add(a, b store.SaveStats) store.SaveStats {

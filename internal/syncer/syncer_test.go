@@ -1,6 +1,7 @@
 package syncer_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -36,11 +37,34 @@ type fakeTG struct {
 	// brokenAfter makes HistoryAfter return nothing, like a server that
 	// interprets the forward-paging parameters differently.
 	brokenAfter bool
+	// feeds are Telegram's change feeds: box 0 is the account's own, any
+	// other a channel's; an event's pts is feedBase + its place + 1.
+	feeds     map[int64][]feedEvent
+	feedPage  int                      // events a page; 0: all
+	tooLong   map[int64]bool           // the next read of the box: Telegram lost track
+	lost      map[int64]bool           // … and does not say where the feed stands
+	feedErr   map[int64]error          // reads of the box fail
+	feedReads map[int64][]int          // the pts each read of the box started from
+	editDates map[int64]map[int]int    // edited by editLater: Telegram's edit time
+	reactions map[int64]map[int]string // chat → message → its reaction
+	byIDErr   map[int64]error          // Messages for the chat fails
+	clock     int
 }
+
+type feedEvent struct {
+	edited  tg.MessageClass
+	chat    int64
+	touched []int
+	deleted []int
+}
+
+const feedBase = 100
 
 func newFake() *fakeTG {
 	return &fakeTG{ids: map[int64][]int{}, empty: map[int64]map[int]bool{}, errs: map[int64]error{}, edits: map[int64]map[int]string{},
-		failAfter: map[int64]int{}, calls: map[int64]int{}, pinned: map[int64][]int{}, topics: map[int64][]tgclient.Topic{}, replyTop: map[int]int{}}
+		failAfter: map[int64]int{}, calls: map[int64]int{}, pinned: map[int64][]int{}, topics: map[int64][]tgclient.Topic{}, replyTop: map[int]int{},
+		feeds: map[int64][]feedEvent{}, tooLong: map[int64]bool{}, lost: map[int64]bool{}, feedErr: map[int64]error{}, feedReads: map[int64][]int{},
+		editDates: map[int64]map[int]int{}, reactions: map[int64]map[int]string{}, byIDErr: map[int64]error{}}
 }
 
 func (f *fakeTG) add(chat int64, from, to int) {
@@ -55,10 +79,13 @@ func (f *fakeTG) message(chat int64, id int) tg.MessageClass {
 	if f.empty[chat][id] {
 		return &tg.MessageEmpty{ID: id}
 	}
-	m := &tg.Message{ID: id, PeerID: &tg.PeerChannel{ChannelID: -chat - 1000000000000}, Date: 1700000000 + id, Message: "m"}
+	m := &tg.Message{ID: id, PeerID: peerOf(chat), Date: 1700000000 + id, Message: "m"}
 	if text, ok := f.edits[chat][id]; ok {
 		m.Message = text
-		m.SetEditDate(1700009999)
+		m.SetEditDate(cmp.Or(f.editDates[chat][id], 1700009999))
+	}
+	if r, ok := f.reactions[chat][id]; ok {
+		m.SetReactions(tg.MessageReactions{Results: []tg.ReactionCount{{Reaction: &tg.ReactionEmoji{Emoticon: r}, Count: 1}}})
 	}
 	m.SetFromID(&tg.PeerUser{UserID: 5})
 	if top, ok := f.replyTop[id]; ok {
@@ -67,6 +94,119 @@ func (f *fakeTG) message(chat int64, id int) tg.MessageClass {
 		m.SetReplyTo(h)
 	}
 	return m
+}
+
+func isChannel(chat int64) bool { return chat < -1000000000000 }
+
+func peerOf(chat int64) tg.PeerClass {
+	switch {
+	case isChannel(chat):
+		return &tg.PeerChannel{ChannelID: -chat - 1000000000000}
+	case chat < 0:
+		return &tg.PeerChat{ChatID: -chat}
+	}
+	return &tg.PeerUser{UserID: chat}
+}
+
+// box is the feed a chat's changes go to.
+func box(chat int64) int64 {
+	if isChannel(chat) {
+		return chat
+	}
+	return 0
+}
+
+func (f *fakeTG) ptsOf(box int64) int { return feedBase + len(f.feeds[box]) }
+
+// editLater edits a message, as in Telegram, and tells its feed the message
+// as it is after the edit.
+func (f *fakeTG) editLater(chat int64, id int, text string) {
+	f.editSilently(chat, id, text)
+	f.feeds[box(chat)] = append(f.feeds[box(chat)], feedEvent{edited: f.message(chat, id), chat: chat})
+}
+
+// editSilently edits a message without telling any feed.
+func (f *fakeTG) editSilently(chat int64, id int, text string) {
+	if f.edits[chat] == nil {
+		f.edits[chat], f.editDates[chat] = map[int]string{}, map[int]int{}
+	}
+	f.clock++
+	f.edits[chat][id], f.editDates[chat][id] = text, 1700010000+f.clock
+}
+
+// deleteLater deletes messages, as in Telegram, and tells their feed.
+func (f *fakeTG) deleteLater(chat int64, ids ...int) {
+	f.remove(chat, ids...)
+	f.feeds[box(chat)] = append(f.feeds[box(chat)], feedEvent{chat: chat, deleted: ids})
+}
+
+// reactLater puts a reaction on a message and tells the feed, without the
+// message.
+func (f *fakeTG) reactLater(chat int64, id int, emoji string) {
+	if f.reactions[chat] == nil {
+		f.reactions[chat] = map[int]string{}
+	}
+	f.reactions[chat][id] = emoji
+	f.feeds[box(chat)] = append(f.feeds[box(chat)], feedEvent{chat: chat, touched: []int{id}})
+}
+
+func (f *fakeTG) FeedStart(context.Context) (tgclient.FeedState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.feedErr[0]; err != nil {
+		return tgclient.FeedState{}, err
+	}
+	return tgclient.FeedState{Pts: f.ptsOf(0), Qts: 1, Date: 1700000000}, nil
+}
+
+func (f *fakeTG) Changes(_ context.Context, st tgclient.FeedState) (tgclient.Changes, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, err := f.changes(0, st.Pts)
+	c.State.Qts, c.State.Date = st.Qts, st.Date
+	return c, err
+}
+
+func (f *fakeTG) ChannelChanges(_ context.Context, peer tg.InputPeerClass, pts int) (tgclient.Changes, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.changes(key(peer), pts)
+}
+
+func (f *fakeTG) changes(box int64, pts int) (tgclient.Changes, error) {
+	f.feedReads[box] = append(f.feedReads[box], pts)
+	if err := f.feedErr[box]; err != nil {
+		return tgclient.Changes{}, err
+	}
+	if f.tooLong[box] {
+		delete(f.tooLong, box)
+		c := tgclient.Changes{TooLong: true, Final: box != 0, State: tgclient.FeedState{Pts: f.ptsOf(box)}}
+		if f.lost[box] {
+			c.State.Pts = 0
+		}
+		return c, nil
+	}
+	evs := f.feeds[box][pts-feedBase:]
+	if f.feedPage > 0 && len(evs) > f.feedPage {
+		evs = evs[:f.feedPage]
+	}
+	c := tgclient.Changes{Touched: map[int64][]int{}, Deleted: map[int64][]int{},
+		Users: []tg.UserClass{&tg.User{ID: 5, FirstName: "Ann"}}}
+	for _, e := range evs {
+		switch {
+		case e.edited != nil:
+			c.Edited = append(c.Edited, e.edited)
+		case e.touched != nil:
+			c.Touched[e.chat] = append(c.Touched[e.chat], e.touched...)
+		case box == 0:
+			c.CommonDeleted = append(c.CommonDeleted, e.deleted...)
+		default:
+			c.Deleted[e.chat] = append(c.Deleted[e.chat], e.deleted...)
+		}
+	}
+	c.State.Pts = pts + len(evs)
+	c.Final = c.State.Pts == f.ptsOf(box)
+	return c, nil
 }
 
 func (f *fakeTG) check(chat int64) error {
@@ -84,6 +224,9 @@ func (f *fakeTG) page(chat int64, ids []int) tgclient.Page {
 	p := tgclient.Page{
 		Users: []tg.UserClass{&tg.User{ID: 5, FirstName: "Ann"}},
 		Chats: []tg.ChatClass{&tg.Channel{ID: 8, Title: "Новости"}},
+	}
+	if isChannel(chat) {
+		p.Pts = f.ptsOf(chat)
 	}
 	for _, id := range ids {
 		p.Messages = append(p.Messages, f.message(chat, id))
@@ -141,19 +284,30 @@ func (f *fakeTG) Message(context.Context, tg.InputPeerClass, int) (tg.MessageCla
 }
 
 // Messages gives the ones by id that the chat still has; a deleted one comes
-// back empty, as Telegram does.
+// back empty, as Telegram does. Outside channels, ids are the account's, and
+// Telegram looks them up in any private chat or basic group.
 func (f *fakeTG) Messages(_ context.Context, peer tg.InputPeerClass, ids []int) (tgclient.Page, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	chat := key(peer)
 	f.byID++
+	if err := f.byIDErr[chat]; err != nil {
+		return tgclient.Page{}, err
+	}
 	var out tgclient.Page
+next:
 	for _, id := range ids {
 		if slices.Contains(f.ids[chat], id) {
 			out.Messages = append(out.Messages, f.message(chat, id))
-		} else {
-			out.Messages = append(out.Messages, &tg.MessageEmpty{ID: id})
+			continue
 		}
+		for other, has := range f.ids {
+			if !isChannel(chat) && !isChannel(other) && slices.Contains(has, id) {
+				out.Messages = append(out.Messages, f.message(other, id))
+				continue next
+			}
+		}
+		out.Messages = append(out.Messages, &tg.MessageEmpty{ID: id})
 	}
 	return out, nil
 }
@@ -170,6 +324,14 @@ func (f *fakeTG) FileChunk(context.Context, tg.InputFileLocationClass, int64, in
 func target(n int64, typ string) tgclient.Target {
 	id := convert.ChannelID(n)
 	return tgclient.Target{Chat: store.Chat{ID: id, Type: typ, Title: "chat"}, Peer: &tg.InputPeerChannel{ChannelID: n}}
+}
+
+func privateTarget(user int64) tgclient.Target {
+	return tgclient.Target{Chat: store.Chat{ID: user, Type: store.ChatPrivate, Title: "Ann"}, Peer: &tg.InputPeerUser{UserID: user}}
+}
+
+func groupTarget(n int64) tgclient.Target {
+	return tgclient.Target{Chat: store.Chat{ID: convert.ChatID(n), Type: store.ChatGroup, Title: "group"}, Peer: &tg.InputPeerChat{ChatID: n}}
 }
 
 type env struct {
@@ -193,6 +355,7 @@ func newEnv(t *testing.T) *env {
 		TG: e.tg, Store: st, SelfID: 1, Budget: time.Hour, PageSize: 100,
 		Now: func() time.Time { return e.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		AuditPages: -1, // off, except in the tests about it
+		Feeds:      e.tg,
 	}
 	return e
 }

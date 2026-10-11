@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -295,12 +296,17 @@ func checkExport(t *testing.T, cfgPath string) {
 	}
 	defer r.Close()
 	var doc, page bool
+	var media []string
 	for _, f := range r.File {
-		doc = doc || (strings.HasPrefix(f.Name, "forum/media/") && strings.HasSuffix(f.Name, "_отчёт 2026.pdf"))
+		// The saved document has the same name and minute: either may get " (2)".
+		doc = doc || (strings.HasPrefix(f.Name, "forum/media/") && strings.Contains(f.Name, "_отчёт 2026") && strings.HasSuffix(f.Name, ".pdf"))
 		page = page || strings.HasPrefix(f.Name, "forum/html/"+fx.Title+"/")
+		if strings.HasPrefix(f.Name, "forum/media/") {
+			media = append(media, f.Name)
+		}
 	}
 	if !doc || !page {
-		t.Errorf("export zip: document %v, forum pages %v", doc, page)
+		t.Errorf("export zip: document %v, forum pages %v; media %q", doc, page, media)
 	}
 }
 
@@ -470,6 +476,12 @@ func TestEditsAndReactionsReachTheArchive(t *testing.T) {
 	if !strings.Contains(out, "1 edited") {
 		t.Errorf("the sync does not report the edit:\n%s", out)
 	}
+	// The change feeds are read first in a run: they, not the reread of the
+	// recent messages, bring the edit (in the account's own feed or in the
+	// channel's).
+	if !feedBrought(out, "edited=1") {
+		t.Errorf("the change feeds did not bring the edit:\n%s", out)
+	}
 	if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); text != "встречаемся в 7" {
 		t.Errorf("text after the edit = %q", text)
 	}
@@ -517,6 +529,9 @@ func TestDeletedMessagesStayMarked(t *testing.T) {
 	if !strings.Contains(out, "1 deleted in Telegram") {
 		t.Errorf("the sync does not report the deletion:\n%s", out)
 	}
+	if !feedBrought(out, "edited=0", "deleted=1") {
+		t.Errorf("the change feeds did not bring the deletion:\n%s", out)
+	}
 	db := openArchive(t, archive)
 	if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); text != "сейчас удалю" {
 		t.Errorf("the deleted message left the archive: %q", text)
@@ -534,5 +549,75 @@ func TestDeletedMessagesStayMarked(t *testing.T) {
 	}
 	if !marked {
 		t.Error("the page does not mark the deleted message")
+	}
+}
+
+// feedBrought: the line of a sync's log on the change feeds has each of the
+// fields (edited=1 …).
+func feedBrought(out string, fields ...string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if !strings.Contains(l, `msg="from Telegram's change feeds"`) {
+			continue
+		}
+		have := strings.Fields(l)
+		if !slices.ContainsFunc(fields, func(f string) bool { return !slices.Contains(have, f) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// The account's own change feed covers private chats (Saved Messages here)
+// and basic groups: an edit and a deletion arrive through it, though its
+// deletions do not say their chat.
+func TestOwnFeedBringsEditsAndDeletions(t *testing.T) {
+	cfgPath, archive := newArchive(t)
+	group, self := &tg.InputPeerChat{ChatID: fx.GroupID}, &tg.InputPeerSelf{}
+	var edit, del, saved int
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		var err error
+		if edit, err = testenv.SendText(ctx, raw, group, "в группе: до правки", nil, 0); err != nil {
+			return err
+		}
+		if del, err = testenv.SendText(ctx, raw, group, "в группе: удалю", nil, 0); err != nil {
+			return err
+		}
+		saved, err = testenv.SendText(ctx, raw, self, "себе: до правки", nil, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runSync(t, cfgPath)
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		for _, x := range []struct {
+			peer tg.InputPeerClass
+			id   int
+			text string
+		}{{group, edit, "в группе: после правки"}, {self, saved, "себе: после правки"}} {
+			if _, err := raw.MessagesEditMessage(ctx, &tg.MessagesEditMessageRequest{Peer: x.peer, ID: x.id, Message: x.text}); err != nil {
+				return fmt.Errorf("edit: %w", err)
+			}
+		}
+		_, err := raw.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{Revoke: true, ID: []int{del}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := runSync(t, cfgPath)
+	if !feedBrought(out, "edited=2", "updated=0", "deleted=1") {
+		t.Errorf("the account's own change feed did not bring the edits and the deletion:\n%s", out)
+	}
+	db := openArchive(t, archive)
+	for _, x := range []struct {
+		chat int64
+		id   int
+		text string
+	}{{fx.GroupChatID(), edit, "в группе: после правки"}, {fx.SelfID, saved, "себе: после правки"}} {
+		if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, x.chat, x.id); text != x.text {
+			t.Errorf("message %d/%d = %q, want %q", x.chat, x.id, text, x.text)
+		}
+	}
+	if d := scalar[sql.NullInt64](t, db, `SELECT deleted_at FROM messages WHERE chat_id = ? AND id = ?`, fx.GroupChatID(), del); !d.Valid {
+		t.Error("the message deleted in the group is not marked")
 	}
 }

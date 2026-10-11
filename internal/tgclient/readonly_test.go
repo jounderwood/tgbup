@@ -74,6 +74,7 @@ func TestCallsInUseAreAllowed(t *testing.T) {
 		&tg.MessagesSearchRequest{}, &tg.MessagesGetSearchCountersRequest{}, &tg.MessagesGetRepliesRequest{},
 		&tg.MessagesGetForumTopicsRequest{}, &tg.MessagesGetMessagesRequest{}, &tg.ChannelsGetMessagesRequest{},
 		&tg.ChannelsGetFullChannelRequest{}, &tg.UsersGetUsersRequest{}, &tg.UploadGetFileRequest{},
+		&tg.UpdatesGetStateRequest{}, &tg.UpdatesGetDifferenceRequest{}, &tg.UpdatesGetChannelDifferenceRequest{},
 		&tg.AuthSendCodeRequest{}, &tg.AuthSignInRequest{}, &tg.AccountGetPasswordRequest{}, &tg.AuthCheckPasswordRequest{},
 		&tg.AccountInitTakeoutSessionRequest{}, &tg.AccountFinishTakeoutSessionRequest{},
 	}

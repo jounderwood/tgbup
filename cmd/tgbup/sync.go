@@ -147,7 +147,7 @@ func syncArchive(ctx context.Context, st setup, db *store.Store, log *slog.Logge
 		}
 		body := func(ctx context.Context, raw *tg.Client) error {
 			var err error
-			sum, err = runSync(ctx, raw, db, st.cfg, log, progress)
+			sum, err = runSync(ctx, raw, c.API(), db, st.cfg, log, progress)
 			return err
 		}
 		if takeout {
@@ -289,7 +289,9 @@ func dryRunExit(chats []stats.ChatStats, warnings []string) int {
 }
 
 // runSync reports progress to progressOut: per chat, and per media file.
-func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger, progressOut io.Writer) (syncSummary, error) {
+// raw reads the chats, within a data export (takeout) when there is one;
+// plain reads the change feeds, which are no part of an export.
+func runSync(ctx context.Context, raw, plain *tg.Client, db *store.Store, cfg config.Config, log *slog.Logger, progressOut io.Writer) (syncSummary, error) {
 	tty := isTerminal(progressOut)
 	api := tgclient.NewAPI(raw)
 	sel, err := selectChats(ctx, api, raw, cfg, log)
@@ -308,8 +310,11 @@ func runSync(ctx context.Context, raw *tg.Client, db *store.Store, cfg config.Co
 	}
 
 	s := syncer.Syncer{
-		TG: api, Store: db, SelfID: self, Budget: cfg.Sync.RunTimeBudget.D(), PageSize: 100, Now: time.Now, Log: log,
-		Progress: chatProgress(progressOut, tty),
+		TG: api, Feeds: tgclient.NewAPI(plain), Store: db, SelfID: self, Budget: cfg.Sync.RunTimeBudget.D(), PageSize: 100,
+		Now: time.Now, Log: log, Progress: chatProgress(progressOut, tty),
+	}
+	if tty {
+		s.FeedProgress = progressPrinter(progressOut, tty, "change feeds")
 	}
 	sum := syncSummary{sync: s.Run(ctx, targets, dialogIDs), unresolved: warnings, notes: sel.notes}
 	// The pages need no Telegram: messages saved before a lost session or a

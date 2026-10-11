@@ -115,11 +115,12 @@ need sudo); Settings says when it is needed. The timer needs systemd 240 or newe
 Without systemd (Synology, Alpine…) Settings gives the line to add with `crontab -e`, and the command alone for a NAS's
 task scheduler (Synology: Control Panel → Task Scheduler → User-defined script); cron does not make up missed runs.
 A run:
-1. downloads new messages and media, and reads the last 3 days of every active chat again: edits, reactions and votes
-   reach the archive, an edited message keeps the versions before (Telegram itself keeps only the latest), and a
-   message deleted in Telegram is marked «deleted in Telegram» once Telegram confirms it is gone — never removed. It
-   also reads up to 100 pages of older history again, a round at a time, so edits and deletions anywhere in the
-   archive arrive within a few runs;
+1. asks Telegram what changed since the last run — edits, reactions and deletions, however old the message — and
+   brings the archive up to date: an edited message keeps the versions before (Telegram itself keeps only the
+   latest), and a message deleted in Telegram is marked «deleted in Telegram» once Telegram confirms it is gone —
+   never removed. Then it downloads new messages and media, reads the last 3 days of every active chat again (votes,
+   reactions), and up to 100 pages of older history, a round at a time, which catches what changed while tgbup did
+   not run;
 2. redraws the archive pages that changed;
 3. snapshots the archive into every backup place — even if the download failed;
 4. tells you through the bot: errors right away and with a sound, a summary every 7 days (`notify.summary_every`).
@@ -320,7 +321,8 @@ deleting, forwarding, marking as read, reactions, joining and leaving chats, cha
 | `messages.getDialogs`, `messages.getDialogFilters` | the chat and folder list |
 | `messages.getHistory`, `messages.getReplies`, `messages.search`, `messages.getSearchCounters` | messages, their count, pins, counts by kind |
 | `messages.getForumTopics` | forum topics |
-| `messages.getMessages`, `channels.getMessages` | reread a message for a fresh file reference; confirm, up to 100 at a time, that messages missing from the history were deleted |
+| `messages.getMessages`, `channels.getMessages` | reread a message for a fresh file reference; reread changed messages and confirm, up to 100 at a time, that deleted ones are gone |
+| `updates.getState`, `updates.getDifference`, `updates.getChannelDifference` | what changed since the last run: edits, reactions and deletions in private chats and basic groups, and in each channel or supergroup |
 | `channels.getFullChannel` | which group a supergroup grew from |
 | `users.getUsers` | your own id, checking the login |
 | `upload.getFile` | downloading media |

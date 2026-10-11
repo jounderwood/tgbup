@@ -205,3 +205,103 @@ func TestTopicMessageCount(t *testing.T) {
 		t.Fatalf("count = %d %v", n, err)
 	}
 }
+
+func TestChannelChangesSortsTheFeed(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	edited := &tg.Message{ID: 5, PeerID: &tg.PeerChannel{ChannelID: 1}, Message: "fixed"}
+	mock.ExpectFunc(func(b bin.Encoder) {
+		req, ok := b.(*tg.UpdatesGetChannelDifferenceRequest)
+		if !ok {
+			t.Fatalf("request %T", b)
+		}
+		ch, _ := req.Channel.(*tg.InputChannel)
+		if req.Pts != 20 || req.Limit != 100000 || ch == nil || ch.ChannelID != 1 || ch.AccessHash != 2 {
+			t.Fatalf("request = %+v", req)
+		}
+		if _, ok := req.Filter.(*tg.ChannelMessagesFilterEmpty); !ok {
+			t.Fatalf("filter = %T: a filter that leaves out new messages loses edits too", req.Filter)
+		}
+	}).ThenResult(&tg.UpdatesChannelDifference{Pts: 120, NewMessages: msgs(30, 31), OtherUpdates: []tg.UpdateClass{
+		&tg.UpdateMessageID{ID: 30}, &tg.UpdateEditChannelMessage{Message: edited},
+		&tg.UpdateDeleteChannelMessages{ChannelID: 1, Messages: []int{6, 7}},
+	}})
+	mock.Expect().ThenResult(&tg.UpdatesChannelDifferenceTooLong{Final: true,
+		Dialog: &tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 1}, Pts: 275, Flags: 1}})
+
+	api := tgclient.NewAPI(tg.NewClient(mock))
+	c, err := api.ChannelChanges(context.Background(), peer, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Edited) != 1 || c.Edited[0].GetID() != 5 {
+		t.Fatalf("edited = %v (new messages are the forward sync's)", c.Edited)
+	}
+	if !slices.Equal(c.Deleted[-1000000000001], []int{6, 7}) || c.State.Pts != 120 || c.Final || c.TooLong {
+		t.Fatalf("changes = %+v", c)
+	}
+
+	c, err = api.ChannelChanges(context.Background(), peer, 120)
+	if err != nil || !c.TooLong || !c.Final || c.State.Pts != 275 {
+		t.Fatalf("too long = %+v %v", c, err)
+	}
+	if _, err := api.ChannelChanges(context.Background(), &tg.InputPeerChat{ChatID: 3}, 1); err == nil {
+		t.Fatal("a basic group has no feed of its own")
+	}
+}
+
+func TestChangesFollowsTheOwnFeed(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	st := tgclient.FeedState{Pts: 10, Qts: 2, Date: 1700000000}
+	mock.ExpectFunc(func(b bin.Encoder) {
+		req := b.(*tg.UpdatesGetDifferenceRequest)
+		if req.Pts != 10 || req.Qts != 2 || req.Date != 1700000000 {
+			t.Fatalf("request = %+v", req)
+		}
+	}).ThenResult(&tg.UpdatesDifferenceSlice{
+		OtherUpdates: []tg.UpdateClass{
+			&tg.UpdateEditMessage{Message: &tg.Message{ID: 11, PeerID: &tg.PeerUser{UserID: 42}}},
+			&tg.UpdateDeleteMessages{Messages: []int{12, 13}},
+			&tg.UpdateMessageReactions{Peer: &tg.PeerChat{ChatID: 77}, MsgID: 20},
+		},
+		Users:             []tg.UserClass{&tg.User{ID: 42}},
+		IntermediateState: tg.UpdatesState{Pts: 50, Qts: 2, Date: 1700000100},
+	})
+	mock.Expect().ThenResult(&tg.UpdatesDifference{State: tg.UpdatesState{Pts: 60, Qts: 3, Date: 1700000200}})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceEmpty{Date: 1700000300})
+	mock.Expect().ThenResult(&tg.UpdatesDifferenceTooLong{Pts: 5000})
+
+	api := tgclient.NewAPI(tg.NewClient(mock))
+	c, err := api.Changes(context.Background(), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Final || c.State != (tgclient.FeedState{Pts: 50, Qts: 2, Date: 1700000100}) || len(c.Users) != 1 {
+		t.Fatalf("slice = %+v", c)
+	}
+	if len(c.Edited) != 1 || !slices.Equal(c.CommonDeleted, []int{12, 13}) || !slices.Equal(c.Touched[-77], []int{20}) {
+		t.Fatalf("slice changes = %+v", c)
+	}
+	if c, _ := api.Changes(context.Background(), c.State); !c.Final || c.State.Pts != 60 {
+		t.Fatalf("difference = %+v", c)
+	}
+	if c, _ := api.Changes(context.Background(), tgclient.FeedState{Pts: 60, Qts: 3}); !c.Final || c.State != (tgclient.FeedState{Pts: 60, Qts: 3, Date: 1700000300}) {
+		t.Fatalf("empty = %+v", c)
+	}
+	// Too long: the rest comes from the new pts.
+	if c, _ := api.Changes(context.Background(), st); !c.TooLong || c.Final || c.State != (tgclient.FeedState{Pts: 5000, Qts: 2, Date: 1700000000}) {
+		t.Fatalf("too long = %+v", c)
+	}
+}
+
+func TestChannelPageSaysWhereTheFeedStands(t *testing.T) {
+	mock := tgmock.NewRequire(t)
+	mock.Expect().ThenResult(&tg.MessagesChannelMessages{Messages: msgs(3), Pts: 77})
+	mock.Expect().ThenResult(&tg.MessagesMessages{Messages: msgs(3)})
+	api := tgclient.NewAPI(tg.NewClient(mock))
+	if p, err := api.HistoryBefore(context.Background(), peer, 0, 1); err != nil || p.Pts != 77 {
+		t.Fatalf("channel page pts = %d %v", p.Pts, err)
+	}
+	if p, err := api.HistoryBefore(context.Background(), &tg.InputPeerChat{ChatID: 3}, 0, 1); err != nil || p.Pts != 0 {
+		t.Fatalf("group page pts = %d %v", p.Pts, err)
+	}
+}

@@ -13,6 +13,9 @@ type Page struct {
 	Messages []tg.MessageClass
 	Users    []tg.UserClass
 	Chats    []tg.ChatClass
+	// Pts is where a channel's or supergroup's change feed stood when
+	// Telegram answered; 0 for other chats.
+	Pts int
 }
 
 type Topic struct {
@@ -249,5 +252,9 @@ func toPage(res tg.MessagesMessagesClass) (Page, error) {
 	if !ok {
 		return Page{}, errors.New("unexpected messages.messagesNotModified")
 	}
-	return Page{Messages: m.GetMessages(), Users: m.GetUsers(), Chats: m.GetChats()}, nil
+	p := Page{Messages: m.GetMessages(), Users: m.GetUsers(), Chats: m.GetChats()}
+	if cm, ok := res.(*tg.MessagesChannelMessages); ok {
+		p.Pts = cm.Pts
+	}
+	return p, nil
 }
