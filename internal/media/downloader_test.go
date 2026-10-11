@@ -275,6 +275,9 @@ func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
 	if err := os.WriteFile(other, []byte("someone else's"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Asked before the download, which may itself create the lowercase name.
+	_, err := os.Lstat(strings.Replace(other, "ОТЧЁТ", "отчёт", 1))
+	caseBlind := err == nil
 	if r, err := e.d.Run(context.Background()); err != nil || r.Done != 1 {
 		t.Fatalf("report = %+v %v", r, err)
 	}
@@ -282,7 +285,7 @@ func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
 		t.Fatal("an existing file was overwritten")
 	}
 	want := filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026 (2).pdf")
-	if _, err := os.Lstat(strings.Replace(other, "ОТЧЁТ", "отчёт", 1)); err != nil {
+	if !caseBlind {
 		// A disk that tells case apart (Linux) holds both names side by side.
 		want = filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026.pdf")
 	}
