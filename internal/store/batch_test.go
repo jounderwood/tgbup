@@ -286,3 +286,108 @@ func TestUpsertTopics(t *testing.T) {
 		t.Fatalf("topics = %+v %v", ts, err)
 	}
 }
+
+// Without an edit, nothing the archive has is lost: an attachment that went
+// (a self-destructing photo, once opened) stays linked with its raw message,
+// a preview picture the archive lacked is added, and a link preview Telegram
+// sends poorer (not filled yet, dropped) is kept. None of it is a version.
+func TestRereadWithoutAnEditLosesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedChat(t, s, chatA)
+	save := func(m Message) SaveStats {
+		t.Helper()
+		st, err := s.SaveBatchStats(ctx, Batch{ChatID: chatA, Messages: []Message{m},
+			Media: []Media{{Key: "photo:1", Kind: "photo"}, {Key: "photo:9", Kind: "photo"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	versions := func() int {
+		return count(t, s, `SELECT count(*) FROM message_versions WHERE chat_id = ?`, chatA)
+	}
+	// A photo that self-destructs once opened: later Telegram sends it empty.
+	photo := msg(1)
+	photo.MediaKeys, photo.Raw = []string{"photo:1"}, []byte("raw with the photo")
+	save(photo)
+	expired := msg(1)
+	expired.Raw = []byte("raw without it")
+	if st := save(expired); st.Edited != 0 {
+		t.Errorf("an expired photo counts as an edit: %+v", st)
+	}
+	if keys, _ := mediaKeysOf(t, s, chatA, 1); strings.Join(keys, ",") != "photo:1" {
+		t.Errorf("the photo was unlinked: %v", keys)
+	}
+	var raw []byte
+	_ = s.db.QueryRow(`SELECT raw FROM messages WHERE chat_id = ? AND id = 1`, chatA).Scan(&raw)
+	if string(raw) != "raw with the photo" {
+		t.Errorf("raw = %q", raw)
+	}
+
+	// A link preview archived before tgbup kept its picture.
+	link := msg(2)
+	link.Text, link.MetaJSON = "see example.com", `{"webpage":{"url":"https://example.com","title":"Example","description":"x"}}`
+	save(link)
+	withPicture := link
+	withPicture.MediaKeys = []string{"photo:9"}
+	if st := save(withPicture); st != (SaveStats{Updated: 1}) {
+		t.Errorf("a preview picture added = %+v", st)
+	}
+	if keys, _ := mediaKeysOf(t, s, chatA, 2); strings.Join(keys, ",") != "photo:9" {
+		t.Errorf("the preview picture was not linked: %v", keys)
+	}
+	// Telegram sends the preview not filled yet, or without it: the archive
+	// keeps the full one, and the same answer again changes nothing.
+	pending := withPicture
+	pending.MetaJSON = `{"webpage":{"url":"https://example.com"}}`
+	save(pending)
+	if st := save(pending); st != (SaveStats{}) {
+		t.Errorf("the same poorer preview again = %+v", st)
+	}
+	var meta string
+	_ = s.db.QueryRow(`SELECT meta_json FROM messages WHERE chat_id = ? AND id = 2`, chatA).Scan(&meta)
+	if !strings.Contains(meta, `"title":"Example"`) {
+		t.Errorf("the full preview was lost: %s", meta)
+	}
+	if versions() != 0 {
+		t.Errorf("%d versions without an edit", versions())
+	}
+}
+
+// An edit keeps the meta of before (a checklist's items), and a live
+// location's moves, edits by Telegram's clock, make no versions.
+func TestVersionsKeepMetaButNotLiveLocations(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedChat(t, s, chatA)
+	save := func(m Message) SaveStats {
+		t.Helper()
+		st, err := s.SaveBatchStats(ctx, Batch{ChatID: chatA, Messages: []Message{m}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	list := msg(1)
+	list.MetaJSON = `{"todo":{"title":"Shop","items":[{"id":1,"title":"milk"}]}}`
+	save(list)
+	renamed := list
+	renamed.MetaJSON, renamed.EditDate = `{"todo":{"title":"Shopping","items":[{"id":1,"title":"milk"}]}}`, 1700000100
+	if st := save(renamed); st != (SaveStats{Edited: 1}) {
+		t.Fatalf("a renamed checklist = %+v", st)
+	}
+	var meta string
+	_ = s.db.QueryRow(`SELECT meta_json FROM message_versions WHERE chat_id = ? AND id = 1`, chatA).Scan(&meta)
+	if !strings.Contains(meta, `"title":"Shop"`) {
+		t.Errorf("the version lost the checklist before: %q", meta)
+	}
+	live := msg(2)
+	live.MetaJSON = `{"geo":{"lat":1,"long":2},"live":{"period":900}}`
+	save(live)
+	moved := live
+	moved.MetaJSON, moved.EditDate = `{"geo":{"lat":1.5,"long":2},"live":{"period":900}}`, 1700000200
+	if st := save(moved); st != (SaveStats{Updated: 1}) {
+		t.Errorf("a live location's move = %+v", st)
+	}
+}

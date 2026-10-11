@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -67,12 +68,13 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, username = excluded.userna
 	for _, m := range b.Messages {
 		res, err := tx.ExecContext(ctx, `
 INSERT INTO messages (chat_id, id, topic_id, date, from_id, text, entities_json, reply_to_id, fwd_from_json,
-  grouped_id, reactions_json, service_action_json, pinned, edit_date, raw, tl_layer, meta_json, checked_at)
+  grouped_id, reactions_json, service_action_json, pinned, edit_date, raw, tl_layer, meta_json, read_upto_id)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, id) DO NOTHING`,
 			m.ChatID, m.ID, nullInt(int64(m.TopicID)), m.Date, nullInt(m.FromID), m.Text, nullStr(m.EntitiesJSON),
 			nullInt(int64(m.ReplyToID)), nullStr(m.FwdFromJSON), nullInt(m.GroupedID), nullStr(m.ReactionsJSON),
-			nullStr(m.ServiceActionJSON), m.Pinned, nullInt(m.EditDate), m.Raw, m.TLLayer, nullStr(m.MetaJSON), now)
+			nullStr(m.ServiceActionJSON), m.Pinned, nullInt(m.EditDate), m.Raw, m.TLLayer, nullStr(m.MetaJSON),
+			readUpto(m.MetaJSON, b.Cursor.NewestID))
 		if err != nil {
 			return stats, fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
 		}
@@ -83,7 +85,7 @@ ON CONFLICT(chat_id, id) DO NOTHING`,
 			}
 			continue
 		}
-		change, err := refreshMessage(ctx, tx, m, now)
+		change, err := refreshMessage(ctx, tx, m, now, b.Cursor.NewestID)
 		if err != nil {
 			return stats, fmt.Errorf("update message %d/%d: %w", m.ChatID, m.ID, err)
 		}
@@ -127,19 +129,23 @@ const (
 )
 
 // refreshMessage brings an archived message up to the version just read
-// from Telegram. An edit — other text or attachment, or other formatting with
-// a new edit time — keeps the version before; reactions, votes, a link
-// preview or a checklist are replaced in place. Formatting that differs
-// without an edit (tgbup storing it another way) is no edit either. The pin
-// is SetPinned's.
-func refreshMessage(ctx context.Context, tx *sql.Tx, m Message, now int64) (change, error) {
+// from Telegram; upto is the chat's newest message id at the time.
+//
+// Only Telegram's own edit is an edit: other text, or a new edit time with
+// another attachment, formatting or meta (a live location's moves aside).
+// It keeps the version before. Anything else is updated in place, and never
+// loses what the archive has: an attachment that went (a self-destructing
+// photo, once opened) or a link preview Telegram dropped or has not filled
+// yet stays; an attachment the archive lacked (a link preview's picture,
+// archived before tgbup kept those) is added. The pin is SetPinned's.
+func refreshMessage(ctx context.Context, tx *sql.Tx, m Message, now int64, upto int) (change, error) {
 	var (
 		text, ents, meta, reacts string
-		edit                     int64
+		edit, deleted            int64
 	)
 	if err := tx.QueryRowContext(ctx, `SELECT text, COALESCE(entities_json, ''), COALESCE(meta_json, ''),
-       COALESCE(reactions_json, ''), COALESCE(edit_date, 0) FROM messages WHERE chat_id = ? AND id = ?`, m.ChatID, m.ID).
-		Scan(&text, &ents, &meta, &reacts, &edit); err != nil {
+       COALESCE(reactions_json, ''), COALESCE(edit_date, 0), COALESCE(deleted_at, 0) FROM messages WHERE chat_id = ? AND id = ?`,
+		m.ChatID, m.ID).Scan(&text, &ents, &meta, &reacts, &edit, &deleted); err != nil {
 		return changeNone, err
 	}
 	oldKeys, err := mediaKeys(ctx, tx, m.ChatID, m.ID)
@@ -147,44 +153,119 @@ func refreshMessage(ctx context.Context, tx *sql.Tx, m Message, now int64) (chan
 		return changeNone, err
 	}
 	newKeys := slices.Sorted(slices.Values(m.MediaKeys))
-	edited := text != m.Text || !slices.Equal(oldKeys, newKeys) || (ents != m.EntitiesJSON && edit != m.EditDate)
-	updated := ents != m.EntitiesJSON || meta != m.MetaJSON || reacts != m.ReactionsJSON || edit != m.EditDate
-	switch {
-	case edited:
-		keys, _ := json.Marshal(oldKeys)
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO message_versions (chat_id, id, n, text, entities_json, media_keys, edit_date, replaced_at)
-VALUES (?, ?, (SELECT COALESCE(MAX(n), 0) + 1 FROM message_versions WHERE chat_id = ? AND id = ?), ?, ?, ?, ?, ?)`,
-			m.ChatID, m.ID, m.ChatID, m.ID, text, nullStr(ents), string(keys), nullInt(edit), now); err != nil {
+	keysChanged := !slices.Equal(oldKeys, newKeys)
+	newEdit := edit != m.EditDate
+	live := strings.Contains(m.MetaJSON, `"live":`)
+	edited := text != m.Text || (newEdit && (keysChanged || ents != m.EntitiesJSON || (meta != m.MetaJSON && !live)))
+
+	newMeta := m.MetaJSON
+	var raw any = m.Raw
+	addKeys := false
+	if !edited {
+		newMeta = keepRicherWebpage(meta, m.MetaJSON)
+		switch {
+		case keysChanged && len(oldKeys) == 0:
+			addKeys = true
+		case keysChanged:
+			raw = nil // the archived message keeps its attachment and the raw message naming it
+		}
+	}
+	updated := ents != m.EntitiesJSON || newMeta != meta || reacts != m.ReactionsJSON || newEdit || addKeys
+	if !edited && !updated {
+		// Unchanged: a write only to clear a deletion mark (it is in
+		// Telegram after all) or to move a checklist's read mark.
+		if deleted != 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET deleted_at = NULL WHERE chat_id = ? AND id = ?`, m.ChatID, m.ID); err != nil {
+				return changeNone, err
+			}
+		}
+		if mark := readUpto(meta, upto); mark != nil {
+			_, err := tx.ExecContext(ctx, `UPDATE messages SET read_upto_id = ? WHERE chat_id = ? AND id = ? AND COALESCE(read_upto_id, 0) < ?`,
+				mark, m.ChatID, m.ID, mark)
 			return changeNone, err
 		}
-		if !slices.Equal(oldKeys, newKeys) {
+		return changeNone, nil
+	}
+	if edited {
+		var keys any
+		if len(oldKeys) > 0 {
+			b, _ := json.Marshal(oldKeys)
+			keys = string(b)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO message_versions (chat_id, id, n, text, entities_json, media_keys, meta_json, edit_date, replaced_at)
+VALUES (?, ?, (SELECT COALESCE(MAX(n), 0) + 1 FROM message_versions WHERE chat_id = ? AND id = ?), ?, ?, ?, ?, ?, ?)`,
+			m.ChatID, m.ID, m.ChatID, m.ID, text, nullStr(ents), keys, nullStr(meta), nullInt(edit), now); err != nil {
+			return changeNone, err
+		}
+		if keysChanged {
 			// The attachment was replaced: the page shows the new one; the old
-			// file stays in media/, named in the version before.
+			// file stays in media/, named in the version before. One not
+			// downloaded yet never will be: Telegram has the new one now.
 			if _, err := tx.ExecContext(ctx, `DELETE FROM message_media WHERE chat_id = ? AND message_id = ?`, m.ChatID, m.ID); err != nil {
 				return changeNone, err
 			}
-			if err := linkMedia(ctx, tx, m); err != nil {
-				return changeNone, err
+			for _, k := range oldKeys {
+				if _, err := tx.ExecContext(ctx, `UPDATE media SET status = 'skipped', error = 'replaced by an edit before it was downloaded'
+WHERE key = ? AND status = 'pending' AND NOT EXISTS (SELECT 1 FROM message_media WHERE media_key = ?)`, k, k); err != nil {
+					return changeNone, err
+				}
 			}
 		}
-	case !updated:
-		// Read from Telegram: it is there, whatever an earlier check thought.
-		_, err := tx.ExecContext(ctx, `UPDATE messages SET checked_at = ?, deleted_at = NULL WHERE chat_id = ? AND id = ?`, now, m.ChatID, m.ID)
-		return changeNone, err
+	}
+	if edited || addKeys {
+		if err := linkMedia(ctx, tx, m); err != nil {
+			return changeNone, err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE messages SET text = ?, entities_json = ?, meta_json = ?, reactions_json = ?, edit_date = ?, raw = ?, tl_layer = ?,
-  changed_at = ?, checked_at = ?, deleted_at = NULL
+UPDATE messages SET text = ?, entities_json = ?, meta_json = ?, reactions_json = ?, edit_date = ?, raw = COALESCE(?, raw),
+  tl_layer = ?, changed_at = ?, deleted_at = NULL, read_upto_id = COALESCE(?, read_upto_id)
 WHERE chat_id = ? AND id = ?`,
-		m.Text, nullStr(m.EntitiesJSON), nullStr(m.MetaJSON), nullStr(m.ReactionsJSON), nullInt(m.EditDate), m.Raw, m.TLLayer,
-		now, now, m.ChatID, m.ID); err != nil {
+		m.Text, nullStr(m.EntitiesJSON), nullStr(newMeta), nullStr(m.ReactionsJSON), nullInt(m.EditDate), raw,
+		m.TLLayer, now, readUpto(newMeta, upto), m.ChatID, m.ID); err != nil {
 		return changeNone, err
 	}
 	if edited {
 		return changeEdited, nil
 	}
 	return changeUpdated, nil
+}
+
+// readUpto is a checklist's read mark: the chat's newest id when it was read;
+// nil for anything else.
+func readUpto(meta string, upto int) any {
+	if upto <= 0 || !strings.Contains(meta, `"todo"`) {
+		return nil
+	}
+	return upto
+}
+
+// keepRicherWebpage keeps the archived link preview when Telegram, without an
+// edit, sends none or a poorer one (not filled yet, or dropped on a re-crawl).
+func keepRicherWebpage(old, next string) string {
+	var o map[string]json.RawMessage
+	if json.Unmarshal([]byte(old), &o) != nil || o["webpage"] == nil {
+		return next
+	}
+	n := map[string]json.RawMessage{}
+	if next != "" && json.Unmarshal([]byte(next), &n) != nil {
+		return next
+	}
+	var ow, nw map[string]json.RawMessage
+	_ = json.Unmarshal(o["webpage"], &ow)
+	if n["webpage"] != nil {
+		_ = json.Unmarshal(n["webpage"], &nw)
+	}
+	if len(nw) >= len(ow) {
+		return next
+	}
+	n["webpage"] = o["webpage"]
+	b, err := json.Marshal(n)
+	if err != nil {
+		return next
+	}
+	return string(b)
 }
 
 func mediaKeys(ctx context.Context, tx *sql.Tx, chat int64, id int) ([]string, error) {

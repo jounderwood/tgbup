@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jounderwood/tgbup/internal/store"
 )
@@ -27,13 +26,16 @@ func TestChecklistEventsReachThePage(t *testing.T) {
 	}
 	checklist := store.Message{ChatID: chat, ID: 10, Date: 1759600000, FromID: 7, Raw: []byte{1}, TLLayer: 1,
 		MetaJSON: `{"todo":{"title":"💳","items":[{"id":1,"title":"Оплатить счета"},{"id":2,"title":"Вынести мусор"}]}}`}
-	// A tick that came before the checklist was read from Telegram is in the
-	// checklist already; this one comes after.
-	tick := store.Message{ChatID: chat, ID: 11, Date: time.Now().Unix() + 5, FromID: 7, ReplyToID: 10, Raw: []byte{1}, TLLayer: 1,
-		ServiceActionJSON: `{"type":"messageActionTodoCompletions","data":{"Completed":[1],"Incompleted":null}}`}
+	// The checklist was read when the chat's newest message was 10: a tick
+	// with an id up to there is in its state already; one after is not.
 	before := store.Message{ChatID: chat, ID: 9, Date: 1759590000, FromID: 7, ReplyToID: 10, Raw: []byte{1}, TLLayer: 1,
 		ServiceActionJSON: `{"type":"messageActionTodoCompletions","data":{"Completed":[2],"Incompleted":null}}`}
-	if err := db.SaveBatch(ctx, store.Batch{ChatID: chat, Messages: []store.Message{before, checklist, tick}}); err != nil {
+	if err := db.SaveBatch(ctx, store.Batch{ChatID: chat, Messages: []store.Message{before, checklist}, Cursor: store.Cursor{NewestID: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	tick := store.Message{ChatID: chat, ID: 11, Date: 1759610000, FromID: 7, ReplyToID: 10, Raw: []byte{1}, TLLayer: 1,
+		ServiceActionJSON: `{"type":"messageActionTodoCompletions","data":{"Completed":[1],"Incompleted":null}}`}
+	if err := db.SaveBatch(ctx, store.Batch{ChatID: chat, Messages: []store.Message{tick}, Cursor: store.Cursor{NewestID: 11}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := renderArchive(ctx, db, dir, false); err != nil {

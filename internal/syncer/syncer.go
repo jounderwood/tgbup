@@ -3,6 +3,7 @@ package syncer
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -74,12 +75,16 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 		r.Failed[0] = fmt.Errorf("mark missing chats: %w", err)
 	}
 
+	troubled := map[int64]bool{} // failed, deferred or gone this run: not audited
 	for _, t := range targets {
 		if err := ctx.Err(); err != nil {
 			r.Failed[t.Chat.ID] = err
 			return r
 		}
 		st, err := s.syncChat(ctx, t, deadline)
+		if err != nil {
+			troubled[t.Chat.ID] = true
+		}
 		r.NewMessages += st.New
 		r.Edited += st.Edited
 		r.Updated += st.Updated
@@ -109,23 +114,27 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 			r.Failed[t.Chat.ID] = err
 		}
 	}
-	s.audit(ctx, targets, deadline, &r)
+	s.audit(ctx, targets, troubled, deadline, &r)
 	return r
 }
 
 // audit reads the archived chats' history again, newest to oldest, a round
-// at a time and at most AuditPages pages a run, with what time is left:
+// at a time and at most AuditPages requests a run, with what time is left:
 // edits, reactions and deletions older than the recent window reach the
-// archive within a few runs. The least recently audited chats go first. It
-// never fails the run: what it does not reach, the next run does.
-func (s *Syncer) audit(ctx context.Context, targets []tgclient.Target, deadline time.Time, r *Report) {
+// archive within a few runs. The least recently audited chats go first; a
+// chat that failed this run waits, and one that fails in the audit lets the
+// others go on. A round ends on an empty page (a short one can come from the
+// middle of a channel), and then asks about the archived messages older than
+// anything Telegram still showed: an auto-delete timer or a cleared history
+// takes the oldest. It never fails the run.
+func (s *Syncer) audit(ctx context.Context, targets []tgclient.Target, troubled map[int64]bool, deadline time.Time, r *Report) {
 	budget := cmp.Or(s.AuditPages, defaultAuditPages)
 	if budget < 0 {
 		return
 	}
 	byID := map[int64]tgclient.Target{}
 	for _, t := range targets {
-		if r.Failed[t.Chat.ID] == nil && !slices.Contains(r.Deferred, t.Chat.ID) {
+		if !troubled[t.Chat.ID] {
 			byID[t.Chat.ID] = t
 		}
 	}
@@ -139,54 +148,83 @@ func (s *Syncer) audit(ctx context.Context, targets []tgclient.Target, deadline 
 		if !ok {
 			continue
 		}
-		cur, _, err := s.Store.GetCursor(ctx, t.Chat.ID)
-		if err != nil {
-			s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
+		err := s.auditChat(ctx, t, a, &budget, deadline, r)
+		switch {
+		case err == nil:
+		case ctx.Err() != nil || tgclient.Classify(err) == tgclient.KindFlood || tgclient.Classify(err) == tgclient.KindAuth:
+			s.Log.Warn("audit stopped; the next run goes on", "chat", t.Chat.ID, "err", err)
+			return
+		default:
+			s.Log.Warn("audit of a chat stopped; the next run tries again", "chat", t.Chat.ID, "err", err)
+		}
+		if budget <= 0 || !s.Now().Before(deadline) {
 			return
 		}
-		for {
-			if budget == 0 || !s.Now().Before(deadline) || ctx.Err() != nil {
-				return
+	}
+}
+
+// errBudget: the run's audit budget or time is spent; the round goes on next run.
+var errBudget = errors.New("audit budget spent")
+
+func (s *Syncer) auditChat(ctx context.Context, t tgclient.Target, a store.Audit, budget *int, deadline time.Time, r *Report) error {
+	cur, _, err := s.Store.GetCursor(ctx, t.Chat.ID)
+	if err != nil {
+		return err
+	}
+	spend := func() bool {
+		if *budget <= 0 || !s.Now().Before(deadline) {
+			return false
+		}
+		*budget--
+		return true
+	}
+	for {
+		if !spend() {
+			return nil
+		}
+		page, err := s.TG.HistoryBefore(ctx, t.Peer, a.BeforeID, s.PageSize)
+		if err != nil {
+			return err
+		}
+		if len(page.Messages) == 0 {
+			// The round is over: older than anything Telegram still showed.
+			hi := a.BeforeID - 1
+			if a.BeforeID == 0 {
+				hi = math.MaxInt32 // it showed nothing at all: a cleared history
 			}
-			budget--
-			page, err := s.TG.HistoryBefore(ctx, t.Peer, a.BeforeID, s.PageSize)
+			n, err := s.confirmGone(ctx, t, nil, 0, hi, spend)
+			r.Deleted += n
+			if errors.Is(err, errBudget) {
+				return nil // asked again at the next round's end
+			}
 			if err != nil {
-				s.Log.Warn("audit stopped; the next run goes on", "chat", t.Chat.ID, "err", err)
-				return
+				return err
 			}
-			st, err := s.save(ctx, t, page, cur)
-			r.NewMessages += st.New
-			r.Edited += st.Edited
-			r.Updated += st.Updated
-			if err != nil {
-				s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
-				return
-			}
-			if len(page.Messages) > 0 {
-				hi := a.BeforeID - 1
-				if a.BeforeID == 0 {
-					hi = math.MaxInt32
-				}
-				n, err := s.markDeleted(ctx, t, page, minID(page.Messages), hi)
-				r.Deleted += n
-				if err != nil {
-					s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
-					return
-				}
-			}
-			done := len(page.Messages) < s.PageSize
-			if done {
-				a.BeforeID, a.AuditedAt = 0, s.Now().Unix()
-			} else {
-				a.BeforeID = minID(page.Messages)
-			}
-			if err := s.Store.SetAudit(ctx, a); err != nil {
-				s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
-				return
-			}
-			if done {
-				break
-			}
+			a.BeforeID, a.AuditedAt = 0, s.Now().Unix()
+			return s.Store.SetAudit(ctx, a)
+		}
+		st, err := s.save(ctx, t, page, cur)
+		r.NewMessages += st.New
+		r.Edited += st.Edited
+		r.Updated += st.Updated
+		if err != nil {
+			return err
+		}
+		hi := a.BeforeID - 1
+		if a.BeforeID == 0 {
+			hi = math.MaxInt32
+		}
+		n, err := s.confirmGone(ctx, t, page.Messages, minID(page.Messages), hi, spend)
+		r.Deleted += n
+		if err != nil && !errors.Is(err, errBudget) {
+			return err
+		}
+		a.BeforeID = minID(page.Messages)
+		if err := s.Store.SetAudit(ctx, a); err != nil {
+			return err
+		}
+		if errors.Is(err, errBudget) {
+			return nil
 		}
 	}
 }
@@ -259,11 +297,13 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		if t.TopMessage > cur.NewestID {
 			return total, fmt.Errorf("forward sync stopped at message %d, but the chat's latest message is %d", cur.NewestID, t.TopMessage)
 		}
+		// Rereading is extra: a failure leaves it to the next run, and the
+		// chat's new messages, its backfill and its pins go on.
 		st, err := s.refresh(ctx, t, &cur)
 		total.SaveStats = add(total.SaveStats, st.SaveStats)
 		total.Deleted += st.Deleted
 		if err != nil {
-			return total, err
+			s.Log.Warn("rereading recent messages stopped; the next run tries again", "chat", t.Chat.ID, "err", err)
 		}
 	}
 
@@ -275,6 +315,10 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		if len(page.Messages) == 0 {
 			cur.BackfillDone = true
 			if err := s.Store.SaveBatch(ctx, store.Batch{ChatID: t.Chat.ID, Cursor: cur}); err != nil {
+				return total, err
+			}
+			// Just read in full: its first audit round can wait its turn.
+			if err := s.Store.SetAudit(ctx, store.Audit{ChatID: t.Chat.ID, AuditedAt: s.Now().Unix()}); err != nil {
 				return total, err
 			}
 			break
@@ -348,27 +392,37 @@ func (s *Syncer) refresh(ctx context.Context, t tgclient.Target, cur *store.Curs
 }
 
 // markDeleted marks the archived messages with ids from lo to hi that the
-// page lacks, once Telegram confirms each is gone: asked by id, it gives
-// back nothing or an empty message. One it still gives is left alone.
+// page lacks, once Telegram confirms each is gone.
 func (s *Syncer) markDeleted(ctx context.Context, t tgclient.Target, page tgclient.Page, lo, hi int) (int, error) {
+	return s.confirmGone(ctx, t, page.Messages, lo, hi, func() bool { return true })
+}
+
+// confirmGone marks the archived messages with ids from lo to hi that got
+// lacks, once Telegram confirms each is gone: asked by id, it gives back
+// nothing or an empty message. One it still gives is left alone. spend is
+// asked before each request; false stops with errBudget.
+func (s *Syncer) confirmGone(ctx context.Context, t tgclient.Target, got []tg.MessageClass, lo, hi int, spend func() bool) (int, error) {
 	archived, err := s.Store.ArchivedIDs(ctx, t.Chat.ID, lo, hi)
 	if err != nil || len(archived) == 0 {
 		return 0, err
 	}
-	got := map[int]bool{}
-	for _, m := range page.Messages {
+	seen := map[int]bool{}
+	for _, m := range got {
 		if _, empty := m.(*tg.MessageEmpty); !empty {
-			got[m.GetID()] = true
+			seen[m.GetID()] = true
 		}
 	}
 	var missing []int
 	for _, id := range archived {
-		if !got[id] {
+		if !seen[id] {
 			missing = append(missing, id)
 		}
 	}
 	marked := 0
 	for len(missing) > 0 {
+		if !spend() {
+			return marked, errBudget
+		}
 		batch := missing[:min(len(missing), 100)]
 		missing = missing[len(batch):]
 		res, err := s.TG.Messages(ctx, t.Peer, batch)

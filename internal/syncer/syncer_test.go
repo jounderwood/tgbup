@@ -618,14 +618,19 @@ func TestAuditFindsOldEditsAndDeletions(t *testing.T) {
 	e.tg.edits[a.Chat.ID] = map[int]string{50: "an old typo fixed"}
 	e.tg.remove(a.Chat.ID, 30)
 	e.tg.before = 0
-	r1 := e.s.Run(ctx, both, dialogsOf(a, b))
+	e.now = e.now.Add(time.Hour)
+	r := e.s.Run(ctx, both, dialogsOf(a, b))
 	if e.tg.before != 3 {
 		t.Errorf("first run read %d pages, the budget is 3", e.tg.before)
 	}
-	r2 := e.s.Run(ctx, both, dialogsOf(a, b))
-	edited, deleted := r1.Edited+r2.Edited, r1.Deleted+r2.Deleted
+	edited, deleted := r.Edited, r.Deleted
+	for run := 2; run <= 4 && (edited == 0 || deleted == 0); run++ {
+		e.now = e.now.Add(6 * time.Hour)
+		r = e.s.Run(ctx, both, dialogsOf(a, b))
+		edited, deleted = edited+r.Edited, deleted+r.Deleted
+	}
 	if edited != 1 || deleted != 1 {
-		t.Fatalf("two runs found %d edited, %d deleted; reports %+v %+v", edited, deleted, r1, r2)
+		t.Fatalf("four runs found %d edited, %d deleted", edited, deleted)
 	}
 	ms, _ := e.st.PageMessages(ctx, a.Chat.ID, []int{50, 30})
 	if len(ms) != 2 || ms[0].DeletedAt == 0 || ms[1].Text != "an old typo fixed" {
@@ -642,11 +647,83 @@ func TestAuditFindsOldEditsAndDeletions(t *testing.T) {
 	if !seen[a.Chat.ID] && !seen[b.Chat.ID] {
 		t.Fatalf("no round finished: %+v", audits)
 	}
+	e.now = e.now.Add(6 * time.Hour)
 	e.s.Run(ctx, both, dialogsOf(a, b))
 	audits, _ = e.st.Audits(ctx)
 	for _, x := range audits {
 		if x.AuditedAt == 0 {
 			t.Errorf("chat %d still waits for its first round: %+v", x.ChatID, audits)
 		}
+	}
+}
+
+// A chat that fails this run is not audited, and one that fails in its audit
+// lets the others go on.
+func TestAuditGoesOnPastAFailingChat(t *testing.T) {
+	e := newEnv(t)
+	a, b, c := target(1, store.ChatSupergroup), target(2, store.ChatSupergroup), target(3, store.ChatSupergroup)
+	for _, x := range []tgclient.Target{a, b, c} {
+		e.tg.add(x.Chat.ID, 1, 50)
+	}
+	ctx := context.Background()
+	all := []tgclient.Target{a, b, c}
+	e.s.Run(ctx, all, dialogsOf(a, b, c))
+	// a is gone (left or private), b fails in its audit, c has an edit.
+	e.tg.errs[a.Chat.ID] = tgerr.New(400, "CHANNEL_PRIVATE")
+	_ = e.st.SetAudit(ctx, store.Audit{ChatID: b.Chat.ID, AuditedAt: 1}) // first in line
+	e.tg.failAfter[b.Chat.ID] = e.tg.calls[b.Chat.ID] + 1                // its new-messages read works, the audit's does not
+	e.tg.edits[c.Chat.ID] = map[int]string{5: "fixed"}
+	e.s.AuditPages = 10
+	e.now = e.now.Add(time.Hour)
+	r := e.s.Run(ctx, all, dialogsOf(a, b, c))
+	if r.Edited != 1 {
+		t.Fatalf("the edit in the third chat was not found: %+v", r)
+	}
+}
+
+// Rereading the recent window is extra: when it fails, the chat's new
+// messages count and the chat does not fail.
+func TestRereadFailureDoesNotFailTheChat(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Unix(1700000000, 0).Add(time.Hour)
+	a := target(1, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 20)
+	ctx := context.Background()
+	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	e.tg.add(a.Chat.ID, 21, 25)
+	e.tg.failAfter[a.Chat.ID] = e.tg.calls[a.Chat.ID] + 1 // the new messages come, the reread fails
+	r := e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	if !r.OK() || r.NewMessages != 5 {
+		t.Fatalf("report = %+v", r)
+	}
+}
+
+// The oldest messages deleted (an auto-delete timer), or a whole history
+// cleared, are found when an audit round ends.
+func TestAuditFindsTheOldestAndAClearedHistoryGone(t *testing.T) {
+	e := newEnv(t)
+	a, b := target(1, store.ChatSupergroup), target(2, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 150)
+	e.tg.add(b.Chat.ID, 1, 30)
+	ctx := context.Background()
+	both := []tgclient.Target{a, b}
+	e.s.Run(ctx, both, dialogsOf(a, b))
+	ids := make([]int, 20)
+	for i := range ids {
+		ids[i] = i + 1
+	}
+	e.tg.remove(a.Chat.ID, ids...)
+	e.tg.ids[b.Chat.ID] = nil
+	e.s.AuditPages = 20
+	deleted := 0
+	for range 3 {
+		e.now = e.now.Add(6 * time.Hour)
+		deleted += e.s.Run(ctx, both, dialogsOf(a, b)).Deleted
+	}
+	if deleted != 50 {
+		t.Fatalf("found %d deleted, want the 20 oldest and the whole cleared chat of 30", deleted)
+	}
+	if e.count(t, a.Chat.ID) != 150 || e.count(t, b.Chat.ID) != 30 {
+		t.Error("deleted messages left the archive")
 	}
 }

@@ -320,7 +320,7 @@ deleting, forwarding, marking as read, reactions, joining and leaving chats, cha
 | `messages.getDialogs`, `messages.getDialogFilters` | the chat and folder list |
 | `messages.getHistory`, `messages.getReplies`, `messages.search`, `messages.getSearchCounters` | messages, their count, pins, counts by kind |
 | `messages.getForumTopics` | forum topics |
-| `messages.getMessages`, `channels.getMessages` | reread a message for a fresh file reference |
+| `messages.getMessages`, `channels.getMessages` | reread a message for a fresh file reference; confirm, up to 100 at a time, that messages missing from the history were deleted |
 | `channels.getFullChannel` | which group a supergroup grew from |
 | `users.getUsers` | your own id, checking the login |
 | `upload.getFile` | downloading media |
@@ -384,6 +384,7 @@ rclone tgbup runs.
 | No backups to iCloud | macOS asked for access to iCloud during the test run. If it was refused, allow it in System Settings → Privacy & Security → Files and Folders |
 | Google Drive through rclone: no access | the Backups step → «Sign in to Google Drive again» |
 | Linux: runs happen only while you are logged in | `loginctl enable-linger $USER` (once; some systems need sudo) |
+| Many old messages marked «deleted in Telegram» at once | in a group that hides its history from new members, leaving and joining again hides the messages from before: Telegram answers for them as for deleted ones. They stay in the archive; the mark goes away if they come back |
 | The backup password is forgotten | the old snapshots cannot be opened. Set a new password and a new backup place |
 | A run marked failed because of one file | a file with attempts left (5 in all) is downloaded again on the next run and does not fail the run; only a file out of attempts counts as an error |
 | Details of any error | the overview on the `tgbup serve` page (a run opens on a click), `~/Tgbup/logs/tgbup.log` and `run.log` |
