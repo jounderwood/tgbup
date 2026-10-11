@@ -155,16 +155,16 @@ func TestProgressTexts(t *testing.T) {
 	if got := StartText("mac", "schedule", false); got != "▶ tgbup on mac: update scheduled" {
 		t.Errorf("start = %q", got)
 	}
-	if got := DoneText("mac", 3, 0, 1, nil, nil); !strings.Contains(got, "no backup set up") {
+	if got := DoneText("mac", Counts{New: 3, Edited: 0, Files: 1}, nil, nil); !strings.Contains(got, "no backup set up") {
 		t.Errorf("done without backups = %q", got)
 	}
-	if got := DoneText("mac", 2, 3, 0, []string{"x 1"}, nil); !strings.Contains(got, ": 2 new messages, 3 edited, 0 new files") {
+	if got := DoneText("mac", Counts{New: 2, Edited: 3, Files: 0}, []string{"x 1"}, nil); !strings.Contains(got, ": 2 new messages, 3 edited, 0 new files") {
 		t.Errorf("done with edits = %q", got)
 	}
-	if got := DoneText("mac", 0, 0, 0, nil, []string{"~/Tgbup/backup"}); !strings.HasSuffix(got, "0 new files; nothing changed, no new snapshot") {
+	if got := DoneText("mac", Counts{New: 0, Edited: 0, Files: 0}, nil, []string{"~/Tgbup/backup"}); !strings.HasSuffix(got, "0 new files; nothing changed, no new snapshot") {
 		t.Errorf("done, unchanged = %q", got)
 	}
-	if got := DoneText("mac", 2, 0, 0, []string{"gdrive:tgbup 3333bbbb"}, []string{"~/Tgbup/backup"}); !strings.Contains(got, "; snapshot gdrive:tgbup 3333bbbb; already up to date: ~/Tgbup/backup") {
+	if got := DoneText("mac", Counts{New: 2, Edited: 0, Files: 0}, []string{"gdrive:tgbup 3333bbbb"}, []string{"~/Tgbup/backup"}); !strings.Contains(got, "; snapshot gdrive:tgbup 3333bbbb; already up to date: ~/Tgbup/backup") {
 		t.Errorf("done, one place behind = %q", got)
 	}
 	got := SetupText("mac", 4, []string{"Семья"}, []string{"~/Tgbup/backup", "iCloud"}, "06:30, 18:30")

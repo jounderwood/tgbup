@@ -491,3 +491,48 @@ func TestEditsAndReactionsReachTheArchive(t *testing.T) {
 		t.Error("the page does not show the edited message with its earlier version")
 	}
 }
+
+// A message deleted in Telegram after it was archived is marked with the
+// next sync and kept, with its page saying so.
+func TestDeletedMessagesStayMarked(t *testing.T) {
+	cfgPath, archive := newArchive(t)
+	var id int
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		var err error
+		id, err = testenv.SendText(ctx, raw, fx.Peer(), "сейчас удалю", nil, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runSync(t, cfgPath)
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		p := fx.Peer()
+		_, err := raw.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+			Channel: &tg.InputChannel{ChannelID: p.ChannelID, AccessHash: p.AccessHash}, ID: []int{id}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := runSync(t, cfgPath)
+	if !strings.Contains(out, "1 deleted in Telegram") {
+		t.Errorf("the sync does not report the deletion:\n%s", out)
+	}
+	db := openArchive(t, archive)
+	if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); text != "сейчас удалю" {
+		t.Errorf("the deleted message left the archive: %q", text)
+	}
+	if d := scalar[sql.NullInt64](t, db, `SELECT deleted_at FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); !d.Valid {
+		t.Error("the deleted message is not marked")
+	}
+	pages, _ := filepath.Glob(filepath.Join(archive, "html", "*", "*", "p*.html"))
+	marked := false
+	for _, p := range pages {
+		b, _ := os.ReadFile(p)
+		if strings.Contains(string(b), "сейчас удалю") {
+			marked = strings.Contains(string(b), "deleted in Telegram")
+		}
+	}
+	if !marked {
+		t.Error("the page does not mark the deleted message")
+	}
+}

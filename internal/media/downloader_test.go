@@ -76,6 +76,10 @@ func (f *fakeFiles) Message(_ context.Context, _ tg.InputPeerClass, id int) (tg.
 	return docMessage(id, 555, "fresh", int64(len(f.data[555]))), nil
 }
 
+func (f *fakeFiles) Messages(context.Context, tg.InputPeerClass, []int) (tgclient.Page, error) {
+	return tgclient.Page{}, errors.New("not used")
+}
+
 func (f *fakeFiles) HistoryBefore(context.Context, tg.InputPeerClass, int, int) (tgclient.Page, error) {
 	return tgclient.Page{}, errors.New("unused")
 }

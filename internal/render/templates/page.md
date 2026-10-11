@@ -7,7 +7,7 @@
 {{- if .Service}}
 _{{md .Service}}_ · {{md .Sender}} · {{.Time}} ^m{{.ID}}
 {{else}}
-**{{md .Sender}}** · {{.Time}}{{if .Edited}} · edited{{end}}{{if .Pinned}} · pinned{{end}} ^m{{.ID}}
+**{{md .Sender}}** · {{.Time}}{{if .Edited}} · edited{{end}}{{if .Pinned}} · pinned{{end}}{{if .Deleted}} · deleted in Telegram{{end}} ^m{{.ID}}
 
 {{with .Forward}}_{{md .}}_
 {{end}}

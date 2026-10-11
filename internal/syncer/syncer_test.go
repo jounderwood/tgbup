@@ -26,6 +26,7 @@ type fakeTG struct {
 	empty     map[int64]map[int]bool
 	errs      map[int64]error
 	edits     map[int64]map[int]string // chat → message → its text after an edit
+	byID      int                      // Messages calls
 	failAfter map[int64]int
 	calls     map[int64]int
 	before    int
@@ -137,6 +138,29 @@ func (f *fakeTG) ForumTopics(_ context.Context, peer tg.InputPeerClass) ([]tgcli
 
 func (f *fakeTG) Message(context.Context, tg.InputPeerClass, int) (tg.MessageClass, error) {
 	return nil, errors.New("not used")
+}
+
+// Messages gives the ones by id that the chat still has; a deleted one comes
+// back empty, as Telegram does.
+func (f *fakeTG) Messages(_ context.Context, peer tg.InputPeerClass, ids []int) (tgclient.Page, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	chat := key(peer)
+	f.byID++
+	var out tgclient.Page
+	for _, id := range ids {
+		if slices.Contains(f.ids[chat], id) {
+			out.Messages = append(out.Messages, f.message(chat, id))
+		} else {
+			out.Messages = append(out.Messages, &tg.MessageEmpty{ID: id})
+		}
+	}
+	return out, nil
+}
+
+// remove deletes messages from the chat, as in Telegram.
+func (f *fakeTG) remove(chat int64, ids ...int) {
+	f.ids[chat] = slices.DeleteFunc(f.ids[chat], func(id int) bool { return slices.Contains(ids, id) })
 }
 
 func (f *fakeTG) FileChunk(context.Context, tg.InputFileLocationClass, int64, int) ([]byte, error) {
@@ -529,5 +553,48 @@ func TestRecentMessagesAreReadAgainForEdits(t *testing.T) {
 	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
 	if e.tg.before != 0 {
 		t.Errorf("a quiet chat was read again (%d pages)", e.tg.before)
+	}
+}
+
+// A message deleted in Telegram is marked, once Telegram confirms it is gone,
+// and kept; one outside the recent window is left to other means.
+func TestDeletedMessagesAreMarkedAndKept(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Unix(1700000000, 0).Add(time.Hour)
+	a := target(1, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 500)
+	ctx := context.Background()
+	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+
+	e.tg.remove(a.Chat.ID, 500, 420, 10) // the newest, one in the window, one beyond its 3 pages
+	e.tg.byID = 0
+	r := e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	if !r.OK() || r.Deleted != 2 {
+		t.Fatalf("report = %+v", r)
+	}
+	if e.count(t, a.Chat.ID) != 500 {
+		t.Error("a deleted message left the archive")
+	}
+	deleted := func(id int) bool {
+		ms, err := e.st.PageMessages(ctx, a.Chat.ID, []int{id})
+		if err != nil || len(ms) != 1 {
+			t.Fatalf("message %d: %v %v", id, ms, err)
+		}
+		return ms[0].DeletedAt != 0
+	}
+	if !deleted(500) || !deleted(420) || deleted(10) || deleted(421) {
+		t.Errorf("marks: 500 %v, 420 %v, 10 %v, 421 %v", deleted(500), deleted(420), deleted(10), deleted(421))
+	}
+	// The next run asks nothing again about the ones already marked.
+	e.tg.byID = 0
+	if r := e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a)); r.Deleted != 0 || e.tg.byID != 0 {
+		t.Errorf("marked again: %+v, %d lookups", r, e.tg.byID)
+	}
+	// One that comes back (a false alarm) loses its mark.
+	e.tg.add(a.Chat.ID, 420, 420)
+	slices.Sort(e.tg.ids[a.Chat.ID])
+	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	if deleted(420) {
+		t.Error("a message back in Telegram keeps its deleted mark")
 	}
 }

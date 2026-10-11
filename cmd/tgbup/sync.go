@@ -56,6 +56,9 @@ func (s syncSummary) print(w io.Writer) {
 	if s.sync.Updated > 0 {
 		fmt.Fprintf(w, " · %s with new reactions or votes", groupDigits(s.sync.Updated))
 	}
+	if s.sync.Deleted > 0 {
+		fmt.Fprintf(w, " · %s deleted in Telegram (kept here)", groupDigits(s.sync.Deleted))
+	}
 	if n := len(s.sync.Deferred); n > 0 {
 		fmt.Fprintf(w, " · %d deferred to the next run", n)
 	}

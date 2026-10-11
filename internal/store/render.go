@@ -41,7 +41,7 @@ type PageQuery struct {
 func (s *Store) Pages(ctx context.Context, q PageQuery) ([]ThreadPage, error) {
 	query := `
 SELECT msg.chat_id, COALESCE(msg.topic_id, 0), msg.id, msg.date, COALESCE(msg.edit_date, 0), msg.pinned,
-       COALESCE(msg.reactions_json, '') || COALESCE(msg.meta_json, '') || COALESCE(msg.changed_at, ''),
+       COALESCE(msg.reactions_json, '') || COALESCE(msg.meta_json, '') || COALESCE(msg.changed_at, '') || COALESCE('d' || msg.deleted_at, ''),
        COALESCE(m.status, ''), COALESCE(m.local_path, '')
 FROM messages msg
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
@@ -228,6 +228,8 @@ type RenderMessage struct {
 	// FwdName is the name of the forward source when it is a known user or chat.
 	FwdName string
 	Media   *RenderMedia
+	// DeletedAt is when tgbup found it gone from Telegram; 0: it is there.
+	DeletedAt int64
 }
 
 // senderName resolves from_id against users, then forward-source peers, then archived chats.
@@ -253,6 +255,7 @@ SELECT msg.chat_id, msg.id, COALESCE(msg.topic_id, 0), msg.date, COALESCE(msg.fr
        COALESCE(msg.reactions_json, ''), COALESCE(msg.service_action_json, ''), msg.pinned, COALESCE(msg.edit_date, 0),
        COALESCE(msg.meta_json, ''), `+senderName+`,
        COALESCE(NULLIF(trim(COALESCE(fu.first_name, '') || ' ' || COALESCE(fu.last_name, '')), ''), fp.title, fc.title, ''),
+       COALESCE(msg.deleted_at, 0),
        m.key, m.kind, m.file_name, m.mime, m.size, m.status, m.local_path, m.error
 FROM messages msg`+senderJoins+`
 LEFT JOIN users fu ON fu.id = json_extract(msg.fwd_from_json, '$.from_id')
@@ -275,7 +278,7 @@ ORDER BY msg.date, msg.id`, args...)
 		)
 		if err := rows.Scan(&m.ChatID, &m.ID, &m.TopicID, &m.Date, &m.FromID, &m.Text, &m.EntitiesJSON, &m.ReplyToID,
 			&m.FwdFromJSON, &m.ReactionsJSON, &m.ServiceActionJSON, &m.Pinned, &m.EditDate, &m.MetaJSON, &m.SenderName, &m.FwdName,
-			&key, &kind, &name, &mime, &size, &status, &path, &mer); err != nil {
+			&m.DeletedAt, &key, &kind, &name, &mime, &size, &status, &path, &mer); err != nil {
 			return nil, err
 		}
 		if kind.Valid {

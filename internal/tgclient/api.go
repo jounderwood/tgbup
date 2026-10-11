@@ -28,6 +28,9 @@ type Telegram interface {
 	PinnedIDs(ctx context.Context, peer tg.InputPeerClass) ([]int, error)
 	ForumTopics(ctx context.Context, peer tg.InputPeerClass) ([]Topic, error)
 	Message(ctx context.Context, peer tg.InputPeerClass, id int) (tg.MessageClass, error)
+	// Messages reads messages by id, up to 100; a deleted one comes back as
+	// tg.MessageEmpty, or not at all.
+	Messages(ctx context.Context, peer tg.InputPeerClass, ids []int) (Page, error)
 	FileChunk(ctx context.Context, loc tg.InputFileLocationClass, offset int64, limit int) ([]byte, error)
 }
 
@@ -195,22 +198,7 @@ func (a *API) ForumTopics(ctx context.Context, peer tg.InputPeerClass) ([]Topic,
 }
 
 func (a *API) Message(ctx context.Context, peer tg.InputPeerClass, id int) (tg.MessageClass, error) {
-	ids := []tg.InputMessageClass{&tg.InputMessageID{ID: id}}
-	var (
-		res tg.MessagesMessagesClass
-		err error
-	)
-	if ch, ok := peer.(*tg.InputPeerChannel); ok {
-		res, err = a.raw.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
-			Channel: &tg.InputChannel{ChannelID: ch.ChannelID, AccessHash: ch.AccessHash}, ID: ids,
-		})
-	} else {
-		res, err = a.raw.MessagesGetMessages(ctx, ids)
-	}
-	if err != nil {
-		return nil, err
-	}
-	p, err := toPage(res)
+	p, err := a.Messages(ctx, peer, []int{id})
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +208,28 @@ func (a *API) Message(ctx context.Context, peer tg.InputPeerClass, id int) (tg.M
 		}
 	}
 	return nil, fmt.Errorf("message %d not found", id)
+}
+
+func (a *API) Messages(ctx context.Context, peer tg.InputPeerClass, ids []int) (Page, error) {
+	in := make([]tg.InputMessageClass, len(ids))
+	for i, id := range ids {
+		in[i] = &tg.InputMessageID{ID: id}
+	}
+	var (
+		res tg.MessagesMessagesClass
+		err error
+	)
+	if ch, ok := peer.(*tg.InputPeerChannel); ok {
+		res, err = a.raw.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
+			Channel: &tg.InputChannel{ChannelID: ch.ChannelID, AccessHash: ch.AccessHash}, ID: in,
+		})
+	} else {
+		res, err = a.raw.MessagesGetMessages(ctx, in)
+	}
+	if err != nil {
+		return Page{}, err
+	}
+	return toPage(res)
 }
 
 func (a *API) FileChunk(ctx context.Context, loc tg.InputFileLocationClass, offset int64, limit int) ([]byte, error) {

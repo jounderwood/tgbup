@@ -297,3 +297,26 @@ func TestPageShowsEarlierVersions(t *testing.T) {
 		t.Errorf("markdown:\n%s", md)
 	}
 }
+
+// A message deleted in Telegram stays, marked.
+func TestPageMarksDeletedMessages(t *testing.T) {
+	msgs := []store.RenderMessage{{Message: store.Message{ID: 4, Date: at("2026-03-01", "09:00"), Text: "oops"}, SenderName: "Ann",
+		DeletedAt: at("2026-03-02", "10:00")}}
+	p := buildPage(pageInput{Key: store.PageKey{ChatID: 10, N: 1}, Total: 1, Dir: "Mom", Messages: msgs,
+		Locate: func(int64, int) (store.PageKey, bool) { return store.PageKey{}, false }, Loc: time.UTC, Crumbs: []string{"Mom"}})
+	var b bytes.Buffer
+	if err := writePageHTML(&b, p); err != nil {
+		t.Fatal(err)
+	}
+	if html := b.String(); !strings.Contains(html, `<article class="msg deleted" id="m4">`) || !strings.Contains(html, "deleted in Telegram") ||
+		!strings.Contains(html, "oops") {
+		t.Errorf("page:\n%s", html)
+	}
+	b.Reset()
+	if err := writePageMD(&b, p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), " · deleted in Telegram ^m4") {
+		t.Errorf("markdown:\n%s", b.String())
+	}
+}

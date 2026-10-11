@@ -28,6 +28,8 @@ type UpdateDiff struct {
 	// reactions, votes or a link preview.
 	Edited  int `json:"edited,omitempty"`
 	Updated int `json:"updated,omitempty"`
+	// Deleted messages are gone from Telegram; the archive keeps them.
+	Deleted int `json:"deleted,omitempty"`
 	// Pages redrawn: edits, reactions, checklist ticks, a new tgbup's look.
 	Pages int `json:"pages,omitempty"`
 	// Chats is the net change of messages per chat.
@@ -35,7 +37,7 @@ type UpdateDiff struct {
 }
 
 func (d UpdateDiff) empty() bool {
-	return d.Messages == 0 && d.Files == 0 && d.Edited == 0 && d.Updated == 0 && d.Pages == 0 && len(d.Chats) == 0
+	return d.Messages == 0 && d.Files == 0 && d.Edited == 0 && d.Updated == 0 && d.Deleted == 0 && d.Pages == 0 && len(d.Chats) == 0
 }
 
 type SnapshotRef struct {
@@ -122,7 +124,8 @@ func (s *Store) NoteUpdate(ctx context.Context, pages int, now time.Time) (u Upd
 		var changed int
 		if err := tx.QueryRowContext(ctx, `SELECT
   (SELECT count(*) FROM (SELECT DISTINCT chat_id, id FROM message_versions WHERE replaced_at > ?)),
-  (SELECT count(*) FROM messages WHERE changed_at > ?)`, at, at).Scan(&d.Edited, &changed); err != nil {
+  (SELECT count(*) FROM messages WHERE changed_at > ?),
+  (SELECT count(*) FROM messages WHERE deleted_at > ?)`, at, at, at).Scan(&d.Edited, &changed, &d.Deleted); err != nil {
 			return Update{}, false, false, err
 		}
 		d.Updated = max(changed-d.Edited, 0)
@@ -301,6 +304,9 @@ func (d UpdateDiff) Summary() string {
 	}
 	if d.Updated != 0 {
 		parts = append(parts, fmt.Sprintf("%d with new reactions or votes", d.Updated))
+	}
+	if d.Deleted != 0 {
+		parts = append(parts, fmt.Sprintf("%d deleted in Telegram", d.Deleted))
 	}
 	if d.Pages != 0 {
 		parts = append(parts, countOf(d.Pages, "page")+" redrawn")

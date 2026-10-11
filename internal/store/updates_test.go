@@ -116,3 +116,42 @@ func TestNoteUpdateCountsEditsAndReactions(t *testing.T) {
 		t.Errorf("summary = %q", got)
 	}
 }
+
+// Messages gone from Telegram are marked once, counted in the update, kept,
+// and lose the mark when read again from Telegram.
+func TestDeletedMessagesAreMarkedAndCounted(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if err := s.UpsertChat(ctx, Chat{ID: 10, Type: ChatPrivate, Title: "Mom"}); err != nil {
+		t.Fatal(err)
+	}
+	m := Message{ChatID: 10, ID: 5, Date: 1700000000, Text: "x", Raw: []byte{1}}
+	if err := s.SaveBatch(ctx, Batch{ChatID: 10, Messages: []Message{m, {ChatID: 10, ID: 6, Date: 1700000001, Raw: []byte{1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := s.NoteUpdate(ctx, 0, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.ArchivedIDs(ctx, 10, 0, 100); len(ids) != 2 {
+		t.Fatalf("archived ids = %v", ids)
+	}
+	if n, err := s.MarkDeleted(ctx, 10, []int{5}, time.Now().Unix()); err != nil || n != 1 {
+		t.Fatalf("mark = %d %v", n, err)
+	}
+	if n, _ := s.MarkDeleted(ctx, 10, []int{5}, time.Now().Unix()); n != 0 {
+		t.Error("marked twice")
+	}
+	if ids, _ := s.ArchivedIDs(ctx, 10, 0, 100); len(ids) != 1 || ids[0] != 6 {
+		t.Errorf("archived ids after the mark = %v", ids)
+	}
+	u, created, _, err := s.NoteUpdate(ctx, 0, time.Now())
+	if err != nil || !created || u.Diff.Deleted != 1 || u.Diff.Messages != 0 {
+		t.Fatalf("update = %+v %v %v", u.Diff, created, err)
+	}
+	if err := s.SaveBatch(ctx, Batch{ChatID: 10, Messages: []Message{m}}); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.ArchivedIDs(ctx, 10, 0, 100); len(ids) != 2 {
+		t.Errorf("a message read again keeps its mark: %v", ids)
+	}
+}

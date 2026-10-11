@@ -60,6 +60,8 @@ type PageMessage struct {
 	Reactions string
 	// Versions are the message's versions before its edits, oldest first.
 	Versions []PageVersion
+	// Deleted is when tgbup found it gone from Telegram; "" while it is there.
+	Deleted string
 }
 
 // PageVersion is a message as it was before an edit.
@@ -152,6 +154,9 @@ func buildPage(in pageInput) Page {
 			Service:  serviceText(m.ServiceActionJSON, in.Refs[m.ReplyToID].MetaJSON),
 		}
 		pm.Reactions = reactions(m.ReactionsJSON)
+		if m.DeletedAt != 0 {
+			pm.Deleted = time.Unix(m.DeletedAt, 0).In(in.Loc).Format("2006-01-02 15:04")
+		}
 		for _, v := range in.Versions[m.ID] {
 			when := "as sent " + t.Format("15:04")
 			if v.EditDate != 0 {

@@ -169,12 +169,13 @@ VALUES (?, ?, (SELECT COALESCE(MAX(n), 0) + 1 FROM message_versions WHERE chat_i
 			}
 		}
 	case !updated:
-		_, err := tx.ExecContext(ctx, `UPDATE messages SET checked_at = ? WHERE chat_id = ? AND id = ?`, now, m.ChatID, m.ID)
+		// Read from Telegram: it is there, whatever an earlier check thought.
+		_, err := tx.ExecContext(ctx, `UPDATE messages SET checked_at = ?, deleted_at = NULL WHERE chat_id = ? AND id = ?`, now, m.ChatID, m.ID)
 		return changeNone, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE messages SET text = ?, entities_json = ?, meta_json = ?, reactions_json = ?, edit_date = ?, raw = ?, tl_layer = ?,
-  changed_at = ?, checked_at = ?
+  changed_at = ?, checked_at = ?, deleted_at = NULL
 WHERE chat_id = ? AND id = ?`,
 		m.Text, nullStr(m.EntitiesJSON), nullStr(m.MetaJSON), nullStr(m.ReactionsJSON), nullInt(m.EditDate), m.Raw, m.TLLayer,
 		now, now, m.ChatID, m.ID); err != nil {
@@ -281,4 +282,39 @@ func (s *Store) LatestMessageDate(ctx context.Context, chatID int64) (int64, boo
 	var d sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT MAX(date) FROM messages WHERE chat_id = ?`, chatID).Scan(&d)
 	return d.Int64, d.Valid, err
+}
+
+// ArchivedIDs lists the chat's archived messages with ids from lo to hi,
+// inclusive, that are not marked deleted.
+func (s *Store) ArchivedIDs(ctx context.Context, chatID int64, lo, hi int) ([]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages WHERE chat_id = ? AND id BETWEEN ? AND ? AND deleted_at IS NULL ORDER BY id`,
+		chatID, lo, hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// MarkDeleted notes that the messages are gone from Telegram; they stay in
+// the archive. It returns how many were not marked before.
+func (s *Store) MarkDeleted(ctx context.Context, chatID int64, ids []int, at int64) (int, error) {
+	n := 0
+	for _, id := range ids {
+		res, err := s.db.ExecContext(ctx, `UPDATE messages SET deleted_at = ? WHERE chat_id = ? AND id = ? AND deleted_at IS NULL`, at, chatID, id)
+		if err != nil {
+			return n, err
+		}
+		k, _ := res.RowsAffected()
+		n += int(k)
+	}
+	return n, nil
 }

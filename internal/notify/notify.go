@@ -55,12 +55,19 @@ func StartText(host, trigger string, takeout bool) string {
 
 // DoneText says a run finished: what it brought and the snapshots it made
 // ("~/Tgbup/backup 3333bbbb"); unchanged places already held the archive as it is.
-func DoneText(host string, newMessages, edited, newMedia int, snapshots, unchanged []string) string {
-	text := fmt.Sprintf("✓ tgbup on %s: %d new messages", host, newMessages)
-	if edited > 0 {
-		text += fmt.Sprintf(", %d edited", edited)
+// Counts are what a run brought: messages new, edited and deleted in
+// Telegram (kept in the archive), and files downloaded.
+type Counts struct{ New, Edited, Deleted, Files int }
+
+func DoneText(host string, c Counts, snapshots, unchanged []string) string {
+	text := fmt.Sprintf("✓ tgbup on %s: %d new messages", host, c.New)
+	if c.Edited > 0 {
+		text += fmt.Sprintf(", %d edited", c.Edited)
 	}
-	text += fmt.Sprintf(", %d new files", newMedia)
+	if c.Deleted > 0 {
+		text += fmt.Sprintf(", %d deleted in Telegram", c.Deleted)
+	}
+	text += fmt.Sprintf(", %d new files", c.Files)
 	switch {
 	case len(snapshots) == 0 && len(unchanged) == 0:
 		return text + "; no backup set up"

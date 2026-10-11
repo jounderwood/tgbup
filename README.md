@@ -116,7 +116,8 @@ Without systemd (Synology, Alpine…) Settings gives the line to add with `cront
 task scheduler (Synology: Control Panel → Task Scheduler → User-defined script); cron does not make up missed runs.
 A run:
 1. downloads new messages and media, and reads the last 3 days of every active chat again: edits, reactions and votes
-   reach the archive, and an edited message keeps the versions before (Telegram itself keeps only the latest);
+   reach the archive, an edited message keeps the versions before (Telegram itself keeps only the latest), and a
+   message deleted in Telegram is marked «deleted in Telegram» once Telegram confirms it is gone — never removed;
 2. redraws the archive pages that changed;
 3. snapshots the archive into every backup place — even if the download failed;
 4. tells you through the bot: errors right away and with a sound, a summary every 7 days (`notify.summary_every`).
@@ -157,7 +158,7 @@ The archive's pages open straight from the disk, no server needed. In the archiv
 | What | How to read it |
 |---|---|
 | `html/index.html` | the chat list and a search over the whole archive. At the top of every page, «archive as of … · snapshot …» — when the archive was last checked and which snapshot holds it; the link leads to the history of changes and snapshots |
-| a chat's page | opens on the newest messages at the bottom, as in a messenger; older ones are on the previous pages, 500 messages each. The bar at the top stays in view: search (this chat, or all chats with a tick), the list of pages with their dates, and a calendar — pick a day and you are there. Photos, videos, voice messages, files, link previews, places and polls are right in the feed: a video shows its first frame, GIFs and video stickers play silently while in view, a round video plays on a click. An edited message opens its earlier versions, as tgbup found them |
+| a chat's page | opens on the newest messages at the bottom, as in a messenger; older ones are on the previous pages, 500 messages each. The bar at the top stays in view: search (this chat, or all chats with a tick), the list of pages with their dates, and a calendar — pick a day and you are there. Photos, videos, voice messages, files, link previews, places and polls are right in the feed: a video shows its first frame, GIFs and video stickers play silently while in view, a round video plays on a click. An edited message opens its earlier versions, as tgbup found them; one deleted in Telegram stays, marked |
 | `html/media.html` | every photo, video, file, voice message, link, place, contact and poll — with the same previews as in the feed, videos with their length, voice messages playable right in the list and named by who said them. The filters by kind, chat, topic, period and name live in the address and can be bookmarked |
 | `md/` | the same pages in Markdown; the archive folder opens as an Obsidian vault |
 | `media/` | the files themselves, by year and kind: `media/2025/file/2025-06-14_180233_Lease.pdf`, `media/2025/photo/…` (kinds: photo, video, file, voice, round, audio, sticker, gif) |

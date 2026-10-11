@@ -21,10 +21,10 @@
 <h2 class="day" id="{{.Anchor}}"><a href="#{{.Anchor}}">{{.Date}}</a></h2>
 {{- range .Messages}}
 {{- if .Service}}
-<div class="service" id="m{{.ID}}">{{.Sender}} {{.Service}} · {{.Time}}</div>
+<div class="service{{if .Deleted}} deleted{{end}}" id="m{{.ID}}">{{.Sender}} {{.Service}} · {{.Time}}{{with .Deleted}} · <span class="tag deleted" title="tgbup found it gone on {{.}}">deleted in Telegram</span>{{end}}</div>
 {{- else}}
-<article class="msg" id="m{{.ID}}">
-<header><span class="from">{{.Sender}}</span> <a class="time" href="#m{{.ID}}">{{.Time}}</a>{{if .Edited}} <span class="tag">edited</span>{{end}}{{if .Pinned}} <span class="tag">pinned</span>{{end}}</header>
+<article class="msg{{if .Deleted}} deleted{{end}}" id="m{{.ID}}">
+<header><span class="from">{{.Sender}}</span> <a class="time" href="#m{{.ID}}">{{.Time}}</a>{{if .Edited}} <span class="tag">edited</span>{{end}}{{if .Pinned}} <span class="tag">pinned</span>{{end}}{{with .Deleted}} <span class="tag deleted" title="tgbup found it gone on {{.}}; the archive keeps it">deleted in Telegram</span>{{end}}</header>
 {{- with .Forward}}
 <div class="fwd">{{.}}</div>
 {{- end}}

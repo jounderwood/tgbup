@@ -107,3 +107,5 @@ details.versions summary { cursor: pointer; }
 details.versions .version { border-left: 2px solid var(--line); padding: 2px 8px; margin: 4px 0; }
 details.versions .version .when { font-size: 12px; }
 details.versions .version .text { color: var(--fg); opacity: .75; }
+.msg.deleted { opacity: .75; border: 1px dashed var(--line); }
+.tag.deleted { color: #c0392b; border-color: #c0392b88; }
