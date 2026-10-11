@@ -212,8 +212,8 @@ func TestWebScheduleTimesAndOff(t *testing.T) {
 	b, home := webBackend(t)
 	ctx := context.Background()
 	fake := &fakeLaunchctl{}
-	var installed launchdJob
-	b.newJob = func(st setup) (launchdJob, error) {
+	var installed schedJob
+	b.newJob = func(st setup) (schedJob, error) {
 		j, _ := testSchedule(t)
 		j.Exe, j.AgentsDir, j.Times = "/usr/local/bin/tgbup", filepath.Join(home, "LaunchAgents"), st.cfg.Schedule.Clocks()
 		j.launchctl = fake.run
@@ -249,7 +249,7 @@ func TestWebScheduleTimesAndOff(t *testing.T) {
 
 func TestWizardAsksForTimes(t *testing.T) {
 	w, out, _ := testWizard(t, "25:00\n7:05 19:40\n")
-	j, changed, err := w.askTimes(context.Background(), launchdJob{})
+	j, changed, err := w.askTimes(context.Background(), schedJob{})
 	if err != nil || !changed || clockList(j.Times) != "07:05, 19:40" {
 		t.Fatalf("times = %v %v %v\n%s", j.Times, changed, err, out)
 	}

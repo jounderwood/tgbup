@@ -124,8 +124,8 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 	}
 	if st.testDC {
 		sched.Unavailable = "not on Telegram's test servers: the scheduled job runs the real archive"
-	} else if runtime.GOOS != "darwin" {
-		sched.Unavailable = "only on macOS for now: start tgbup run from cron or systemd"
+	} else if j, err := b.job(st); err == nil && j.manual() {
+		sched.Unavailable = "no launchd or systemd here: add the crontab line from «How this works» (crontab -e)"
 	}
 	hows := howItWorks(ctx, st, b.env)
 	for i := range s.Steps {
@@ -304,7 +304,7 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 				return nil, err
 			}
 		}
-		j, err := b.launchd(st)
+		j, err := b.job(st)
 		if err != nil {
 			return nil, err
 		}
@@ -321,13 +321,13 @@ func (b *serveBackend) SetupAction(ctx context.Context, name string, body []byte
 		if st.testDC {
 			return nil, badInput("not on Telegram's test servers: the scheduled job runs the real archive")
 		}
-		j, err := b.launchd(st)
+		j, err := b.job(st)
 		if err != nil {
 			return nil, err
 		}
 		return nil, j.uninstall()
 	case "schedule/check":
-		j, err := b.launchd(st)
+		j, err := b.job(st)
 		if err != nil {
 			return nil, err
 		}
@@ -363,7 +363,7 @@ func (b *serveBackend) installSchedule(st setup) error {
 	if st.testDC {
 		return badInput("not on Telegram's test servers: the scheduled job runs the real archive")
 	}
-	j, err := b.launchd(st)
+	j, err := b.job(st)
 	if err != nil {
 		return err
 	}
@@ -375,11 +375,11 @@ func (b *serveBackend) installSchedule(st setup) error {
 }
 
 // launchd is the scheduled job; tests give one with a fake launchctl.
-func (b *serveBackend) launchd(st setup) (launchdJob, error) {
+func (b *serveBackend) job(st setup) (schedJob, error) {
 	if b.newJob != nil {
 		return b.newJob(st)
 	}
-	return newLaunchdJob(st, b.env)
+	return newSchedJob(st, b.env)
 }
 
 // saveBackupForm applies the backup card: places and password, then creates

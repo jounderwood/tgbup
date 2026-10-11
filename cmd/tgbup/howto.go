@@ -133,8 +133,21 @@ func howItWorks(ctx context.Context, st setup, env Env) map[string]*howTo {
 	}
 	out["backup"] = bk
 
-	j, err := newLaunchdJob(st, env)
-	if err == nil && runtime.GOOS == "darwin" && !st.testDC {
+	j, err := newSchedJob(st, env)
+	switch {
+	case err != nil || st.testDC:
+	case j.Kind == kindSystemd:
+		out["schedule"] = systemdHow(st, j, q)
+	case j.manual():
+		out["schedule"] = &howTo{
+			What: []howLine{{Text: "Neither launchd nor systemd runs here, so tgbup cannot start itself. cron can: this line starts " +
+				"tgbup run at " + clockList(j.Times) + " (a start missed while the computer is off is not made up)."}},
+			Check: []howLine{{Text: "The lines cron has for you:", Cmd: "crontab -l"},
+				{Text: "The last runs' output:", Cmd: "tail -n 50 " + q(j.LogPath)}},
+			Change: []howLine{{Text: "Add it with crontab -e, or in the NAS's task scheduler as a daily task at these times:", Cmd: j.cronLine()},
+				{Text: "Turn it off: remove the line with crontab -e."}},
+		}
+	case j.Kind == kindLaunchd:
 		target := "gui/$(id -u)/" + j.Label
 		out["schedule"] = &howTo{
 			What: []howLine{{Text: "A launchd agent, " + j.Label + ", in " + tildePath(j.path(), home) + " starts " +
@@ -173,6 +186,33 @@ func howItWorks(ctx context.Context, st setup, env Env) map[string]*howTo {
 		Check: []howLine{{Text: "Telegram sent a service message «Data export request» when it was asked for."}},
 	}
 	return out
+}
+
+// systemdHow explains the user timer on Linux.
+func systemdHow(st setup, j schedJob, q func(string) string) *howTo {
+	home := st.paths.Home
+	h := &howTo{
+		What: []howLine{{Text: "A systemd user timer, " + j.Label + ".timer, in " + tildePath(j.timerPath(), home) + ", starts " +
+			j.Label + ".service (" + tildePath(j.servicePath(), home) + "), which runs " + tildePath(j.Exe, home) + " run at " +
+			clockList(j.Times) + "; a start missed while the computer was off runs when it is back. Output goes to " +
+			tildePath(j.LogPath, home) + "."}},
+		Check: []howLine{
+			{Text: "When it runs next, and ran last:", Cmd: "systemctl --user list-timers " + j.Label + ".timer"},
+			{Text: "The last run as systemd saw it:", Cmd: "systemctl --user status " + j.Label + ".service"},
+			{Text: "The last runs' output:", Cmd: "tail -n 50 " + q(j.LogPath)},
+		},
+		Change: []howLine{
+			{Text: "Turn it off (here: «change» → off):", Cmd: "systemctl --user disable --now " + j.Label + ".timer"},
+			{Text: "The times are schedule: {times: […]} in " + tildePath(st.paths.Config, home) + "; «change» here installs them."},
+		},
+	}
+	if j.lingering() {
+		h.What = append(h.What, howLine{Text: "Lingering is on for " + j.User + ": the timer runs also while nobody is logged in."})
+	} else {
+		h.What = append(h.What, howLine{Text: "It runs only while you are logged in. On a server nobody logs in to, " +
+			"let systemd keep your timers running (some systems need sudo):", Cmd: "loginctl enable-linger " + j.User})
+	}
+	return h
 }
 
 func placeNames(repos []string, home string) []string {

@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -72,7 +71,7 @@ func cmdServe(ctx context.Context, args []string, env Env) int {
 	shown, _, _ := net.SplitHostPort(*listen)
 	base := "http://" + net.JoinHostPort(shown, port) + "/"
 	fmt.Fprintf(env.Stdout, "tgbup is at %s?key=%s (this computer only). Ctrl+C stops it.\n", base, srv.Key())
-	if *open && runtime.GOOS == "darwin" {
+	if *open {
 		page := ""
 		// Until the archive can be filled, the page to start from is Settings.
 		if s, err := b.SetupState(ctx); err == nil && !s.(setupState).Complete {
@@ -116,7 +115,7 @@ type serveBackend struct {
 	loginMu   sync.Mutex
 	dialLogin func(context.Context, setup) (authFlow, func(), error) // tests replace it
 	log       *slog.Logger                                           // nil in tests
-	newJob    func(setup) (launchdJob, error)                        // tests replace launchctl
+	newJob    func(setup) (schedJob, error)                        // tests replace launchctl
 	disk      struct {
 		dir, warning string
 		at           time.Time
@@ -220,11 +219,11 @@ func (b *serveBackend) archiveStatus(ctx context.Context, st setup, s *serve.Sta
 func scheduleStatus(st setup, env Env, now time.Time) serve.Schedule {
 	times := st.cfg.Schedule.Clocks()
 	sc := serve.Schedule{Times: strings.Split(clockList(times), ", "), Next: nextRun(now, times)}
-	if runtime.GOOS != "darwin" {
-		sc.Note = "Not on macOS: start tgbup run from cron or systemd"
-		return sc
-	}
-	if j, err := newLaunchdJob(st, env); err == nil {
+	if j, err := newSchedJob(st, env); err == nil {
+		if j.manual() {
+			sc.Note = "Started by cron: Settings → Automatic updates has the line to add"
+			return sc
+		}
 		sc.Installed = j.installedHere() && j.state().Loaded
 	}
 	return sc
@@ -784,10 +783,7 @@ func (b *serveBackend) OpenArchive() error {
 	if !isFile(index) {
 		return fmt.Errorf("%w: the archive has no pages yet: they are drawn after the first download", serve.ErrBadRequest)
 	}
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, index)
-	}
-	return exec.Command("open", index).Run()
+	return openInBrowser(index)
 }
 
 // Snapshots lists the snapshots in a backup place, by its position in the
@@ -920,10 +916,7 @@ func (b *serveBackend) OpenCopy(place int, id string) error {
 	if !isFile(filepath.Join(dir, render.CopyDone)) {
 		return fmt.Errorf("%w: snapshot %s is not restored yet", serve.ErrBadRequest, id)
 	}
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, index)
-	}
-	return exec.Command("open", index).Run()
+	return openInBrowser(index)
 }
 
 // snapshotUpdates is what the archive knows of repo's snapshots, and the

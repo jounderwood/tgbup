@@ -27,11 +27,11 @@ func (f *fakeLaunchctl) run(args ...string) ([]byte, error) {
 	return nil, nil
 }
 
-func testSchedule(t *testing.T) (launchdJob, *fakeLaunchctl) {
+func testSchedule(t *testing.T) (schedJob, *fakeLaunchctl) {
 	t.Helper()
 	f := &fakeLaunchctl{}
 	dir := t.TempDir()
-	return launchdJob{
+	return schedJob{
 		Label: "com.example.tgbup", Exe: "/Users/me/.local/bin/tgbup", AgentsDir: filepath.Join(dir, "LaunchAgents"),
 		LogPath: filepath.Join(dir, "state", "logs", "run.log"), UID: 501, Env: map[string]string{"TGBUP_CONFIG": "/c.yaml"},
 		Times:     config.Default().Schedule.Clocks(),

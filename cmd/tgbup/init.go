@@ -25,6 +25,7 @@ import (
 	"github.com/jounderwood/tgbup/internal/backup"
 	"github.com/jounderwood/tgbup/internal/config"
 	"github.com/jounderwood/tgbup/internal/notify"
+	"github.com/jounderwood/tgbup/internal/serve"
 	"github.com/jounderwood/tgbup/internal/store"
 	"github.com/jounderwood/tgbup/internal/tgclient"
 )
@@ -1145,12 +1146,12 @@ func (w *wizard) firstSync(ctx context.Context) error {
 	}
 }
 
-func (w *wizard) job() (launchdJob, error) {
+func (w *wizard) job() (schedJob, error) {
 	st, err := w.load()
 	if err != nil {
-		return launchdJob{}, err
+		return schedJob{}, err
 	}
-	return newLaunchdJob(st, w.env)
+	return newSchedJob(st, w.env)
 }
 
 func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
@@ -1159,15 +1160,15 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 		// The job is one per Mac and runs the real archive.
 		return "left alone on Telegram's test servers (TGBUP_TEST_DC=1)", true, nil
 	}
-	if runtime.GOOS != "darwin" {
-		return "not on macOS: start `tgbup run` from cron or systemd 4 times a day", true, nil
-	}
 	if err != nil {
 		return "", false, err
 	}
-	j, err := newLaunchdJob(st, w.env)
+	j, err := newSchedJob(st, w.env)
 	if err != nil {
 		return "", false, err
+	}
+	if j.manual() {
+		return "no launchd or systemd here: add the crontab line from «How this works» (crontab -e)", false, nil
 	}
 	if !j.installedHere() || !j.state().Loaded {
 		if j.legacyInstalled() {
@@ -1177,6 +1178,9 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 		return "", false, nil
 	}
 	status := "runs at " + clockList(st.cfg.Schedule.Clocks())
+	if j.Kind == kindSystemd && !j.lingering() {
+		status += " while you are logged in (loginctl enable-linger " + j.User + " runs it always)"
+	}
 	// launchd forgets exit codes on reboot; the archive keeps every run.
 	switch r, ok, err := lastRun(ctx, st.cfg.ArchiveDir); {
 	case err != nil:
@@ -1211,7 +1215,7 @@ func lastRun(ctx context.Context, archiveDir string) (store.Run, bool, error) {
 
 // askTimes asks when to run; Enter keeps the times in the config. It returns
 // the job with the times chosen and whether they changed.
-func (w *wizard) askTimes(ctx context.Context, j launchdJob) (launchdJob, bool, error) {
+func (w *wizard) askTimes(ctx context.Context, j schedJob) (schedJob, bool, error) {
 	st, err := w.load()
 	if err != nil {
 		return j, false, err
@@ -1239,14 +1243,20 @@ func (w *wizard) schedule(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The job is one per Mac and runs the real archive: test runs never touch it.
-	if st.testDC || runtime.GOOS != "darwin" {
-		fmt.Fprintln(w.out, "  left alone: the scheduled job is the real archive's, on macOS only")
+	// The job is one per computer and runs the real archive: test runs never touch it.
+	if st.testDC {
+		fmt.Fprintln(w.out, "  left alone: the scheduled job is the real archive's")
 		return nil
 	}
 	j, err := w.job()
 	if err != nil {
 		return err
+	}
+	if j.manual() {
+		fmt.Fprintln(w.out, "  No launchd or systemd here: to run tgbup on its own, add this with crontab -e")
+		fmt.Fprintln(w.out, "  (or to the NAS's task scheduler):")
+		fmt.Fprintln(w.out, indent(j.cronLine(), "    "))
+		return nil
 	}
 	installed := j.installedHere() && j.state().Loaded
 	if installed {
@@ -1290,7 +1300,7 @@ func (w *wizard) schedule(ctx context.Context) error {
 			what += " and alerts on errors"
 		}
 		fmt.Fprintf(w.out, "  tgbup run %s, at %s.\n", what, clockList(st.cfg.Schedule.Clocks()))
-		fmt.Fprintln(w.out, "  A run missed while the Mac sleeps starts on wake-up.")
+		fmt.Fprintln(w.out, "  A run missed while the computer sleeps or is off starts when it is back.")
 		if ok, err := w.yes(ctx, "  Install the schedule?", true); err != nil {
 			return err
 		} else if !ok {
@@ -1303,7 +1313,11 @@ func (w *wizard) schedule(ctx context.Context) error {
 		notifySetup(ctx, st, func(err error) { fmt.Fprintf(w.out, "  could not tell the bot: %v\n", err) })
 	}
 	fmt.Fprintln(w.out, "  A first run in the background checks that it all works unattended.")
-	fmt.Fprintln(w.out, "  macOS may ask to let tgbup access iCloud or other folders: allow it.")
+	if j.Kind == kindLaunchd {
+		fmt.Fprintln(w.out, "  macOS may ask to let tgbup access iCloud or other folders: allow it.")
+	} else if !j.lingering() {
+		fmt.Fprintln(w.out, "  It runs while you are logged in; to run it always (a server): loginctl enable-linger "+j.User)
+	}
 	if ok, err := w.yes(ctx, "  Start it now?", true); err != nil {
 		return err
 	} else if !ok {
@@ -1317,7 +1331,7 @@ func (w *wizard) schedule(ctx context.Context) error {
 
 // watchRun starts the job, waits for it to end and reports the run it
 // recorded in the archive.
-func (w *wizard) watchRun(ctx context.Context, j launchdJob, archiveDir string, every, limit time.Duration) error {
+func (w *wizard) watchRun(ctx context.Context, j schedJob, archiveDir string, every, limit time.Duration) error {
 	// Runs are stored with second precision.
 	start := time.Now().Truncate(time.Second)
 	if err := j.kickstart(); err != nil {
@@ -1498,7 +1512,20 @@ func tildePath(p, home string) string {
 // canOpen reports whether links can be opened for the person at the terminal.
 func (w *wizard) canOpen() bool { return runtime.GOOS == "darwin" && isTerminal(w.out) }
 
-func openURL(u string) { _ = exec.Command("open", u).Start() }
+func openURL(u string) { _ = openInBrowser(u) }
+
+// openInBrowser shows a page or a file in the default browser: open on
+// macOS, xdg-open on a Linux desktop; without either it says where it is.
+func openInBrowser(target string) error {
+	name := "open"
+	if runtime.GOOS != "darwin" {
+		if _, err := exec.LookPath("xdg-open"); err != nil {
+			return fmt.Errorf("%w: open %s in a browser", serve.ErrBadRequest, target)
+		}
+		name = "xdg-open"
+	}
+	return exec.Command(name, target).Start()
+}
 
 func copyToClipboard(s string) error {
 	if runtime.GOOS != "darwin" {

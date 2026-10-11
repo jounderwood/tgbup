@@ -15,8 +15,8 @@ schedule, and encrypted backups go to every place you choose.
 - **Everything stays with you.** The control page opens only on this computer, and only with the key in the address
   tgbup prints. Keys and passwords are in a hidden file with mode 600, backups are encrypted.
 
-Made for macOS. On Linux (a NAS, say) downloading, backups, restore and the control page work; the schedule is set up
-there with cron or systemd (`tgbup run`), and there is no folder picker or clipboard.
+Made for macOS, and runs on Linux (a NAS, say) too: there the schedule is a systemd user timer, or a line for cron
+where there is no systemd, and there is no folder picker or clipboard.
 
 How it works inside (subsystems, layout on disk) and the decisions log, in Russian: [`docs/PROJECT.md`](docs/PROJECT.md).
 
@@ -108,7 +108,11 @@ as you. An install made before `~/Tgbup` (settings in `~/.config/tgbup`) keeps w
 
 ## What happens next
 
-The schedule starts `tgbup run` at the chosen times. If the computer was asleep, a missed run starts after it wakes up.
+The schedule starts `tgbup run` at the chosen times: a launchd agent named `tgbup` on macOS, a systemd user timer
+`tgbup.timer` on Linux. If the computer was asleep or off, a missed run starts when it is back. On a Linux server nobody
+logs in to, let systemd run your timers while you are logged out, once: `loginctl enable-linger $USER` (some systems
+need sudo); Settings says when it is needed. Without systemd (Synology, Alpine…) Settings gives the line to add with
+`crontab -e` or to the NAS's task scheduler; cron does not make up missed runs.
 A run:
 1. downloads new messages and media;
 2. redraws the archive pages that changed;
@@ -357,7 +361,7 @@ rclone tgbup runs.
 | `tgbup restore` | restore the archive from a backup (`--from`, `--snapshot`, `--to`, `--list`; `--copy` for a copy to look at, next to the archive, touching neither the archive nor the settings) |
 | `tgbup render` | redraw the pages without Telegram |
 | `tgbup export <chat>` | a zip of a chat, a topic or a period |
-| `tgbup schedule install\|status\|uninstall` | the launchd schedule (times in `schedule.times` or Settings) |
+| `tgbup schedule install\|status\|uninstall` | the schedule: launchd on macOS, a systemd timer on Linux, a cron line elsewhere (times in `schedule.times` or Settings) |
 | `tgbup notify test` | a test message from the bot |
 | `tgbup login` | log in to Telegram again |
 | `tgbup deps` | where restic and rclone are (downloads them if missing) |
@@ -374,6 +378,7 @@ rclone tgbup runs.
 | «The disk with the archive is not encrypted» | turn on FileVault (Mac) or move the archive to an encrypted volume |
 | No backups to iCloud | macOS asked for access to iCloud during the test run. If it was refused, allow it in System Settings → Privacy & Security → Files and Folders |
 | Google Drive through rclone: no access | the Backups step → «Sign in to Google Drive again» |
+| Linux: runs happen only while you are logged in | `loginctl enable-linger $USER` (once; some systems need sudo) |
 | The backup password is forgotten | the old snapshots cannot be opened. Set a new password and a new backup place |
 | A run marked failed because of one file | a file with attempts left (5 in all) is downloaded again on the next run and does not fail the run; only a file out of attempts counts as an error |
 | Details of any error | the overview on the `tgbup serve` page (a run opens on a click), `~/Tgbup/logs/tgbup.log` and `run.log` |

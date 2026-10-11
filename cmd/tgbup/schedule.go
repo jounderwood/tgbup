@@ -26,26 +26,51 @@ const launchdLabel = "tgbup"
 // the two never both run.
 const legacyLabel = "com.gitlab.joeunderwood.tgbup"
 
-type launchdJob struct {
+// The kinds of schedulers a job can be set up with.
+const (
+	kindLaunchd = "launchd" // macOS: a launchd agent
+	kindSystemd = "systemd" // Linux with systemd: a user timer
+	kindCron    = "cron"    // anything else: a crontab line the person adds
+)
+
+// schedJob is the job that starts tgbup run at schedule.times: a launchd
+// agent on macOS, a systemd user timer on Linux, or, without either, a line
+// for cron. A start missed while the computer slept or was off runs once
+// when it is back (launchd, systemd; not cron).
+type schedJob struct {
+	Kind      string // "" is launchd
 	Label     string
 	Exe       string
-	AgentsDir string
+	AgentsDir string // launchd
+	UnitDir   string // systemd: ~/.config/systemd/user
 	LogPath   string
 	UID       int
+	User      string // systemd: whose lingering keeps the timer running logged out
 	Env       map[string]string
-	// Times are when launchd starts tgbup run (schedule.times); a start
-	// missed while the Mac sleeps runs once on wake-up.
 	Times     []config.Clock
 	launchctl func(args ...string) ([]byte, error)
+	systemctl func(args ...string) ([]byte, error) // run with --user
+	loginctl  func(args ...string) ([]byte, error)
 	// retryDelay is the pause between bootstrap attempts while launchd is still
 	// tearing down the job that was just booted out.
 	retryDelay time.Duration
 }
 
-func (j launchdJob) path() string   { return filepath.Join(j.AgentsDir, j.Label+".plist") }
-func (j launchdJob) target() string { return fmt.Sprintf("gui/%d/%s", j.UID, j.Label) }
+// manual: nothing can be installed here; the person adds cronLine.
+func (j schedJob) manual() bool { return j.Kind == kindCron }
 
-func (j launchdJob) plist() []byte {
+func (j schedJob) path() string {
+	switch j.Kind {
+	case kindSystemd:
+		return j.timerPath()
+	case kindCron:
+		return ""
+	}
+	return filepath.Join(j.AgentsDir, j.Label+".plist")
+}
+func (j schedJob) target() string { return fmt.Sprintf("gui/%d/%s", j.UID, j.Label) }
+
+func (j schedJob) plist() []byte {
 	var b bytes.Buffer
 	esc := html.EscapeString
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
@@ -73,9 +98,15 @@ func (j launchdJob) plist() []byte {
 	return b.Bytes()
 }
 
-func (j launchdJob) install() error {
+func (j schedJob) install() error {
 	if strings.Contains(j.Exe, string(filepath.Separator)+"go-build") {
 		return errors.New("run an installed tgbup (make install), not go run")
+	}
+	switch j.Kind {
+	case kindSystemd:
+		return j.systemdInstall()
+	case kindCron:
+		return errors.New("no launchd or systemd here: add this line with crontab -e: " + j.cronLine())
 	}
 	if err := os.MkdirAll(filepath.Dir(j.LogPath), 0o700); err != nil {
 		return err
@@ -103,7 +134,13 @@ func (j launchdJob) install() error {
 	return err
 }
 
-func (j launchdJob) uninstall() error {
+func (j schedJob) uninstall() error {
+	switch j.Kind {
+	case kindSystemd:
+		return j.systemdUninstall()
+	case kindCron:
+		return errors.New("remove the tgbup line with crontab -e")
+	}
 	_, _ = j.launchctl("bootout", j.target())
 	if err := os.Remove(j.path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -112,18 +149,21 @@ func (j launchdJob) uninstall() error {
 }
 
 // legacy is the job as earlier versions named it.
-func (j launchdJob) legacy() launchdJob {
+func (j schedJob) legacy() schedJob {
 	j.Label = legacyLabel
 	return j
 }
 
 // legacyInstalled: a job under the old name is still there.
-func (j launchdJob) legacyInstalled() bool {
+func (j schedJob) legacyInstalled() bool {
+	if j.Kind != "" && j.Kind != kindLaunchd {
+		return false
+	}
 	_, err := os.Stat(j.legacy().path())
 	return err == nil
 }
 
-func (j launchdJob) removeLegacy() error {
+func (j schedJob) removeLegacy() error {
 	old := j.legacy()
 	if !j.legacyInstalled() {
 		return nil
@@ -135,7 +175,13 @@ func (j launchdJob) removeLegacy() error {
 	return nil
 }
 
-func (j launchdJob) status() string {
+func (j schedJob) status() string {
+	switch j.Kind {
+	case kindSystemd:
+		return j.systemdStatus()
+	case kindCron:
+		return "no launchd or systemd here: add this line with crontab -e:\n" + j.cronLine()
+	}
 	if _, err := os.Stat(j.path()); err != nil {
 		return "not installed"
 	}
@@ -165,7 +211,7 @@ func jobEnv(getenv func(string) string) map[string]string {
 	return out
 }
 
-// newLaunchdJob describes the job for this tgbup binary.
+// newSchedJob describes the job for this tgbup binary.
 // clockList is "00:30, 06:30".
 func clockList(times []config.Clock) string {
 	out := make([]string, len(times))
@@ -175,21 +221,34 @@ func clockList(times []config.Clock) string {
 	return strings.Join(out, ", ")
 }
 
-func newLaunchdJob(st setup, env Env) (launchdJob, error) {
+func newSchedJob(st setup, env Env) (schedJob, error) {
 	p := st.paths
 	exe, err := os.Executable()
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
 	}
 	if err != nil {
-		return launchdJob{}, err
+		return schedJob{}, err
 	}
-	return launchdJob{
-		Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.Home, "Library", "LaunchAgents"),
+	j := schedJob{
+		Kind: kindLaunchd, Label: launchdLabel, Exe: exe, AgentsDir: filepath.Join(p.Home, "Library", "LaunchAgents"),
 		LogPath: p.RunLog(), UID: os.Getuid(), Env: jobEnv(env.Getenv), Times: st.cfg.Schedule.Clocks(),
 		retryDelay: time.Second,
 		launchctl:  func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
-	}, nil
+		systemctl: func(args ...string) ([]byte, error) {
+			return exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
+		},
+		loginctl: func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() },
+	}
+	if runtime.GOOS != "darwin" {
+		j.Kind, j.UnitDir, j.User = kindCron, systemdUnitDir(p.Home, env.Getenv), env.Getenv("USER")
+		// A user manager answers when systemd runs this login (most Linux, NAS
+		// systems with systemd); without it the person adds a cron line.
+		if _, err := j.systemctl("show-environment"); err == nil {
+			j.Kind = kindSystemd
+		}
+	}
+	return j, nil
 }
 
 // jobState is what launchd reports about the job.
@@ -200,7 +259,13 @@ type jobState struct {
 	LastExit string
 }
 
-func (j launchdJob) state() jobState {
+func (j schedJob) state() jobState {
+	switch j.Kind {
+	case kindSystemd:
+		return j.systemdState()
+	case kindCron:
+		return jobState{}
+	}
 	out, err := j.launchctl("print", j.target())
 	if err != nil {
 		return jobState{}
@@ -222,12 +287,29 @@ func (j launchdJob) state() jobState {
 }
 
 // installedHere reports whether the job file starts this same binary.
-func (j launchdJob) installedHere() bool {
+func (j schedJob) installedHere() bool {
+	switch j.Kind {
+	case kindSystemd:
+		b, err := os.ReadFile(j.servicePath())
+		return err == nil && bytes.Contains(b, []byte("ExecStart="+unitQuote(j.Exe)+" run\n"))
+	case kindCron:
+		return false
+	}
 	b, err := os.ReadFile(j.path())
 	return err == nil && bytes.Contains(b, []byte("<string>"+html.EscapeString(j.Exe)+"</string>"))
 }
 
-func (j launchdJob) kickstart() error {
+func (j schedJob) kickstart() error {
+	switch j.Kind {
+	case kindSystemd:
+		// --no-block: the service is oneshot, and the page waits for nobody.
+		if out, err := j.systemctl("start", "--no-block", j.Label+".service"); err != nil {
+			return fmt.Errorf("systemctl --user start: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	case kindCron:
+		return errors.New("cron starts tgbup run by itself; run it now with: tgbup run")
+	}
 	if out, err := j.launchctl("kickstart", j.target()); err != nil {
 		return fmt.Errorf("launchctl kickstart: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -248,13 +330,16 @@ func cmdSchedule(args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "tgbup schedule: not with TGBUP_TEST_DC=1: the scheduled job runs the real archive")
 		return 1
 	}
-	if runtime.GOOS != "darwin" {
-		fmt.Fprintln(env.Stderr, "tgbup schedule: only macOS (launchd) for now; use cron or systemd to start `tgbup run`")
-		return 1
-	}
-	j, err := newLaunchdJob(p, env)
+	j, err := newSchedJob(p, env)
 	if err != nil {
 		fmt.Fprintln(env.Stderr, "tgbup schedule:", err)
+		return 1
+	}
+	if j.manual() {
+		fmt.Fprintln(env.Stdout, j.status())
+		if args[0] == "status" {
+			return 0
+		}
 		return 1
 	}
 	switch args[0] {
