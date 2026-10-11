@@ -48,7 +48,7 @@
   bin/restic-*/, bin/rclone-*/     скачанные зависимости
 ~/.config/rclone/rclone.conf       вход в Google Drive через rclone (если выбран)               → не в снимке
 <другие места бэкапа>              iCloud, Google Drive, внешние диски и любые restic-репозитории
-~/Library/LaunchAgents/com.gitlab.joeunderwood.tgbup.plist   tgbup run в schedule.times (по умолчанию 00:30, 06:30, 12:30, 18:30)
+~/Library/LaunchAgents/tgbup.plist                           tgbup run в schedule.times (по умолчанию 00:30, 06:30, 12:30, 18:30)
 ```
 Установка до `~/Tgbup` (`~/.config/tgbup/config.yaml` и `secrets.env`, архив в `~/TelegramArchive`) продолжает
 работать: если нового конфига нет, а старый есть, берётся старый, журналы — в `~/.local/state/tgbup/logs`.

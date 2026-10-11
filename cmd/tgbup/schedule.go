@@ -18,7 +18,13 @@ import (
 	"github.com/jounderwood/tgbup/internal/config"
 )
 
-const launchdLabel = "com.gitlab.joeunderwood.tgbup"
+// launchdLabel names the job in launchctl, Login Items and LaunchAgents.
+const launchdLabel = "tgbup"
+
+// legacyLabel is the name earlier versions gave the job (after the project's
+// first address); installing or removing the job removes that one too, so
+// the two never both run.
+const legacyLabel = "com.gitlab.joeunderwood.tgbup"
 
 type launchdJob struct {
 	Label     string
@@ -80,6 +86,9 @@ func (j launchdJob) install() error {
 	if err := os.WriteFile(j.path(), j.plist(), 0o644); err != nil {
 		return err
 	}
+	if err := j.removeLegacy(); err != nil {
+		return err
+	}
 	// Replace a job installed earlier (another tgbup path or schedule); none is fine.
 	_, _ = j.launchctl("bootout", j.target())
 	var err error
@@ -97,6 +106,30 @@ func (j launchdJob) install() error {
 func (j launchdJob) uninstall() error {
 	_, _ = j.launchctl("bootout", j.target())
 	if err := os.Remove(j.path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return j.removeLegacy()
+}
+
+// legacy is the job as earlier versions named it.
+func (j launchdJob) legacy() launchdJob {
+	j.Label = legacyLabel
+	return j
+}
+
+// legacyInstalled: a job under the old name is still there.
+func (j launchdJob) legacyInstalled() bool {
+	_, err := os.Stat(j.legacy().path())
+	return err == nil
+}
+
+func (j launchdJob) removeLegacy() error {
+	old := j.legacy()
+	if !j.legacyInstalled() {
+		return nil
+	}
+	_, _ = j.launchctl("bootout", old.target())
+	if err := os.Remove(old.path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil

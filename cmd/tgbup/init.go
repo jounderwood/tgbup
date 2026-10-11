@@ -1170,6 +1170,10 @@ func (w *wizard) checkSchedule(ctx context.Context) (string, bool, error) {
 		return "", false, err
 	}
 	if !j.installedHere() || !j.state().Loaded {
+		if j.legacyInstalled() {
+			// It still runs: nothing is missed until it is installed again.
+			return "installed under its old name " + legacyLabel + ": save the times again to rename it to " + launchdLabel, false, nil
+		}
 		return "", false, nil
 	}
 	status := "runs at " + clockList(st.cfg.Schedule.Clocks())

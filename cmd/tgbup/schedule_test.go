@@ -119,3 +119,31 @@ func TestLaunchdPlistUsesTheChosenTimes(t *testing.T) {
 		t.Errorf("plist has other times:\n%s", got)
 	}
 }
+
+// A job installed by an earlier version under the old name is removed when
+// the job is installed (or removed), so the two never both run.
+func TestScheduleReplacesTheOldName(t *testing.T) {
+	j, f := testSchedule(t)
+	old := j.legacy()
+	if err := os.MkdirAll(j.AgentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old.path(), old.plist(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !j.legacyInstalled() {
+		t.Fatal("the old job is not seen")
+	}
+	if err := j.install(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old.path()); !os.IsNotExist(err) {
+		t.Error("the old job's file stays")
+	}
+	if !strings.Contains(strings.Join(f.calls, "|"), "bootout gui/501/"+legacyLabel) {
+		t.Errorf("the old job was not stopped: %q", f.calls)
+	}
+	if _, err := os.Stat(j.path()); err != nil {
+		t.Errorf("the new job is not there: %v", err)
+	}
+}
