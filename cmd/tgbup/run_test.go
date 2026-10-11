@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/backup"
-	"github.com/joeunderwood/tgbup/internal/notify"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/syncer"
+	"github.com/jounderwood/tgbup/internal/backup"
+	"github.com/jounderwood/tgbup/internal/notify"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/syncer"
 )
 
 type fakeBot struct {

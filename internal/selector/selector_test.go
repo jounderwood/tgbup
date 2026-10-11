@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeunderwood/tgbup/internal/config"
-	"github.com/joeunderwood/tgbup/internal/selector"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/selector"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 var (

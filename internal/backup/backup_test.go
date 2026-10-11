@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/config"
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // resticPath finds a real restic: TGBUP_TEST_RESTIC, or one on PATH.

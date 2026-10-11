@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // mediaEntry is one item on the media page. Keys are short: a big chat has

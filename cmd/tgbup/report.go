@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/joeunderwood/tgbup/internal/stats"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/stats"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 const (

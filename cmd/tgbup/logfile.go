@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/config"
 )
 
 const (

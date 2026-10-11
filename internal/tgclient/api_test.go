@@ -9,7 +9,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgmock"
 
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 var peer = &tg.InputPeerChannel{ChannelID: 1, AccessHash: 2}

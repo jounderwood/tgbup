@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/syncer"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/syncer"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 func TestUnresolvedIncludeFailsTheRun(t *testing.T) {

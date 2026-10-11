@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joeunderwood/tgbup/internal/config"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 const (

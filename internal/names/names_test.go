@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeunderwood/tgbup/internal/names"
+	"github.com/jounderwood/tgbup/internal/names"
 )
 
 func TestCleanSanitizes(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/jounderwood/tgbup/internal/convert"
 )
 
 func photoMessage() *tg.Message {

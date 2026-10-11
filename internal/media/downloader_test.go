@@ -19,10 +19,10 @@ import (
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/sys/unix"
 
-	"github.com/joeunderwood/tgbup/internal/convert"
-	"github.com/joeunderwood/tgbup/internal/media"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/convert"
+	"github.com/jounderwood/tgbup/internal/media"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 const chatN = int64(1)
@@ -282,6 +282,10 @@ func TestNameTakenOnDiskGetsTheNextOne(t *testing.T) {
 		t.Fatal("an existing file was overwritten")
 	}
 	want := filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026 (2).pdf")
+	if _, err := os.Lstat(strings.Replace(other, "ОТЧЁТ", "отчёт", 1)); err != nil {
+		// A disk that tells case apart (Linux) holds both names side by side.
+		want = filepath.Join("media", "1970", "file", "1970-01-01_000001_отчёт 2026.pdf")
+	}
 	if i := e.info(t); i.LocalPath != want {
 		t.Fatalf("path = %s, want %s", i.LocalPath, want)
 	}

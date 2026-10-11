@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 func at(day, hhmm string) int64 {

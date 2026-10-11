@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // A tick made after the checklist was downloaded reaches its card, and the

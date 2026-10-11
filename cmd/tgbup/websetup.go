@@ -20,8 +20,8 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/joeunderwood/tgbup/internal/notify"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/notify"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 // The web setup: the same steps as tgbup init, through the same step code.

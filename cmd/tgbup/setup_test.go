@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/config"
 	"os"
 	"path/filepath"
 	"strings"

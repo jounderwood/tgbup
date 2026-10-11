@@ -14,10 +14,10 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/joeunderwood/tgbup/internal/convert"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/syncer"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/convert"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/syncer"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 type fakeTG struct {

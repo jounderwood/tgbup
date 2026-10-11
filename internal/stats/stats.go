@@ -8,8 +8,8 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 type Counter interface {

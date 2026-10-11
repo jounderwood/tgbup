@@ -14,13 +14,13 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 
-	"github.com/joeunderwood/tgbup/internal/config"
-	"github.com/joeunderwood/tgbup/internal/media"
-	"github.com/joeunderwood/tgbup/internal/render"
-	"github.com/joeunderwood/tgbup/internal/stats"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/syncer"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/media"
+	"github.com/jounderwood/tgbup/internal/render"
+	"github.com/jounderwood/tgbup/internal/stats"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/syncer"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 type syncSummary struct {

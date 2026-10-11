@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/convert"
+	"github.com/jounderwood/tgbup/internal/convert"
 )
 
 // PageMeta is the message's non-file media prepared for display.

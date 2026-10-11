@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/backup"
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/backup"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // historyLimit is how many updates history.html lists, newest first.

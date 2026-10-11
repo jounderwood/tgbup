@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // exportEnv: a forum "Family" (General in Feb, Expenses in Mar with a document),

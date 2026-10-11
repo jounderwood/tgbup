@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/names"
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/names"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 // DefaultPageSize is how many messages one page holds.

@@ -6,7 +6,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 func ExtractMedia(m *tg.Message) (store.Media, bool) {

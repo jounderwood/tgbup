@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/joeunderwood/tgbup/internal/backup"
-	"github.com/joeunderwood/tgbup/internal/deps"
-	"github.com/joeunderwood/tgbup/internal/serve"
+	"github.com/jounderwood/tgbup/internal/backup"
+	"github.com/jounderwood/tgbup/internal/deps"
+	"github.com/jounderwood/tgbup/internal/serve"
 )
 
 // cmdRestore brings the archive back from a backup without running restic by hand.

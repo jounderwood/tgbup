@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/config"
 )
 
 func includeIDs(t *testing.T, cfg config.Config) []int64 {

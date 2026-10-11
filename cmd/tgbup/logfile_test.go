@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeunderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/config"
 )
 
 func TestLogTeeWritesLinesToTheFile(t *testing.T) {

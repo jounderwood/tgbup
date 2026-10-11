@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 func siteFixture(t *testing.T) (*store.Store, string) {

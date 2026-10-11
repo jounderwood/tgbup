@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeunderwood/tgbup/internal/render"
-	"github.com/joeunderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/render"
+	"github.com/jounderwood/tgbup/internal/store"
 )
 
 var monthRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)

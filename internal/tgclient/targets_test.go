@@ -9,9 +9,9 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgmock"
 
-	"github.com/joeunderwood/tgbup/internal/config"
-	"github.com/joeunderwood/tgbup/internal/store"
-	"github.com/joeunderwood/tgbup/internal/tgclient"
+	"github.com/jounderwood/tgbup/internal/config"
+	"github.com/jounderwood/tgbup/internal/store"
+	"github.com/jounderwood/tgbup/internal/tgclient"
 )
 
 var dialogs = []tgclient.Dialog{

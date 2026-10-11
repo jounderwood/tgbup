@@ -25,7 +25,7 @@ How it works inside (subsystems, layout on disk) and the decisions log, in Russi
 You need a phone with Telegram (for the login code) and 10–15 minutes. The first download may take longer if the
 chats hold a lot of media. Install tgbup in one of three ways.
 
-**A release build.** [Releases](https://github.com/joeunderwood/tgbup/releases) has archives for macOS (Apple Silicon
+**A release build.** [Releases](https://github.com/jounderwood/tgbup/releases) has archives for macOS (Apple Silicon
 and Intel) and Linux. Put `tgbup` into `~/.local/bin` and open the setup:
 
 ```bash
@@ -41,7 +41,7 @@ The first command is for macOS only: the build is not signed, and without it mac
 **With Go** (1.26 or newer):
 
 ```bash
-go install github.com/joeunderwood/tgbup/cmd/tgbup@latest
+go install github.com/jounderwood/tgbup/cmd/tgbup@latest
 ```
 
 This puts `tgbup` into `~/go/bin`; then `tgbup serve --open`.
