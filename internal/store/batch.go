@@ -318,3 +318,37 @@ func (s *Store) MarkDeleted(ctx context.Context, chatID int64, ids []int, at int
 	}
 	return n, nil
 }
+
+// Audit is where a chat's audit stands.
+type Audit struct {
+	ChatID    int64
+	BeforeID  int   // the current round goes on below this id; 0: from the newest
+	AuditedAt int64 // when the last full round ended; 0: never
+}
+
+// Audits lists the chats whose first download is done, the least recently
+// audited first: the next run goes on with them.
+func (s *Store) Audits(ctx context.Context) ([]Audit, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_id, audit_before_id, COALESCE(audited_at, 0) FROM sync_cursors
+WHERE backfill_done ORDER BY COALESCE(audited_at, 0), chat_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Audit
+	for rows.Next() {
+		var a Audit
+		if err := rows.Scan(&a.ChatID, &a.BeforeID, &a.AuditedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SetAudit records where a chat's audit stands.
+func (s *Store) SetAudit(ctx context.Context, a Audit) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sync_cursors SET audit_before_id = ?, audited_at = NULLIF(?, 0) WHERE chat_id = ?`,
+		a.BeforeID, a.AuditedAt, a.ChatID)
+	return err
+}

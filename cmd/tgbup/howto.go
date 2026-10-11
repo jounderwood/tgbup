@@ -182,6 +182,19 @@ func howItWorks(ctx context.Context, st setup, env Env) map[string]*howTo {
 		},
 	}
 
+	out["chats"] = &howTo{
+		What: []howLine{
+			{Text: "Every run asks Telegram, for each chosen chat, only for messages newer than the newest it has, then reads " +
+				"the last 3 days again for edits, reactions, votes and deletions, then up to 100 pages (10 000 messages) " +
+				"of older history, so the whole archive is checked again every few runs."},
+			{Text: "An edit keeps the version before; a message deleted in Telegram is marked, never removed. Nothing is " +
+				"marked as read, and nothing is sent: tgbup can only read."},
+		},
+		Check: []howLine{{Text: "What the last runs found («3 edited · 1 deleted in Telegram»):", Cmd: "tail -n 50 " + q(st.paths.RunLog())},
+			{Text: "The choice of chats, by hand:", Cmd: "cat " + q(st.paths.Config)}},
+		Change: []howLine{{Text: "The chats: «change» here, or targets: in the config."}},
+	}
+
 	out["download"] = &howTo{
 		What: []howLine{{Text: "The first download used Telegram's data export (takeout), which Telegram allows for whole histories " +
 			"after you confirm it in the app; later runs read only what is new, as an ordinary app does."}},

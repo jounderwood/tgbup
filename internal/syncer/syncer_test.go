@@ -192,6 +192,7 @@ func newEnv(t *testing.T) *env {
 	e.s = &syncer.Syncer{
 		TG: e.tg, Store: st, SelfID: 1, Budget: time.Hour, PageSize: 100,
 		Now: func() time.Time { return e.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		AuditPages: -1, // off, except in the tests about it
 	}
 	return e
 }
@@ -596,5 +597,56 @@ func TestDeletedMessagesAreMarkedAndKept(t *testing.T) {
 	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
 	if deleted(420) {
 		t.Error("a message back in Telegram keeps its deleted mark")
+	}
+}
+
+// The audit reads the whole history again a few pages a run, so an edit or a
+// deletion far older than the recent window reaches the archive within a few
+// runs, and the least recently audited chat goes first.
+func TestAuditFindsOldEditsAndDeletions(t *testing.T) {
+	e := newEnv(t) // a month after the messages: nothing is recent
+	e.s.AuditPages = 3
+	a, b := target(1, store.ChatSupergroup), target(2, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 500)
+	e.tg.add(b.Chat.ID, 1, 50)
+	ctx := context.Background()
+	both := []tgclient.Target{a, b}
+	e.s.AuditPages = -1
+	e.s.Run(ctx, both, dialogsOf(a, b))
+	e.s.AuditPages = 3
+
+	e.tg.edits[a.Chat.ID] = map[int]string{50: "an old typo fixed"}
+	e.tg.remove(a.Chat.ID, 30)
+	e.tg.before = 0
+	r1 := e.s.Run(ctx, both, dialogsOf(a, b))
+	if e.tg.before != 3 {
+		t.Errorf("first run read %d pages, the budget is 3", e.tg.before)
+	}
+	r2 := e.s.Run(ctx, both, dialogsOf(a, b))
+	edited, deleted := r1.Edited+r2.Edited, r1.Deleted+r2.Deleted
+	if edited != 1 || deleted != 1 {
+		t.Fatalf("two runs found %d edited, %d deleted; reports %+v %+v", edited, deleted, r1, r2)
+	}
+	ms, _ := e.st.PageMessages(ctx, a.Chat.ID, []int{50, 30})
+	if len(ms) != 2 || ms[0].DeletedAt == 0 || ms[1].Text != "an old typo fixed" {
+		t.Errorf("messages after the audit: %+v", ms)
+	}
+	// Each chat is audited before any is audited twice.
+	audits, _ := e.st.Audits(ctx)
+	seen := map[int64]bool{}
+	for _, x := range audits {
+		if x.AuditedAt != 0 {
+			seen[x.ChatID] = true
+		}
+	}
+	if !seen[a.Chat.ID] && !seen[b.Chat.ID] {
+		t.Fatalf("no round finished: %+v", audits)
+	}
+	e.s.Run(ctx, both, dialogsOf(a, b))
+	audits, _ = e.st.Audits(ctx)
+	for _, x := range audits {
+		if x.AuditedAt == 0 {
+			t.Errorf("chat %d still waits for its first round: %+v", x.ChatID, audits)
+		}
 	}
 }

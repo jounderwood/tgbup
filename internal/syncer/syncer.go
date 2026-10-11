@@ -32,11 +32,16 @@ type Syncer struct {
 	// after a message; RefreshPages caps it per chat. 0: the defaults.
 	RefreshWindow time.Duration
 	RefreshPages  int
+	// AuditPages caps the pages the audit reads again in a run, over all
+	// chats: older edits, reactions and deletions, a round at a time. 0: the
+	// default; negative: off.
+	AuditPages int
 }
 
 const (
 	defaultRefreshWindow = 72 * time.Hour
 	defaultRefreshPages  = 3
+	defaultAuditPages    = 100
 )
 
 type Report struct {
@@ -104,7 +109,86 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 			r.Failed[t.Chat.ID] = err
 		}
 	}
+	s.audit(ctx, targets, deadline, &r)
 	return r
+}
+
+// audit reads the archived chats' history again, newest to oldest, a round
+// at a time and at most AuditPages pages a run, with what time is left:
+// edits, reactions and deletions older than the recent window reach the
+// archive within a few runs. The least recently audited chats go first. It
+// never fails the run: what it does not reach, the next run does.
+func (s *Syncer) audit(ctx context.Context, targets []tgclient.Target, deadline time.Time, r *Report) {
+	budget := cmp.Or(s.AuditPages, defaultAuditPages)
+	if budget < 0 {
+		return
+	}
+	byID := map[int64]tgclient.Target{}
+	for _, t := range targets {
+		if r.Failed[t.Chat.ID] == nil && !slices.Contains(r.Deferred, t.Chat.ID) {
+			byID[t.Chat.ID] = t
+		}
+	}
+	audits, err := s.Store.Audits(ctx)
+	if err != nil {
+		s.Log.Warn("audit", "err", err)
+		return
+	}
+	for _, a := range audits {
+		t, ok := byID[a.ChatID]
+		if !ok {
+			continue
+		}
+		cur, _, err := s.Store.GetCursor(ctx, t.Chat.ID)
+		if err != nil {
+			s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
+			return
+		}
+		for {
+			if budget == 0 || !s.Now().Before(deadline) || ctx.Err() != nil {
+				return
+			}
+			budget--
+			page, err := s.TG.HistoryBefore(ctx, t.Peer, a.BeforeID, s.PageSize)
+			if err != nil {
+				s.Log.Warn("audit stopped; the next run goes on", "chat", t.Chat.ID, "err", err)
+				return
+			}
+			st, err := s.save(ctx, t, page, cur)
+			r.NewMessages += st.New
+			r.Edited += st.Edited
+			r.Updated += st.Updated
+			if err != nil {
+				s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
+				return
+			}
+			if len(page.Messages) > 0 {
+				hi := a.BeforeID - 1
+				if a.BeforeID == 0 {
+					hi = math.MaxInt32
+				}
+				n, err := s.markDeleted(ctx, t, page, minID(page.Messages), hi)
+				r.Deleted += n
+				if err != nil {
+					s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
+					return
+				}
+			}
+			done := len(page.Messages) < s.PageSize
+			if done {
+				a.BeforeID, a.AuditedAt = 0, s.Now().Unix()
+			} else {
+				a.BeforeID = minID(page.Messages)
+			}
+			if err := s.Store.SetAudit(ctx, a); err != nil {
+				s.Log.Warn("audit", "chat", t.Chat.ID, "err", err)
+				return
+			}
+			if done {
+				break
+			}
+		}
+	}
 }
 
 func (s *Syncer) markMissing(ctx context.Context, known map[int64]bool, r *Report) error {

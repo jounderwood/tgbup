@@ -117,7 +117,9 @@ task scheduler (Synology: Control Panel → Task Scheduler → User-defined scri
 A run:
 1. downloads new messages and media, and reads the last 3 days of every active chat again: edits, reactions and votes
    reach the archive, an edited message keeps the versions before (Telegram itself keeps only the latest), and a
-   message deleted in Telegram is marked «deleted in Telegram» once Telegram confirms it is gone — never removed;
+   message deleted in Telegram is marked «deleted in Telegram» once Telegram confirms it is gone — never removed. It
+   also reads up to 100 pages of older history again, a round at a time, so edits and deletions anywhere in the
+   archive arrive within a few runs;
 2. redraws the archive pages that changed;
 3. snapshots the archive into every backup place — even if the download failed;
 4. tells you through the bot: errors right away and with a sound, a summary every 7 days (`notify.summary_every`).
