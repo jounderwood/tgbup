@@ -260,7 +260,7 @@ func printBackup(w io.Writer, r backup.Report) {
 			fmt.Fprintf(w, "backup → %s: nothing changed since snapshot %s, no new one%s\n", backup.Display(rr.Repo), shortID(rr.Snapshot), extra)
 			continue
 		}
-		fmt.Fprintf(w, "backup → %s: snapshot %s%s\n", backup.Display(rr.Repo), shortID(rr.Snapshot), extra)
+		fmt.Fprintf(w, "backup → %s: snapshot %s, +%s%s\n", backup.Display(rr.Repo), shortID(rr.Snapshot), render.ByteSize(rr.Added), extra)
 		if rr.Warning != "" {
 			fmt.Fprintf(w, "  warning: %s\n", backupWarning(rr))
 		}

@@ -53,6 +53,8 @@ type Backend interface {
 	OpenArchive() error
 	// Snapshots lists the snapshots in the place-th backup place of Status.
 	Snapshots(ctx context.Context, place int) ([]Snapshot, error)
+	// PlaceSize is what the place-th backup place holds, in bytes.
+	PlaceSize(ctx context.Context, place int) (int64, error)
 	// RestoreCopy restores a snapshot of the place (by the id Snapshots gave)
 	// into a folder of its own next to the archive; the archive is not touched.
 	RestoreCopy(ctx context.Context, place int, id string) (Snapshot, error)
@@ -64,6 +66,10 @@ type Snapshot struct {
 	ID   string    `json:"id"`
 	Time time.Time `json:"time"`
 	Host string    `json:"host"`
+	// Added is what the snapshot added to the place; Size, the archive as it
+	// was then. Unknown (nil) for a snapshot of a restic before 0.17.
+	Added *int64 `json:"added,omitempty"`
+	Size  *int64 `json:"size,omitempty"`
 	// Changes is what changed in the archive since the snapshot before; ""
 	// for a snapshot tgbup has no record of.
 	Changes string `json:"changes"`
@@ -275,6 +281,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/setup/{action...}", s.setupAction)
 	mux.HandleFunc("POST /api/archive/open", s.openArchive)
 	mux.HandleFunc("GET /api/backups/{place}/snapshots", s.snapshots)
+	mux.HandleFunc("GET /api/backups/{place}/size", s.placeSize)
 	mux.HandleFunc("POST /api/backups/{place}/snapshots/{id}/restore", s.restoreCopy)
 	mux.HandleFunc("POST /api/backups/{place}/snapshots/{id}/open", s.openCopy)
 	// The guard comes first: requests it refuses (any website can send them)
@@ -482,6 +489,16 @@ func (s *Server) snapshots(w http.ResponseWriter, r *http.Request) {
 	}
 	snaps, err := s.backend.Snapshots(r.Context(), place)
 	reply(w, snaps, err)
+}
+
+func (s *Server) placeSize(w http.ResponseWriter, r *http.Request) {
+	place, err := strconv.Atoi(r.PathValue("place"))
+	if err != nil {
+		http.Error(w, "bad place", http.StatusBadRequest)
+		return
+	}
+	n, err := s.backend.PlaceSize(r.Context(), place)
+	reply(w, map[string]int64{"bytes": n}, err)
 }
 
 func (s *Server) restoreCopy(w http.ResponseWriter, r *http.Request) {

@@ -45,6 +45,9 @@ func ExtractMedia(m *tg.Message) (store.Media, bool) {
 		if !ok {
 			return store.Media{}, false
 		}
+		if _, sticker := stickerOf(v); sticker {
+			return store.Media{}, false // kept as its emoji (meta), not as a file
+		}
 		return store.Media{
 			Key:      fmt.Sprintf("document:%d", d.ID),
 			Kind:     documentKind(v, d),
@@ -120,6 +123,20 @@ func documentOf(v *tg.MessageMediaDocument) (*tg.Document, bool) {
 	return d, ok
 }
 
+// stickerOf is the sticker attribute of a document that is a sticker.
+func stickerOf(v *tg.MessageMediaDocument) (*tg.DocumentAttributeSticker, bool) {
+	d, ok := documentOf(v)
+	if !ok {
+		return nil, false
+	}
+	for _, a := range d.Attributes {
+		if s, ok := a.(*tg.DocumentAttributeSticker); ok {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
 func largestPhotoSize(p *tg.Photo) (thumbType string, size int64, ok bool) {
 	best := -1
 	for _, sc := range p.Sizes {
@@ -146,12 +163,10 @@ func largestPhotoSize(p *tg.Photo) (thumbType string, size int64, ok bool) {
 }
 
 func documentKind(mm *tg.MessageMediaDocument, d *tg.Document) string {
-	var sticker, animated, video, audio bool
+	var animated, video, audio bool
 	round, voice := mm.Round, mm.Voice
 	for _, a := range d.Attributes {
 		switch v := a.(type) {
-		case *tg.DocumentAttributeSticker:
-			sticker = true
 		case *tg.DocumentAttributeAnimated:
 			animated = true
 		case *tg.DocumentAttributeVideo:
@@ -163,8 +178,6 @@ func documentKind(mm *tg.MessageMediaDocument, d *tg.Document) string {
 		}
 	}
 	switch {
-	case sticker:
-		return "sticker"
 	case animated:
 		return "animation"
 	case round:

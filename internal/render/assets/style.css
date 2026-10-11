@@ -22,6 +22,9 @@ h2.day { position: sticky; top: 0; background: var(--bg); color: var(--muted); f
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply b { color: var(--fg); }
 .missing { color: var(--muted); font-size: 13px; font-style: italic; margin: 4px 0; }
+.sticker { margin: 4px 0; }
+.sticker .emoji { font-size: 28px; line-height: 1; vertical-align: middle; }
+.sticker .missing { vertical-align: middle; }
 .media img { max-width: 100%; max-height: 480px; border-radius: 8px; display: block; margin: 4px 0; }
 video { max-width: 100%; max-height: 480px; border-radius: 8px; margin: 4px 0; }
 audio { width: 100%; max-width: 420px; margin: 4px 0; }

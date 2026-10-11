@@ -58,6 +58,8 @@ type Options struct {
 type RepoResult struct {
 	Repo     string
 	Snapshot string
+	// Added is what the new snapshot added to the place, compressed.
+	Added int64
 	// Skipped: the place already had a snapshot of this update, Snapshot.
 	Skipped bool
 	Pruned  bool
@@ -289,7 +291,7 @@ func (o Options) backupRepo(ctx context.Context, a Archive, repo, host string) R
 	// .<name>.part files are downloads in progress (media.PartPath); the
 	// finished file comes in a later snapshot. A real file named x.part stays in.
 	out, err := o.restic(ctx, repo, append([]string{"backup", "--json", "--tag", "tgbup", "--host", host, "--exclude", ".*.part"}, paths...)...)
-	res.Snapshot = snapshotID(out)
+	res.Snapshot, res.Added = backupSummary(out)
 	switch {
 	case err != nil && exitCode(err) == 3 && res.Snapshot != "":
 		// Some files could not be read, but the snapshot exists: keep going so retention still runs.
@@ -391,19 +393,22 @@ func due(ctx context.Context, a Archive, key string, every time.Duration, now ti
 	return !ok || now.Sub(last) >= every
 }
 
-func snapshotID(jsonLines []byte) string {
+// backupSummary is the snapshot restic backup --json made, and what it
+// added to the place.
+func backupSummary(jsonLines []byte) (id string, added int64) {
 	sc := bufio.NewScanner(bytes.NewReader(jsonLines))
 	sc.Buffer(make([]byte, 64*1024), 4<<20)
 	for sc.Scan() {
 		var m struct {
 			Type     string `json:"message_type"`
 			Snapshot string `json:"snapshot_id"`
+			Added    int64  `json:"data_added_packed"`
 		}
 		if json.Unmarshal(sc.Bytes(), &m) == nil && m.Type == "summary" {
-			return m.Snapshot
+			return m.Snapshot, m.Added
 		}
 	}
-	return ""
+	return "", 0
 }
 
 // restic runs one restic command against repo; the error carries what restic

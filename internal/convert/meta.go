@@ -3,6 +3,7 @@ package convert
 import (
 	"encoding/json"
 
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 )
 
@@ -18,6 +19,7 @@ type Meta struct {
 	Poll    *PollMeta    `json:"poll,omitempty"`
 	Todo    *TodoMeta    `json:"todo,omitempty"`
 	Dice    *DiceMeta    `json:"dice,omitempty"`
+	Sticker *StickerMeta `json:"sticker,omitempty"`
 	Other   *OtherMeta   `json:"other,omitempty"`
 }
 
@@ -89,6 +91,11 @@ type DiceMeta struct {
 	Value int    `json:"value"`
 }
 
+// StickerMeta: a sticker is kept as its emoji, not as a file.
+type StickerMeta struct {
+	Emoji string `json:"emoji,omitempty"`
+}
+
 type OtherMeta struct {
 	Type string `json:"type"`
 }
@@ -103,7 +110,8 @@ func geo(g tg.GeoPointClass) *GeoMeta {
 }
 
 // metaOf describes the message's non-file media; photos and documents are
-// files and have no meta. ok is false when there is nothing to keep.
+// files and have no meta, except a sticker: its emoji. ok is false when
+// there is nothing to keep.
 func metaOf(m *tg.Message) (Meta, bool) {
 	mc, ok := m.GetMedia()
 	if !ok {
@@ -111,8 +119,14 @@ func metaOf(m *tg.Message) (Meta, bool) {
 	}
 	var out Meta
 	switch v := mc.(type) {
-	case *tg.MessageMediaPhoto, *tg.MessageMediaDocument, *tg.MessageMediaEmpty:
+	case *tg.MessageMediaPhoto, *tg.MessageMediaEmpty:
 		return Meta{}, false
+	case *tg.MessageMediaDocument:
+		s, ok := stickerOf(v)
+		if !ok {
+			return Meta{}, false
+		}
+		out.Sticker = &StickerMeta{Emoji: s.Alt}
 	case *tg.MessageMediaWebPage:
 		out.WebPage = webPage(v.Webpage)
 	case *tg.MessageMediaGeo:
@@ -194,6 +208,19 @@ func todo(v *tg.MessageMediaToDo) *TodoMeta {
 		out.Items = append(out.Items, item)
 	}
 	return out
+}
+
+// MetaJSON is the meta of a message kept as Telegram gave it (raw).
+func MetaJSON(raw []byte) (string, error) {
+	mc, err := tg.DecodeMessage(&bin.Buffer{Buf: raw})
+	if err != nil {
+		return "", err
+	}
+	m, ok := mc.(*tg.Message)
+	if !ok {
+		return "", nil
+	}
+	return metaJSON(m)
 }
 
 func metaJSON(m *tg.Message) (string, error) {

@@ -24,17 +24,17 @@ var mimeExt = map[string]string{
 }
 
 var kindExt = map[string]string{
-	"photo": ".jpg", "voice": ".ogg", "video_note": ".mp4", "video": ".mp4", "animation": ".mp4", "sticker": ".webp",
+	"photo": ".jpg", "voice": ".ogg", "video_note": ".mp4", "video": ".mp4", "animation": ".mp4",
 }
 
 // kindNames name a file that has no name of its own and came from a chat without a title.
 var kindNames = map[string]string{
 	"photo": "photo", "video": "video", "voice": "voice", "video_note": "round", "audio": "audio",
-	"document": "file", "sticker": "sticker", "animation": "gif",
+	"document": "file", "animation": "gif",
 }
 
 // kindDir is the folder of a kind of file inside the year: photo, video,
-// file, voice, round, audio, sticker, gif.
+// file, voice, round, audio, gif.
 func kindDir(kind string) string {
 	if d, ok := kindNames[kind]; ok {
 		return d

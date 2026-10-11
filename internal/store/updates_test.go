@@ -155,3 +155,15 @@ func TestDeletedMessagesAreMarkedAndCounted(t *testing.T) {
 		t.Errorf("a message read again keeps its mark: %v", ids)
 	}
 }
+
+// Files only go when stickers' files did (they are kept as their emoji):
+// the summary says so instead of a minus.
+func TestSummarySaysFilesRemoved(t *testing.T) {
+	d := UpdateDiff{Messages: 2, Files: -398}
+	if got := d.Summary(); got != "+2 messages · 398 files removed" {
+		t.Errorf("summary = %q", got)
+	}
+	if got := (UpdateDiff{Files: 3}).Summary(); got != "+3 files" {
+		t.Errorf("summary = %q", got)
+	}
+}

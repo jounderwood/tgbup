@@ -20,7 +20,15 @@ import (
 func (f *fakeBackend) OpenArchive() error { f.opened++; return nil }
 
 func (f *fakeBackend) Snapshots(_ context.Context, place int) ([]Snapshot, error) {
-	return []Snapshot{{ID: "abcd1234", Host: "mac"}}, nil
+	added, size := int64(5<<20), int64(12<<30)
+	return []Snapshot{{ID: "abcd1234", Host: "mac", Added: &added, Size: &size}}, nil
+}
+
+func (f *fakeBackend) PlaceSize(_ context.Context, place int) (int64, error) {
+	if place != 0 {
+		return 0, fmt.Errorf("%w: no backup place %d", ErrBadRequest, place)
+	}
+	return 13 << 30, nil
 }
 
 func (f *fakeBackend) RestoreCopy(_ context.Context, place int, id string) (Snapshot, error) {
@@ -275,8 +283,18 @@ func TestArchiveAndSnapshots(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&snaps); err != nil || len(snaps) != 1 || snaps[0].ID != "abcd1234" {
 		t.Errorf("snapshots: %d %+v %v", w.Code, snaps, err)
 	}
+	if snaps[0].Added == nil || *snaps[0].Added != 5<<20 || snaps[0].Size == nil || *snaps[0].Size != 12<<30 {
+		t.Errorf("snapshot weight: %+v", snaps[0])
+	}
 	if w := do(t, s, "GET", "/api/backups/x/snapshots", host, tok, ""); w.Code != http.StatusBadRequest {
 		t.Errorf("bad place: %d", w.Code)
+	}
+	w = do(t, s, "GET", "/api/backups/0/size", host, tok, "")
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"bytes":13958643712}` {
+		t.Errorf("place size: %d %s", w.Code, w.Body.String())
+	}
+	if w := do(t, s, "GET", "/api/backups/1/size", host, tok, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("size of no place: %d", w.Code)
 	}
 	if w := do(t, s, "POST", "/api/archive/open", host, "", ""); w.Code != http.StatusForbidden {
 		t.Errorf("open without the token: %d", w.Code)

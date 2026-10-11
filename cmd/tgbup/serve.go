@@ -832,9 +832,33 @@ func (b *serveBackend) Snapshots(ctx context.Context, place int) ([]serve.Snapsh
 func snapshotView(st setup, repo string, sn backup.Snapshot) serve.Snapshot {
 	home := st.paths.Home
 	dir := render.SnapshotCopyDir(st.cfg.ArchiveDir, sn.ShortID)
-	return serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host, Copy: tildePath(dir, home),
+	v := serve.Snapshot{ID: sn.ShortID, Time: sn.Time, Host: sn.Host, Copy: tildePath(dir, home),
 		Restored: isFile(filepath.Join(dir, render.CopyDone)),
 		Command:  render.RestoreCommand(tildePath(repo, home), sn.ShortID)}
+	if sum := sn.Summary; sum != nil {
+		v.Added, v.Size = &sum.Added, &sum.Size
+	}
+	return v
+}
+
+// PlaceSize is what a backup place holds, by its position in the config.
+func (b *serveBackend) PlaceSize(ctx context.Context, place int) (int64, error) {
+	st, err := b.load()
+	if err != nil {
+		return 0, err
+	}
+	repos := st.cfg.Backup.Repositories
+	if place < 0 || place >= len(repos) {
+		return 0, fmt.Errorf("%w: no backup place %d", serve.ErrBadRequest, place)
+	}
+	if checkRepo(repos[place], st.secrets.ResticPassword) != nil {
+		return 0, errBadPlace
+	}
+	o, err := backupOptions(ctx, st)
+	if err != nil {
+		return 0, err
+	}
+	return backup.PlaceSize(ctx, o, repos[place])
 }
 
 // shortSnapshotID is what Snapshots gives as a snapshot's id: it also names

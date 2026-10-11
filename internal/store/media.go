@@ -232,3 +232,86 @@ func (s *Store) MoveMediaPath(ctx context.Context, key, path, pathKey string) er
 	_, err := s.db.ExecContext(ctx, `UPDATE media SET local_path = ?, path_key = ? WHERE key = ?`, path, pathKey, key)
 	return err
 }
+
+// StickerFile is a sticker kept as a file, from before stickers were kept as
+// their emoji. Path is the name reserved for it, relative to the archive
+// (downloaded or not: a download stopped half-way has a file there too); ""
+// if none was.
+type StickerFile struct {
+	Key, Path string
+	Size      int64
+}
+
+// StickerFiles lists the stickers kept as files.
+func (s *Store) StickerFiles(ctx context.Context) ([]StickerFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, COALESCE(local_path, ''), size FROM media WHERE kind = 'sticker'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StickerFile
+	for rows.Next() {
+		var f StickerFile
+		if err := rows.Scan(&f.Key, &f.Path, &f.Size); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// ForgetStickers makes the stickers kept as files their emoji: each of their
+// messages gets the sticker meta that meta finds in the message as Telegram
+// gave it, and the files' records go. The files on disk are the caller's.
+func (s *Store) ForgetStickers(ctx context.Context, meta func(raw []byte) (string, bool)) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	type msg struct {
+		chat int64
+		id   int
+		raw  []byte
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT m.chat_id, m.id, m.raw FROM messages m
+JOIN message_media mm ON mm.chat_id = m.chat_id AND mm.message_id = m.id
+JOIN media md ON md.key = mm.media_key WHERE md.kind = 'sticker'`)
+	if err != nil {
+		return 0, err
+	}
+	var msgs []msg
+	for rows.Next() {
+		var m msg
+		if err := rows.Scan(&m.chat, &m.id, &m.raw); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		msgs = append(msgs, m)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, m := range msgs {
+		q, args := `UPDATE messages SET meta_json = ? WHERE chat_id = ? AND id = ?`, []any{"", m.chat, m.id}
+		if mj, ok := meta(m.raw); ok {
+			args[0] = mj
+		} else {
+			// A sticker all the same, its emoji unknown; meta it has is kept.
+			q, args[0] = q+` AND meta_json IS NULL`, `{"sticker":{}}`
+		}
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_media WHERE media_key IN (SELECT key FROM media WHERE kind = 'sticker')`); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM media WHERE kind = 'sticker'`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), tx.Commit()
+}

@@ -150,7 +150,7 @@ type Notify struct {
 	Progress bool `yaml:"progress"`
 }
 
-var MediaKinds = []string{"photo", "video", "video_note", "voice", "audio", "document", "sticker", "animation"}
+var MediaKinds = []string{"photo", "video", "video_note", "voice", "audio", "document", "animation"}
 
 func Default() Config {
 	return Config{
@@ -235,7 +235,9 @@ func (c Config) validate(requireTargets bool) error {
 		errs = append(errs, fmt.Errorf("media.workers must be 1..16, got %d", c.Media.Workers))
 	}
 	for _, k := range c.Media.SkipKinds {
-		if !slices.Contains(MediaKinds, k) {
+		// Stickers are kept as their emoji, never as files; a config from
+		// before may still skip them.
+		if !slices.Contains(MediaKinds, k) && k != "sticker" {
 			errs = append(errs, fmt.Errorf("media.skip_kinds: unknown kind %q (known: %s)", k, strings.Join(MediaKinds, ", ")))
 		}
 	}

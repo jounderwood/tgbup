@@ -71,7 +71,6 @@ func TestExtractDocumentKinds(t *testing.T) {
 		{"round video", withDoc(doc(4, "video/mp4", &tg.DocumentAttributeVideo{RoundMessage: true}), func(m *tg.MessageMediaDocument) { m.Round = true }), "video_note", ""},
 		{"video", withDoc(doc(5, "video/mp4", &tg.DocumentAttributeVideo{}), nil), "video", ""},
 		{"gif", withDoc(doc(6, "video/mp4", &tg.DocumentAttributeVideo{}, &tg.DocumentAttributeAnimated{}), nil), "animation", ""},
-		{"sticker", withDoc(doc(7, "image/webp", &tg.DocumentAttributeSticker{Alt: "😀"}), nil), "sticker", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -87,6 +86,27 @@ func TestExtractDocumentKinds(t *testing.T) {
 	}
 	if dl, ok := loc.(*tg.InputDocumentFileLocation); !ok || dl.ID != 1 || dl.AccessHash != 3 {
 		t.Fatalf("location = %#v", loc)
+	}
+}
+
+// A sticker is kept as its emoji, not as a file: static, animated or video.
+func TestStickerIsItsEmoji(t *testing.T) {
+	for _, mime := range []string{"image/webp", "application/x-tgsticker", "video/webm"} {
+		m := docMessage(withDoc(doc(7, mime, &tg.DocumentAttributeSticker{Alt: "😀", Stickerset: &tg.InputStickerSetEmpty{}}), nil))
+		if md, ok := convert.ExtractMedia(m); ok {
+			t.Fatalf("%s sticker kept as a file: %+v", mime, md)
+		}
+		res, ok, err := convert.Message(m, convert.Options{})
+		if err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if res.Message.MetaJSON != `{"sticker":{"emoji":"😀"}}` || len(res.Media) != 0 || len(res.Message.MediaKeys) != 0 {
+			t.Fatalf("%s sticker = %+v", mime, res)
+		}
+		// From the message as Telegram gave it, for archives from before.
+		if meta, err := convert.MetaJSON(res.Message.Raw); err != nil || meta != `{"sticker":{"emoji":"😀"}}` {
+			t.Fatalf("meta from raw = %q %v", meta, err)
+		}
 	}
 }
 

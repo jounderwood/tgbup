@@ -296,7 +296,10 @@ func (d UpdateDiff) Summary() string {
 	if d.Messages != 0 {
 		parts = append(parts, signed(d.Messages, "message"))
 	}
-	if d.Files != 0 {
+	if d.Files < 0 {
+		// Only stickers' files ever go (kept as their emoji now).
+		parts = append(parts, countOf(-d.Files, "file")+" removed")
+	} else if d.Files > 0 {
 		parts = append(parts, signed(d.Files, "file"))
 	}
 	if d.Edited != 0 {

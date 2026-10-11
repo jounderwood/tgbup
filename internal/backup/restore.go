@@ -25,11 +25,41 @@ type Snapshot struct {
 	// Paths are the absolute paths backed up: the work folder with the
 	// database copy and the config, and the archive's media/ and html/.
 	Paths []string `json:"paths"`
+	// Summary is what restic noted when it made the snapshot (restic 0.17
+	// and later); nil for an older one.
+	Summary *SnapshotSummary `json:"summary"`
 }
 
-// Snapshots lists the tgbup snapshots in repo, newest first.
+// SnapshotSummary is how much a snapshot weighs.
+type SnapshotSummary struct {
+	// Added is what the snapshot added to the place, compressed: the files
+	// the snapshots before it did not have.
+	Added int64 `json:"data_added_packed"`
+	// Size is everything in it: the archive as it was then.
+	Size int64 `json:"total_bytes_processed"`
+}
+
+// PlaceSize is what a place holds: every snapshot's files, each piece once,
+// compressed, as restic stores them. Like Snapshots, without the lock.
+func PlaceSize(ctx context.Context, o Options, repo string) (int64, error) {
+	out, err := o.restic(ctx, repo, "--no-lock", "stats", "--mode", "raw-data", "--json")
+	if err != nil {
+		return 0, err
+	}
+	var st struct {
+		Total int64 `json:"total_size"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return 0, fmt.Errorf("read the size of %s: %w", repo, err)
+	}
+	return st.Total, nil
+}
+
+// Snapshots lists the tgbup snapshots in repo, newest first. It only reads,
+// without the repository's lock, so a page showing them never stands in the
+// way of a run's forget or prune.
 func Snapshots(ctx context.Context, o Options, repo string) ([]Snapshot, error) {
-	out, err := o.restic(ctx, repo, "snapshots", "--json", "--tag", "tgbup")
+	out, err := o.restic(ctx, repo, "--no-lock", "snapshots", "--json", "--tag", "tgbup")
 	if err != nil {
 		return nil, err
 	}

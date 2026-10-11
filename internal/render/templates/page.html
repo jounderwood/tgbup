@@ -98,6 +98,9 @@
 {{- with .Dice}}
 <div class="card">{{.}}</div>
 {{- end}}
+{{- with .Sticker}}
+<div class="sticker">{{with .Emoji}}<span class="emoji">{{.}}</span> {{end}}<span class="missing">sticker</span></div>
+{{- end}}
 {{- with .Other}}
 <div class="missing">{{.}}</div>
 {{- end}}

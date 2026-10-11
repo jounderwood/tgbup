@@ -20,8 +20,12 @@ type PageMeta struct {
 	Poll    *PollCard
 	Todo    *TodoCard
 	Dice    string
+	Sticker *StickerCard
 	Other   string
 }
+
+// StickerCard is a sticker: its emoji, no picture.
+type StickerCard struct{ Emoji string }
 
 type LinkCard struct {
 	Href        template.URL // "" when the URL is not safe to link
@@ -141,6 +145,9 @@ func buildMeta(m convert.Meta, photoHref string, names map[int64]string, loc *ti
 	}
 	if d := m.Dice; d != nil {
 		out.Dice = fmt.Sprintf("%s %d", d.Emoji, d.Value)
+	}
+	if st := m.Sticker; st != nil {
+		out.Sticker = &StickerCard{Emoji: st.Emoji}
 	}
 	if o := m.Other; o != nil {
 		out.Other = o.Type

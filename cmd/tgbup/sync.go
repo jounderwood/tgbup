@@ -141,6 +141,9 @@ func cmdSync(ctx context.Context, args []string, env Env) int {
 // syncArchive runs one sync into an open archive; the caller holds run.lock.
 func syncArchive(ctx context.Context, st setup, db *store.Store, log *slog.Logger, progress io.Writer, takeout bool) (syncSummary, error) {
 	var sum syncSummary
+	if err := media.ForgetStickers(ctx, db, st.cfg.ArchiveDir, log); err != nil {
+		log.Warn("stickers kept as files: the next run tries again", "err", err)
+	}
 	err := tgclient.Run(ctx, st.clientOptions(), func(ctx context.Context, c *telegram.Client) error {
 		if err := tgclient.RequireAuth(ctx, c); err != nil {
 			return err

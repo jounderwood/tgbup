@@ -21,6 +21,7 @@ func samplePage(t *testing.T) Page {
 		{Message: store.Message{ID: 2, Date: at("2026-03-01", "09:05"), Text: "same page", ReplyToID: 1}, SenderName: "Bob"},
 		{Message: store.Message{ID: 3, Date: at("2026-03-02", "10:00"), Text: "other page", ReplyToID: 40}, SenderName: "Bob"},
 		{Message: store.Message{ID: 4, Date: at("2026-03-02", "10:01"), Text: "lost", ReplyToID: 99}, SenderName: "Bob"},
+		{Message: store.Message{ID: 19, Date: at("2026-03-02", "10:01"), Text: "so cute", ReplyToID: 16}, SenderName: "Bob"},
 		{Message: store.Message{ID: 5, Date: at("2026-03-02", "10:02"), FwdFromJSON: `{"from_name":"Old Friend","date":1700000000}`}, SenderName: "Ann",
 			Media: &store.RenderMedia{Kind: "photo", Status: "done", LocalPath: "media/photo/7.jpg"}},
 		{Message: store.Message{ID: 6, Date: at("2026-03-02", "10:03"), FwdFromJSON: `{"from_id":-1000000000008,"date":1700000000}`}, SenderName: "Ann", FwdName: "News",
@@ -40,14 +41,18 @@ func samplePage(t *testing.T) Page {
 			Media: &store.RenderMedia{Kind: "animation", Mime: "video/mp4", Status: "done", LocalPath: "media/gif/1.mp4"}},
 		{Message: store.Message{ID: 15, Date: at("2026-03-02", "10:12")}, SenderName: "Ann",
 			Media: &store.RenderMedia{Kind: "video_note", Mime: "video/mp4", Status: "done", LocalPath: "media/round/1.mp4"}},
-		{Message: store.Message{ID: 16, Date: at("2026-03-02", "10:13")}, SenderName: "Ann",
-			Media: &store.RenderMedia{Kind: "sticker", Mime: "application/x-tgsticker", Status: "done", LocalPath: "media/sticker/1.tgs"}},
+		{Message: store.Message{ID: 16, Date: at("2026-03-02", "10:13"), MetaJSON: `{"sticker":{"emoji":"😺"}}`}, SenderName: "Ann"},
+		// A sticker's file from before stickers were kept as their emoji: no
+		// meta yet (a copy of an old snapshot).
+		{Message: store.Message{ID: 18, Date: at("2026-03-02", "10:15")}, SenderName: "Ann",
+			Media: &store.RenderMedia{Kind: "sticker", Mime: "image/webp", Status: "done", LocalPath: "media/2026/sticker/1.webp"}},
 		{Message: store.Message{ID: 17, Date: at("2026-03-02", "10:14")}, SenderName: "Ann",
 			Media: &store.RenderMedia{Kind: "audio", FileName: "song.mp3", Mime: "audio/mpeg", Status: "done", LocalPath: "media/audio/1.mp3"}},
 	}
 	refs := map[int]store.MessageRef{
 		1:  {ID: 1, TopicID: 160, SenderName: "Ann", Text: "hello <world>"},
 		40: {ID: 40, TopicID: 1, SenderName: "Cy", Text: strings.Repeat("long ", 40)},
+		16: {ID: 16, TopicID: 160, SenderName: "Ann", MetaJSON: `{"sticker":{"emoji":"😺"}}`},
 	}
 	key := store.PageKey{ChatID: -1001, TopicID: 160, N: 3}
 	return buildPage(pageInput{
@@ -96,7 +101,9 @@ func TestPageHTML(t *testing.T) {
 		"⛔ video not downloaded: larger than max_file_size",
 		`<a class="media" href="../../../media/gif/1.mp4"><video class="lazy" muted loop playsinline preload="none" data-src="../../../media/gif/1.mp4">`,
 		`<video class="lazy round" playsinline preload="none" data-src="../../../media/round/1.mp4" tabindex="0"`,
-		`<a class="file" href="../../../media/sticker/1.tgs">📄`,
+		`<div class="sticker"><span class="emoji">😺</span> <span class="missing">sticker</span></div>`,
+		`<div class="sticker"><span class="missing">sticker</span></div>`,
+		`<div class="reply"><b>Ann</b> 😺 sticker</div>`,
 		`<audio class="lazy" controls preload="none" data-src="../../../media/audio/1.mp3"></audio> <a class="file" href="../../../media/audio/1.mp3">song.mp3</a>`,
 		"⏳ photo not downloaded yet",
 		`<script src="../../assets/updated.js" defer></script>`, `<span class="asof"></span>`,
@@ -108,6 +115,9 @@ func TestPageHTML(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("page lacks %q", want)
 		}
+	}
+	if strings.Contains(got, "sticker/1.webp") {
+		t.Error("a sticker's file is shown")
 	}
 	if strings.Contains(got, "<world>") {
 		t.Error("message text not escaped")
@@ -136,6 +146,7 @@ func TestPageMarkdown(t *testing.T) {
 		"[lease 2026.pdf](../../../media/document/9.pdf)",
 		"_video not downloaded: larger than max\\_file\\_size_",
 		"_created topic «Recipes»_",
+		"😺 _sticker_",
 		// A blank line ends the quote, or the reply's own text would be quoted too.
 		"[↩](#^m1)\n\nsame page",
 	} {
@@ -233,9 +244,6 @@ func TestMetaSearchText(t *testing.T) {
 func TestMediaView(t *testing.T) {
 	for _, c := range []struct{ kind, mime, want string }{
 		{"photo", "image/jpeg", "img"},
-		{"sticker", "image/webp", "img"},
-		{"sticker", "video/webm", "loop"},
-		{"sticker", "application/x-tgsticker", "file"},
 		{"animation", "video/mp4", "loop"},
 		{"animation", "image/gif", "img"},
 		{"video", "video/mp4", "video"},

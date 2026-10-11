@@ -4,8 +4,8 @@
 window.tgbupMedia = {
   chats: [],
   add(c) { this.chats.push(c); },
-  kinds: ['photo', 'video', 'round', 'gif', 'sticker', 'voice', 'audio', 'file', 'link', 'place', 'contact', 'poll', 'todo'],
-  visual: new Set(['photo', 'video', 'round', 'gif', 'sticker']),
+  kinds: ['photo', 'video', 'round', 'gif', 'voice', 'audio', 'file', 'link', 'place', 'contact', 'poll', 'todo'],
+  visual: new Set(['photo', 'video', 'round', 'gif']),
   pageSize: 200,
 
   init(files) {

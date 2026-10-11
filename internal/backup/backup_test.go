@@ -113,6 +113,22 @@ func TestBackupSnapshotsArchive(t *testing.T) {
 	if snaps := e.restic(t, repo, "snapshots", "--tag", "tgbup", "--host", "test-host"); !strings.Contains(snaps, r.Repos[0].Snapshot[:8]) {
 		t.Errorf("snapshot not tagged for this host:\n%s", snaps)
 	}
+	// What it weighs: what it added, the archive in it, the whole place.
+	if r.Repos[0].Added <= 0 {
+		t.Errorf("added = %d", r.Repos[0].Added)
+	}
+	snaps, err := Snapshots(ctx, e.o, repo)
+	if err != nil || len(snaps) != 1 || snaps[0].Summary == nil {
+		t.Fatalf("snapshots = %+v %v", snaps, err)
+	}
+	if sum := snaps[0].Summary; sum.Added != r.Repos[0].Added || sum.Size <= 0 {
+		t.Errorf("summary = %+v, added by the run %d", sum, r.Repos[0].Added)
+	}
+	// The files' data, compressed (an archive this small has more in the
+	// snapshot's own records, which Added counts and this does not).
+	if n, err := PlaceSize(ctx, e.o, repo); err != nil || n <= 0 {
+		t.Errorf("place size = %d %v", n, err)
+	}
 }
 
 func TestPruneAndCheckFollowTheirIntervals(t *testing.T) {

@@ -141,7 +141,9 @@ changes on every start, so other programs and other accounts on the computer can
   archived), backups, schedule, notifications; the archive folder and the login below. Restore is here as well. Every step that runs
   another program or keeps secrets (keys, login, archive, backups, schedule, bot) has «How this works»: what exactly
   it set up on this computer, with its real paths, and the commands to check it and change it without tgbup;
-- **Snapshots** — every snapshot of every place, newest first, with what changed in it. «Restore a copy» restores a
+- **Snapshots** — every snapshot of every place, newest first, with what changed in it and what it weighs: what it
+  added to the place (the files the snapshots before it did not have) and the archive in it; each place says what it
+  holds in all. «Restore a copy» restores a
   snapshot into a folder of its own next to the archive (`<archive>-snapshots/<id>`, with all the files of then; the
   archive itself is not touched), then «Open» opens it in the browser. «Copy command» copies the same command for a
   terminal.
@@ -161,10 +163,10 @@ The archive's pages open straight from the disk, no server needed. In the archiv
 | What | How to read it |
 |---|---|
 | `html/index.html` | the chat list and a search over the whole archive. At the top of every page, «archive as of … · snapshot …» — when the archive was last checked and which snapshot holds it; the link leads to the history of changes and snapshots |
-| a chat's page | opens on the newest messages at the bottom, as in a messenger; older ones are on the previous pages, 500 messages each. The bar at the top stays in view: search (this chat, or all chats with a tick), the list of pages with their dates, and a calendar — pick a day and you are there. Photos, videos, voice messages, files, link previews, places and polls are right in the feed: a video shows its first frame, GIFs and video stickers play silently while in view, a round video plays on a click. An edited message opens its earlier versions, as tgbup found them; one deleted in Telegram stays, marked |
+| a chat's page | opens on the newest messages at the bottom, as in a messenger; older ones are on the previous pages, 500 messages each. The bar at the top stays in view: search (this chat, or all chats with a tick), the list of pages with their dates, and a calendar — pick a day and you are there. Photos, videos, voice messages, files, link previews, places and polls are right in the feed: a video shows its first frame, GIFs play silently while in view, a round video plays on a click. A sticker is kept as its emoji, marked «sticker»: its picture is not downloaded. An edited message opens its earlier versions, as tgbup found them; one deleted in Telegram stays, marked |
 | `html/media.html` | every photo, video, file, voice message, link, place, contact and poll — with the same previews as in the feed, videos with their length, voice messages playable right in the list and named by who said them. The filters by kind, chat, topic, period and name live in the address and can be bookmarked |
 | `md/` | the same pages in Markdown; the archive folder opens as an Obsidian vault |
-| `media/` | the files themselves, by year and kind: `media/2025/file/2025-06-14_180233_Lease.pdf`, `media/2025/photo/…` (kinds: photo, video, file, voice, round, audio, sticker, gif) |
+| `media/` | the files themselves, by year and kind: `media/2025/file/2025-06-14_180233_Lease.pdf`, `media/2025/photo/…` (kinds: photo, video, file, voice, round, audio, gif) |
 
 Files not downloaded show ⏳ (queued), ⛔ (skipped by the settings) or ⚠️ (could not be downloaded) and why.
 
@@ -258,8 +260,8 @@ touched, and the history then shows an «open the restored copy» link instead o
 tgbup restore --copy --from ~/Tgbup/backup --snapshot 3333bbbb
 ```
 
-On the overview a run shows the snapshot it made or that the archive did not change; the Snapshots tab shows what
-changed in each snapshot.
+On the overview a run shows the snapshot it made or that the archive did not change, and its log what the snapshot
+added; the Snapshots tab shows what changed in each snapshot and what each weighs.
 
 Backups are made by [restic](https://restic.net); Google Drive without its app is reached through
 [rclone](https://rclone.org). There is no need to install them: tgbup downloads the versions it needs and checks their

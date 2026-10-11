@@ -95,8 +95,8 @@ type PageMedia struct {
 	Note string // why the file is not there
 	// State is why it is not there: pending, skipped or failed.
 	State string
-	// View is how the file is shown: img, video, loop (a GIF or a video
-	// sticker, playing silently), round, voice, audio or file.
+	// View is how the file is shown: img, video, loop (a GIF, playing
+	// silently), round, voice, audio or file.
 	View string
 }
 
@@ -172,7 +172,8 @@ func buildPage(in pageInput) Page {
 		if m.ReplyToID != 0 {
 			pm.Reply = reply(in, m.ReplyToID)
 		}
-		if m.Media != nil {
+		sticker := m.Media != nil && m.Media.Kind == "sticker"
+		if m.Media != nil && !sticker {
 			pm.Media = media(m.Media, p.Archive)
 		}
 		if meta, ok := parseMeta(m.MetaJSON); ok {
@@ -182,6 +183,15 @@ func buildPage(in pageInput) Page {
 				photo, pm.Media = pm.Media.Href, nil
 			}
 			pm.Meta = buildMeta(meta, photo, in.Names, in.Loc)
+		}
+		// A sticker kept as a file, from before stickers were kept as their
+		// emoji (in a copy of an old snapshot, or until the next run): a
+		// sticker all the same.
+		if sticker && (pm.Meta == nil || pm.Meta.Sticker == nil) {
+			if pm.Meta == nil {
+				pm.Meta = &PageMeta{}
+			}
+			pm.Meta.Sticker = &StickerCard{}
 		}
 		day := t.Format("2006-01-02")
 		if len(p.Days) == 0 || p.Days[len(p.Days)-1].Date != day {
@@ -227,6 +237,9 @@ func reply(in pageInput, id int) *Reply {
 		return &Reply{ID: id, Missing: true}
 	}
 	r := &Reply{ID: id, Sender: orDefault(ref.SenderName, "Deleted account"), Text: preview(ref.Text, ref.MediaKind)}
+	if m, ok := parseMeta(ref.MetaJSON); ok && m.Sticker != nil && r.Text == "" {
+		r.Text = strings.TrimSpace(m.Sticker.Emoji + " sticker")
+	}
 	target, ok := in.Locate(in.Key.ChatID, id)
 	switch {
 	case !ok:
@@ -300,7 +313,7 @@ func media(m *store.RenderMedia, archive string) *PageMedia {
 	label := orDefault(kindLabels[m.Kind], m.Kind)
 	pm := &PageMedia{Kind: m.Kind, Name: orDefault(m.FileName, label), View: mediaView(m.Kind, m.Mime)}
 	if m.Size > 0 {
-		pm.Size = byteSize(m.Size)
+		pm.Size = ByteSize(m.Size)
 	}
 	switch {
 	case m.Status == "done" && m.LocalPath != "":
@@ -319,14 +332,6 @@ func mediaView(kind, mime string) string {
 	switch kind {
 	case "photo":
 		return "img"
-	case "sticker":
-		switch {
-		case strings.HasPrefix(mime, "video/"):
-			return "loop"
-		case strings.HasPrefix(mime, "image/"):
-			return "img"
-		}
-		return "file" // an animated .tgs: a browser cannot draw it
 	case "animation":
 		if strings.HasPrefix(mime, "image/") {
 			return "img" // a real .gif file
@@ -342,7 +347,8 @@ func mediaView(kind, mime string) string {
 	return "file"
 }
 
-func byteSize(n int64) string {
+// ByteSize is a size as people read it: 1.5 GB, 120.0 MB, 12 KB.
+func ByteSize(n int64) string {
 	switch {
 	case n >= 1<<30:
 		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))

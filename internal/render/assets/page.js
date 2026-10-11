@@ -5,8 +5,8 @@ document.addEventListener('click', (e) => {
 });
 
 // Videos and voice messages load when they come near the screen: a page can
-// have hundreds. A video then shows its first frame; a looping one (a GIF, a
-// video sticker) plays, silently, only while it is in view.
+// have hundreds. A video then shows its first frame; a looping one (a GIF)
+// plays, silently, only while it is in view.
 window.tgbupLazy = (() => {
   const load = (el) => {
     if (el.getAttribute('src')) return;

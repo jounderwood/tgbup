@@ -16,7 +16,7 @@ import (
 // mediaEntry is one item on the media page. Keys are short: a big chat has
 // tens of thousands of them.
 type mediaEntry struct {
-	K string `json:"k"`           // kind: photo, video, round, gif, sticker, voice, audio, file, link, place, contact, poll, todo
+	K string `json:"k"`           // kind: photo, video, round, gif, voice, audio, file, link, place, contact, poll, todo
 	D string `json:"d"`           // date and time, "2006-01-02 15:04"
 	T string `json:"t,omitempty"` // topic or thread part
 	M string `json:"m"`           // the message, relative to html/
@@ -28,7 +28,7 @@ type mediaEntry struct {
 }
 
 var mediaKinds = map[string]string{
-	"photo": "photo", "video": "video", "video_note": "round", "animation": "gif", "sticker": "sticker",
+	"photo": "photo", "video": "video", "video_note": "round", "animation": "gif",
 	"voice": "voice", "audio": "audio", "document": "file",
 }
 
@@ -39,7 +39,7 @@ func mediaEntries(it store.MediaItem, msgHref, thread string, loc *time.Location
 	var out []mediaEntry
 	meta, hasMeta := parseMeta(it.MetaJSON)
 	seen := map[string]bool{}
-	if m := it.Media; m != nil {
+	if m := it.Media; m != nil && m.Kind != "sticker" {
 		pm := media(m, "../")
 		e := base
 		e.K, e.F, e.N, e.S, e.X = orDefault(mediaKinds[m.Kind], "file"), pm.Href, pm.Name, pm.Size, pm.Note

@@ -53,6 +53,8 @@ _{{md .Service}}_ · {{md .Sender}} · {{.Time}} ^m{{.ID}}
 {{- end}}
 {{- with .Dice}}{{.}}
 {{end}}
+{{- with .Sticker}}{{with .Emoji}}{{.}} {{end}}_sticker_
+{{end}}
 {{- with .Other}}_{{md .}}_
 {{end}}
 {{- end}}

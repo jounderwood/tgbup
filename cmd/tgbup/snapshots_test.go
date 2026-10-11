@@ -89,6 +89,16 @@ func TestSnapshotCopyIsRestoredNextToTheArchive(t *testing.T) {
 	if err := b.OpenCopy(0, sn.ID); !errors.Is(err, serve.ErrBadRequest) {
 		t.Errorf("open before the restore = %v", err)
 	}
+	// What it weighs, and what the place holds.
+	if sn.Added == nil || *sn.Added <= 0 || sn.Size == nil || *sn.Size <= 0 {
+		t.Errorf("snapshot weight: added %v, size %v", sn.Added, sn.Size)
+	}
+	if n, err := b.PlaceSize(ctx, 0); err != nil || n <= 0 {
+		t.Errorf("place size = %d, %v", n, err)
+	}
+	if _, err := b.PlaceSize(ctx, 5); !errors.Is(err, serve.ErrBadRequest) {
+		t.Errorf("size of no place = %v", err)
+	}
 
 	got, err := b.RestoreCopy(ctx, 0, sn.ID)
 	if err != nil || !got.Restored {

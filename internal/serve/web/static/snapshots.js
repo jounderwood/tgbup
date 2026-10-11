@@ -16,8 +16,10 @@ async function start() {
     return;
   }
   $("places").replaceChildren(...backups.map((b, i) => el("section", { class: "box place", id: "place-" + i },
-    el("div", { class: "place-name" }, b.repo, b.path && b.path !== b.repo ? el("span", { class: "muted path" }, " " + b.path) : null),
+    el("div", { class: "place-name" }, b.repo, b.path && b.path !== b.repo ? el("span", { class: "muted path" }, " " + b.path) : null,
+      el("span", { id: "size-" + i, class: "muted" })),
     el("div", { id: "list-" + i, class: "muted" }, "reading the snapshots…"))));
+  backups.forEach((_, i) => size(i)); // a cloud place answers slowly; the lists need not wait
   await Promise.all(backups.map((_, i) => load(i)));
   // After the lists: they push the place asked for down as they fill.
   document.getElementById(location.hash.slice(1))?.scrollIntoView();
@@ -35,10 +37,22 @@ async function load(i) {
   }
 }
 
+// size: what the place holds, every snapshot's files stored once.
+async function size(i) {
+  try {
+    const r = await api("GET", "/api/backups/" + i + "/size");
+    $("size-" + i).textContent = " · " + bytes(r.bytes) + " in all";
+  } catch { /* the list says what is wrong with the place */ }
+}
+
+// A snapshot weighs what it added to the place: the files the ones before
+// it did not have. The archive in it is bigger, but shares the rest.
 function table(i, snaps) {
   return el("ul", { class: "snaps" }, snaps.map((sn) => el("li", {},
-    el("div", {}, el("b", {}, when(sn.time)), " · ", el("code", {}, sn.id)),
-    el("div", { class: "muted" }, (sn.changes || "no record of what changed (made before tgbup kept one)") + " · on " + sn.host),
+    el("div", {}, el("b", {}, when(sn.time)), " · ", el("code", {}, sn.id),
+      sn.added != null ? " · " + bytes(sn.added) + " new" : null),
+    el("div", { class: "muted" }, (sn.changes || "no record of what changed (made before tgbup kept one)") +
+      (sn.size != null ? " · the archive in it: " + bytes(sn.size) : "") + " · on " + sn.host),
     (sn.same || []).length ? el("div", { class: "muted" }, "the same version as ",
       sn.same.flatMap((s, i) => [i ? ", " : "", el("code", {}, s.id), " in " + s.place])) : null,
     el("div", { class: "actions" }, actions(i, sn)))));
