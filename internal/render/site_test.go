@@ -424,8 +424,8 @@ func TestShellQuote(t *testing.T) {
 		"~/My Archive/update-3": "~/'My Archive/update-3'",
 		"/Volumes/Bob's/x":      `'/Volumes/Bob'\''s/x'`,
 	} {
-		if got := shellQuote(in); got != want {
-			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %s, want %s", in, got, want)
 		}
 	}
 }

@@ -179,7 +179,7 @@ func SnapshotCopyDir(archiveDir, shortID string) string {
 // RestoreCommand restores a copy of snapshot id from place (as shown to
 // people, ~ for the home folder) into SnapshotCopyDir, for a shell.
 func RestoreCommand(place, id string) string {
-	return "tgbup restore --copy --from " + shellQuote(place) + " --snapshot " + id
+	return "tgbup restore --copy --from " + ShellQuote(place) + " --snapshot " + id
 }
 
 // CopyDone marks a snapshot copy restored and drawn to the end.
@@ -230,9 +230,9 @@ func tilde(p, home string) string {
 	return p
 }
 
-// shellQuote quotes s for a shell unless it is plain; a leading ~ stays
+// ShellQuote quotes s for a shell unless it is plain; a leading ~ stays
 // outside the quotes so the shell still expands it.
-func shellQuote(s string) string {
+func ShellQuote(s string) string {
 	plain := func(s string) bool {
 		for _, r := range s {
 			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("/._-:~+@", r) {

@@ -34,6 +34,8 @@ type setupStep struct {
 	Status   string `json:"status"`
 	// Unavailable explains a step that cannot be taken here (test servers, not macOS).
 	Unavailable string `json:"unavailable,omitempty"`
+	// How explains what the step set up outside tgbup, and how to check and change it.
+	How *howTo `json:"how,omitempty"`
 }
 
 type setupState struct {
@@ -124,6 +126,10 @@ func (b *serveBackend) SetupState(ctx context.Context) (any, error) {
 		sched.Unavailable = "not on Telegram's test servers: the scheduled job runs the real archive"
 	} else if runtime.GOOS != "darwin" {
 		sched.Unavailable = "only on macOS for now: start tgbup run from cron or systemd"
+	}
+	hows := howItWorks(ctx, st, b.env)
+	for i := range s.Steps {
+		s.Steps[i].How = hows[s.Steps[i].ID]
 	}
 	home := st.paths.Home
 	s.Running = b.running(st)

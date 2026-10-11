@@ -96,3 +96,13 @@ ul.snaps .muted { font-size: 13px; margin-top: 2px; }
 ul.snaps .actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 ul.snaps .actions button { margin: 0; padding: 3px 10px; font-size: 13px; }
 ul.snaps .path { flex-basis: 100%; font-size: 12px; word-break: break-all; }
+
+/* Settings: how a step works, and how to check and change it by hand. */
+details.how { font-size: 13px; }
+details.how summary { color: var(--muted); cursor: pointer; }
+details.how .how-part { margin-top: 8px; }
+details.how ul { margin: 4px 0 0; padding-left: 18px; }
+details.how li { margin: 4px 0; }
+details.how .cmd { display: flex; gap: 8px; align-items: flex-start; margin-top: 3px; }
+details.how .cmd code { flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+  white-space: pre-wrap; word-break: break-all; user-select: all; }

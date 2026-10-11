@@ -125,7 +125,9 @@ changes on every start, so other programs and other accounts on the computer can
   snapshots. «Update now» starts what the schedule starts and shows its log (which can be hidden). «Open the archive»
   opens the archive in the browser;
 - **Settings** — on first use the steps in order, then all the settings: chats first (with the names of what is
-  archived), backups, schedule, notifications; the archive folder and the login below. Restore is here as well;
+  archived), backups, schedule, notifications; the archive folder and the login below. Restore is here as well. Every step that runs
+  another program or keeps secrets (keys, login, archive, backups, schedule, bot) has «How this works»: what exactly
+  it set up on this computer, with its real paths, and the commands to check it and change it without tgbup;
 - **Snapshots** — every snapshot of every place, newest first, with what changed in it. «Restore a copy» restores a
   snapshot into a folder of its own next to the archive (`<archive>-snapshots/<id>`, with all the files of then; the
   archive itself is not touched), then «Open» opens it in the browser. «Copy command» copies the same command for a

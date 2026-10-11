@@ -48,7 +48,34 @@ function card(step) {
       : null);
   const box = el("section", { class: "step", id: "step-" + step.id }, head);
   if (showForm && !step.unavailable && forms[step.id]) box.append(forms[step.id](step));
+  const h = how(step);
+  if (h) box.append(h);
   return box;
+}
+
+// how explains what a step set up outside tgbup (a program, secrets, a
+// session), with commands to check and change it by hand. The page is
+// redrawn on every state read: which ones are open is remembered.
+const howOpen = new Set();
+function how(step) {
+  const h = step.how;
+  if (!h) return null;
+  const part = (title, lines) => (lines || []).length ? el("div", { class: "how-part" }, el("b", {}, title),
+    el("ul", {}, lines.map((l) => el("li", {}, l.text, l.cmd ? el("div", { class: "cmd" }, el("code", {}, l.cmd),
+      el("button", { type: "button", class: "link", onclick: () => copyText(l.cmd) }, "copy")) : null)))) : null;
+  const d = el("details", { class: "how", open: howOpen.has(step.id) }, el("summary", {}, "How this works, and how to check it yourself"),
+    part("What tgbup set up", h.what), part("Check it yourself", h.check), part("Change it yourself", h.change));
+  d.addEventListener("toggle", () => { d.open ? howOpen.add(step.id) : howOpen.delete(step.id); });
+  return d;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied");
+  } catch {
+    window.prompt("Copy this", text);
+  }
 }
 
 function changeable(step) {
