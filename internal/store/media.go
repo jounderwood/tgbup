@@ -161,14 +161,20 @@ type TodoEvent struct {
 	FromID     int64
 	Date       int64
 	ActionJSON string
+	// ChecklistChecked is when the checklist was last read from Telegram,
+	// whose state already has the events before it; 0: never since tgbup
+	// kept the time.
+	ChecklistChecked int64
 }
 
 // TodoEvents lists checklist events in the order they happened.
 func (s *Store) TodoEvents(ctx context.Context) ([]TodoEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT chat_id, reply_to_id, COALESCE(from_id, 0), date, service_action_json FROM messages
-WHERE reply_to_id IS NOT NULL AND service_action_json LIKE '{"type":"messageActionTodo%'
-ORDER BY date, id`)
+SELECT e.chat_id, e.reply_to_id, COALESCE(e.from_id, 0), e.date, e.service_action_json, COALESCE(c.checked_at, 0)
+FROM messages e
+LEFT JOIN messages c ON c.chat_id = e.chat_id AND c.id = e.reply_to_id
+WHERE e.reply_to_id IS NOT NULL AND e.service_action_json LIKE '{"type":"messageActionTodo%'
+ORDER BY e.date, e.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +182,7 @@ ORDER BY date, id`)
 	var out []TodoEvent
 	for rows.Next() {
 		var e TodoEvent
-		if err := rows.Scan(&e.ChatID, &e.Checklist, &e.FromID, &e.Date, &e.ActionJSON); err != nil {
+		if err := rows.Scan(&e.ChatID, &e.Checklist, &e.FromID, &e.Date, &e.ActionJSON, &e.ChecklistChecked); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

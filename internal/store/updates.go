@@ -24,7 +24,10 @@ type UpdateDiff struct {
 	First    bool `json:"first,omitempty"`
 	Messages int  `json:"messages"` // net: deleted chats count against it
 	Files    int  `json:"files"`
-	Edited   int  `json:"edited,omitempty"`
+	// Edited messages kept their version before; Updated ones got other
+	// reactions, votes or a link preview.
+	Edited  int `json:"edited,omitempty"`
+	Updated int `json:"updated,omitempty"`
 	// Pages redrawn: edits, reactions, checklist ticks, a new tgbup's look.
 	Pages int `json:"pages,omitempty"`
 	// Chats is the net change of messages per chat.
@@ -32,7 +35,7 @@ type UpdateDiff struct {
 }
 
 func (d UpdateDiff) empty() bool {
-	return d.Messages == 0 && d.Files == 0 && d.Edited == 0 && d.Pages == 0 && len(d.Chats) == 0
+	return d.Messages == 0 && d.Files == 0 && d.Edited == 0 && d.Updated == 0 && d.Pages == 0 && len(d.Chats) == 0
 }
 
 type SnapshotRef struct {
@@ -114,11 +117,15 @@ func (s *Store) NoteUpdate(ctx context.Context, pages int, now time.Time) (u Upd
 		}
 	}
 	if hasLast {
-		// Edited since the last update; an edit found later than it was made
-		// shows as a redrawn page instead.
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE edit_date > ?`, at).Scan(&d.Edited); err != nil {
+		// What tgbup found changed since: edits kept a version, the rest got
+		// other reactions, votes or a preview.
+		var changed int
+		if err := tx.QueryRowContext(ctx, `SELECT
+  (SELECT count(*) FROM (SELECT DISTINCT chat_id, id FROM message_versions WHERE replaced_at > ?)),
+  (SELECT count(*) FROM messages WHERE changed_at > ?)`, at, at).Scan(&d.Edited, &changed); err != nil {
 			return Update{}, false, false, err
 		}
+		d.Updated = max(changed-d.Edited, 0)
 	}
 	if !hasLast && len(cur.Messages) == 0 && cur.Files == 0 {
 		return Update{}, false, false, nil
@@ -292,6 +299,9 @@ func (d UpdateDiff) Summary() string {
 	if d.Edited != 0 {
 		parts = append(parts, fmt.Sprintf("%d edited", d.Edited))
 	}
+	if d.Updated != 0 {
+		parts = append(parts, fmt.Sprintf("%d with new reactions or votes", d.Updated))
+	}
 	if d.Pages != 0 {
 		parts = append(parts, countOf(d.Pages, "page")+" redrawn")
 	}
@@ -336,6 +346,49 @@ WHERE forgotten_at IS NULL ORDER BY at, repo`)
 		}
 		r.At = time.Unix(t, 0)
 		out[n] = append(out[n], r)
+	}
+	return out, rows.Err()
+}
+
+// MessageVersion is a version of a message from before an edit.
+type MessageVersion struct {
+	N            int
+	Text         string
+	EntitiesJSON string
+	MediaKeys    []string
+	EditDate     int64 // Telegram's time of this version; 0: as sent
+	ReplacedAt   int64 // when tgbup found the next one
+}
+
+// MessageVersions lists the earlier versions of the chat's messages ids,
+// oldest first.
+func (s *Store) MessageVersions(ctx context.Context, chatID int64, ids []int) (map[int][]MessageVersion, error) {
+	out := map[int][]MessageVersion{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := []any{chatID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, n, text, COALESCE(entities_json, ''), COALESCE(media_keys, ''),
+       COALESCE(edit_date, 0), replaced_at
+FROM message_versions WHERE chat_id = ? AND id IN (?`+strings.Repeat(",?", len(ids)-1)+`) ORDER BY id, n`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id   int
+			v    MessageVersion
+			keys string
+		)
+		if err := rows.Scan(&id, &v.N, &v.Text, &v.EntitiesJSON, &keys, &v.EditDate, &v.ReplacedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(keys), &v.MediaKeys)
+		out[id] = append(out[id], v)
 	}
 	return out, rows.Err()
 }

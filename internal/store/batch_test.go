@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,27 +73,101 @@ func TestSaveBatchStoresPeerNames(t *testing.T) {
 	}
 }
 
-func TestSaveBatchKeepsFirstVersionOfMessage(t *testing.T) {
+// A message read again from Telegram replaces the archived one when it
+// changed: an edit keeps the version before, reactions are just updated, and
+// a message that did not change is only marked as checked.
+func TestSaveBatchKeepsEditsAndTheirEarlierVersions(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	seedChat(t, s, chatA)
-	first := msg(1)
-	first.Text = "original"
-	edited := msg(1)
-	edited.Text = "edited"
-
-	for _, m := range []Message{first, edited} {
-		if err := s.SaveBatch(ctx, Batch{ChatID: chatA, Messages: []Message{m}, Cursor: Cursor{NewestID: 1, OldestID: 1}}); err != nil {
+	save := func(m Message) SaveStats {
+		t.Helper()
+		st, err := s.SaveBatchStats(ctx, Batch{ChatID: chatA, Messages: []Message{m}, Cursor: Cursor{NewestID: 1, OldestID: 1},
+			Media: []Media{{Key: "photo:1", Kind: "photo"}, {Key: "photo:2", Kind: "photo"}}})
+		if err != nil {
 			t.Fatal(err)
 		}
+		return st
 	}
-	var text string
-	if err := s.db.QueryRow(`SELECT text FROM messages WHERE chat_id=? AND id=1`, chatA).Scan(&text); err != nil {
+	row := func() (text, reacts string, edit int64, changed sql.NullInt64) {
+		t.Helper()
+		if err := s.db.QueryRow(`SELECT text, COALESCE(reactions_json, ''), COALESCE(edit_date, 0), changed_at FROM messages
+WHERE chat_id = ? AND id = 1`, chatA).Scan(&text, &reacts, &edit, &changed); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	first := msg(1)
+	first.Text, first.MediaKeys = "original", []string{"photo:1"}
+	if st := save(first); st != (SaveStats{New: 1}) {
+		t.Fatalf("first save = %+v", st)
+	}
+	// Read again, unchanged: nothing to do.
+	if st := save(first); st != (SaveStats{}) {
+		t.Fatalf("unchanged = %+v", st)
+	}
+	if _, _, _, changed := row(); changed.Valid {
+		t.Fatal("an unchanged message counts as changed")
+	}
+	// Reactions only: updated in place, no version.
+	reacted := first
+	reacted.ReactionsJSON = `[{"emoji":"👍","count":2}]`
+	if st := save(reacted); st != (SaveStats{Updated: 1}) {
+		t.Fatalf("reactions = %+v", st)
+	}
+	if _, reacts, _, changed := row(); reacts != reacted.ReactionsJSON || !changed.Valid {
+		t.Fatalf("reactions not kept: %q %v", reacts, changed)
+	}
+	// Edited, with the photo replaced: the archive has the new one, and the
+	// version before with its photo.
+	edited := reacted
+	edited.Text, edited.EditDate, edited.MediaKeys = "edited", 1700000100, []string{"photo:2"}
+	if st := save(edited); st != (SaveStats{Edited: 1}) {
+		t.Fatalf("edit = %+v", st)
+	}
+	if text, _, edit, _ := row(); text != "edited" || edit != 1700000100 {
+		t.Fatalf("after the edit: %q %d", text, edit)
+	}
+	if keys, _ := mediaKeysOf(t, s, chatA, 1); strings.Join(keys, ",") != "photo:2" {
+		t.Errorf("media after the edit = %v", keys)
+	}
+	var (
+		n             int
+		vtext, vmedia string
+		vedit         sql.NullInt64
+	)
+	if err := s.db.QueryRow(`SELECT n, text, media_keys, edit_date FROM message_versions WHERE chat_id = ? AND id = 1`, chatA).
+		Scan(&n, &vtext, &vmedia, &vedit); err != nil {
 		t.Fatal(err)
 	}
-	if text != "original" {
-		t.Fatalf("text = %q", text)
+	if n != 1 || vtext != "original" || vmedia != `["photo:1"]` || vedit.Valid {
+		t.Errorf("version = %d %q %s %v", n, vtext, vmedia, vedit)
 	}
+	// Formatting stored another way, with no new edit time, is no edit.
+	reformatted := edited
+	reformatted.EntitiesJSON = `[{"type":"messageEntityBold","offset":0,"length":1}]`
+	if st := save(reformatted); st != (SaveStats{Updated: 1}) {
+		t.Fatalf("reformatted = %+v", st)
+	}
+	// A second edit makes version 2.
+	again := reformatted
+	again.Text, again.EditDate = "edited twice", 1700000200
+	if st := save(again); st != (SaveStats{Edited: 1}) {
+		t.Fatalf("second edit = %+v", st)
+	}
+	if count(t, s, `SELECT count(*) FROM message_versions WHERE chat_id = ? AND id = 1`, chatA) != 2 {
+		t.Error("the second edit kept no version")
+	}
+}
+
+func mediaKeysOf(t *testing.T, s *Store, chat int64, id int) ([]string, error) {
+	t.Helper()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return mediaKeys(context.Background(), tx, chat, id)
 }
 
 func TestSaveBatchIsAtomic(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	htmltemplate "html/template"
 	"io"
 	"io/fs"
+	"strings"
 	texttemplate "text/template"
 )
 
@@ -34,7 +35,9 @@ func htmlTemplate(name string) *htmltemplate.Template {
 
 func mdTemplate(name string) *texttemplate.Template {
 	return texttemplate.Must(texttemplate.New(name).Funcs(texttemplate.FuncMap{"md": mdEscaper.Replace,
-		"mdurl": func(v any) string { return mdURL(fmt.Sprint(v)) }}).ParseFS(files, "templates/"+name))
+		"mdurl": func(v any) string { return mdURL(fmt.Sprint(v)) },
+		// quote keeps several lines inside one blockquote.
+		"quote": func(s string) string { return strings.ReplaceAll(s, "\n", "\n> ") }}).ParseFS(files, "templates/"+name))
 }
 
 func writePageHTML(w io.Writer, p Page) error { return pageHTML.Execute(w, p) }

@@ -94,6 +94,9 @@ func applyTodoEvents(ctx context.Context, db *store.Store) error {
 	}
 	metas, changed := map[key]string{}, map[key]bool{}
 	for _, e := range events {
+		if e.Date <= e.ChecklistChecked {
+			continue // the checklist was read from Telegram after it, with its ticks
+		}
 		k := key{e.ChatID, e.Checklist}
 		meta, seen := metas[k]
 		if !seen {

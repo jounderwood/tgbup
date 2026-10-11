@@ -25,6 +25,7 @@ type fakeTG struct {
 	ids       map[int64][]int // chat → ascending message ids
 	empty     map[int64]map[int]bool
 	errs      map[int64]error
+	edits     map[int64]map[int]string // chat → message → its text after an edit
 	failAfter map[int64]int
 	calls     map[int64]int
 	before    int
@@ -37,7 +38,7 @@ type fakeTG struct {
 }
 
 func newFake() *fakeTG {
-	return &fakeTG{ids: map[int64][]int{}, empty: map[int64]map[int]bool{}, errs: map[int64]error{},
+	return &fakeTG{ids: map[int64][]int{}, empty: map[int64]map[int]bool{}, errs: map[int64]error{}, edits: map[int64]map[int]string{},
 		failAfter: map[int64]int{}, calls: map[int64]int{}, pinned: map[int64][]int{}, topics: map[int64][]tgclient.Topic{}, replyTop: map[int]int{}}
 }
 
@@ -54,6 +55,10 @@ func (f *fakeTG) message(chat int64, id int) tg.MessageClass {
 		return &tg.MessageEmpty{ID: id}
 	}
 	m := &tg.Message{ID: id, PeerID: &tg.PeerChannel{ChannelID: -chat - 1000000000000}, Date: 1700000000 + id, Message: "m"}
+	if text, ok := f.edits[chat][id]; ok {
+		m.Message = text
+		m.SetEditDate(1700009999)
+	}
 	m.SetFromID(&tg.PeerUser{UserID: 5})
 	if top, ok := f.replyTop[id]; ok {
 		h := &tg.MessageReplyHeader{ForumTopic: true}
@@ -157,7 +162,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	e := &env{st: st, tg: newFake(), now: time.Unix(1700000000, 0)}
+	// A month after the fake's messages: the recent window (refresh) is empty,
+	// except in the tests about it.
+	e := &env{st: st, tg: newFake(), now: time.Unix(1700000000, 0).Add(30 * 24 * time.Hour)}
 	e.s = &syncer.Syncer{
 		TG: e.tg, Store: st, SelfID: 1, Budget: time.Hour, PageSize: 100,
 		Now: func() time.Time { return e.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -477,5 +484,50 @@ func TestReportsProgressPerPageAndChat(t *testing.T) {
 	}
 	if !slices.Equal(calls, want) {
 		t.Fatalf("progress = %v, want %v", calls, want)
+	}
+}
+
+// Every run reads the latest messages again, so an edit or a reaction on a
+// recent message reaches the archive; older ones are left to other means, and
+// a chat with nothing recent is not asked at all.
+func TestRecentMessagesAreReadAgainForEdits(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Unix(1700000000, 0).Add(time.Hour)
+	a := target(1, store.ChatSupergroup)
+	e.tg.add(a.Chat.ID, 1, 500)
+	ctx := context.Background()
+	if r := e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a)); !r.OK() || r.NewMessages != 500 || r.Edited != 0 {
+		t.Fatalf("first run = %+v", r)
+	}
+	e.tg.edits[a.Chat.ID] = map[int]string{480: "fixed a typo", 50: "too old to be read again"}
+	e.tg.before = 0
+	r := e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	if !r.OK() || r.NewMessages != 0 || r.Edited != 1 {
+		t.Fatalf("second run = %+v", r)
+	}
+	if e.tg.before > 3 {
+		t.Errorf("read %d pages again, at most 3", e.tg.before)
+	}
+	text := func(id int) string {
+		t.Helper()
+		ms, err := e.st.PageMessages(ctx, a.Chat.ID, []int{id})
+		if err != nil || len(ms) != 1 {
+			t.Fatalf("message %d: %v %v", id, ms, err)
+		}
+		return ms[0].Text
+	}
+	if text(480) != "fixed a typo" {
+		t.Errorf("the recent edit did not reach the archive: %q", text(480))
+	}
+	if text(50) != "m" {
+		t.Errorf("a message outside the window was read again: %q", text(50))
+	}
+
+	// A month later nothing is recent: no request beyond the new messages.
+	e.now = e.now.Add(30 * 24 * time.Hour)
+	e.tg.before = 0
+	e.s.Run(ctx, []tgclient.Target{a}, dialogsOf(a))
+	if e.tg.before != 0 {
+		t.Errorf("a quiet chat was read again (%d pages)", e.tg.before)
 	}
 }

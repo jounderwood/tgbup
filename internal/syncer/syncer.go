@@ -1,6 +1,7 @@
 package syncer
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -25,11 +26,25 @@ type Syncer struct {
 	// Progress, if set, gets the messages saved so far in a chat after each
 	// page, and once more with done=true when the chat is finished.
 	Progress func(chat store.Chat, saved int, done bool)
+	// RefreshWindow is how far back every run reads again the messages the
+	// archive has, for edits, reactions and votes, which mostly come soon
+	// after a message; RefreshPages caps it per chat. 0: the defaults.
+	RefreshWindow time.Duration
+	RefreshPages  int
 }
 
+const (
+	defaultRefreshWindow = 72 * time.Hour
+	defaultRefreshPages  = 3
+)
+
 type Report struct {
-	Chats             int
-	NewMessages       int
+	Chats       int
+	NewMessages int
+	// Edited and Updated count messages read again that had changed: edited
+	// (the version before is kept), or with other reactions, votes, a link
+	// preview.
+	Edited, Updated   int
 	Deferred          []int64
 	NewlyInaccessible []int64
 	Failed            map[int64]error
@@ -58,9 +73,11 @@ func (s *Syncer) Run(ctx context.Context, targets []tgclient.Target, dialogIDs m
 			r.Failed[t.Chat.ID] = err
 			return r
 		}
-		n, err := s.syncChat(ctx, t, deadline)
-		r.NewMessages += n
-		s.progress(t.Chat, n, true)
+		st, err := s.syncChat(ctx, t, deadline)
+		r.NewMessages += st.New
+		r.Edited += st.Edited
+		r.Updated += st.Updated
+		s.progress(t.Chat, st.New, true)
 		if err == nil {
 			r.Chats++
 			continue
@@ -108,18 +125,19 @@ func (s *Syncer) markMissing(ctx context.Context, known map[int64]bool, r *Repor
 	return nil
 }
 
-func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.Time) (int, error) {
+func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.Time) (store.SaveStats, error) {
+	var total store.SaveStats
 	if err := s.Store.UpsertChat(ctx, t.Chat); err != nil {
-		return 0, err
+		return total, err
 	}
 	if t.IsForum() {
 		topics, err := s.syncTopics(ctx, t)
 		if err != nil {
-			return 0, err
+			return total, err
 		}
 		reset, err := s.Store.ApplyTopicExclusions(ctx, t.Chat.ID, t.ExcludedTopics, topics)
 		if err != nil {
-			return 0, err
+			return total, err
 		}
 		if reset {
 			s.Log.Info("topic re-included, reading the forum history again", "chat", t.Chat.ID)
@@ -127,9 +145,8 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 	}
 	cur, found, err := s.Store.GetCursor(ctx, t.Chat.ID)
 	if err != nil {
-		return 0, err
+		return total, err
 	}
-	total := 0
 
 	if found && (cur.NewestID > 0 || cur.BackfillDone) {
 		for {
@@ -141,12 +158,12 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 				break
 			}
 			cur.NewestID = max(cur.NewestID, maxID(page.Messages))
-			n, err := s.save(ctx, t, page, cur)
-			total += n
+			st, err := s.save(ctx, t, page, cur)
+			total = add(total, st)
 			if err != nil {
 				return total, err
 			}
-			s.progress(t.Chat, total, false)
+			s.progress(t.Chat, total.New, false)
 			if len(page.Messages) < s.PageSize {
 				break
 			}
@@ -155,6 +172,11 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		// every run silently archive nothing new.
 		if t.TopMessage > cur.NewestID {
 			return total, fmt.Errorf("forward sync stopped at message %d, but the chat's latest message is %d", cur.NewestID, t.TopMessage)
+		}
+		st, err := s.refresh(ctx, t, &cur)
+		total = add(total, st)
+		if err != nil {
+			return total, err
 		}
 	}
 
@@ -174,12 +196,12 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 			cur.NewestID = maxID(page.Messages)
 		}
 		cur.OldestID = minID(page.Messages)
-		n, err := s.save(ctx, t, page, cur)
-		total += n
+		st, err := s.save(ctx, t, page, cur)
+		total = add(total, st)
 		if err != nil {
 			return total, err
 		}
-		s.progress(t.Chat, total, false)
+		s.progress(t.Chat, total.New, false)
 	}
 
 	pinned, err := s.TG.PinnedIDs(ctx, t.Peer)
@@ -190,6 +212,56 @@ func (s *Syncer) syncChat(ctx context.Context, t tgclient.Target, deadline time.
 		return total, err
 	}
 	return total, s.Store.MarkActive(ctx, t.Chat.ID)
+}
+
+// refresh reads again the chat's latest messages, back to RefreshWindow and
+// at most RefreshPages pages, so that edits, reactions and votes reach the
+// archive. A chat with nothing that recent is not asked.
+func (s *Syncer) refresh(ctx context.Context, t tgclient.Target, cur *store.Cursor) (store.SaveStats, error) {
+	var total store.SaveStats
+	since := s.Now().Add(-cmp.Or(s.RefreshWindow, defaultRefreshWindow)).Unix()
+	latest, ok, err := s.Store.LatestMessageDate(ctx, t.Chat.ID)
+	if err != nil || !ok || latest < since {
+		return total, err
+	}
+	before := 0
+	for range cmp.Or(s.RefreshPages, defaultRefreshPages) {
+		page, err := s.TG.HistoryBefore(ctx, t.Peer, before, s.PageSize)
+		if err != nil || len(page.Messages) == 0 {
+			return total, err
+		}
+		cur.NewestID = max(cur.NewestID, maxID(page.Messages))
+		st, err := s.save(ctx, t, page, *cur)
+		total = add(total, st)
+		if err != nil || len(page.Messages) < s.PageSize || oldestDate(page.Messages) < since {
+			return total, err
+		}
+		before = minID(page.Messages)
+	}
+	return total, nil
+}
+
+func add(a, b store.SaveStats) store.SaveStats {
+	return store.SaveStats{New: a.New + b.New, Edited: a.Edited + b.Edited, Updated: a.Updated + b.Updated}
+}
+
+func oldestDate(ms []tg.MessageClass) int64 {
+	oldest := int64(0)
+	for _, m := range ms {
+		var d int
+		switch v := m.(type) {
+		case *tg.Message:
+			d = v.Date
+		case *tg.MessageService:
+			d = v.Date
+		default:
+			continue
+		}
+		if oldest == 0 || int64(d) < oldest {
+			oldest = int64(d)
+		}
+	}
+	return oldest
 }
 
 // syncTopics stores the forum's topics and returns their ids.
@@ -218,14 +290,14 @@ func (s *Syncer) syncTopics(ctx context.Context, t tgclient.Target) ([]int, erro
 	return ids, s.Store.UpsertTopics(ctx, rows)
 }
 
-func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page, cur store.Cursor) (int, error) {
+func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page, cur store.Cursor) (store.SaveStats, error) {
 	b := store.Batch{ChatID: t.Chat.ID, Users: convert.Users(page.Users), Peers: convert.Peers(page.Chats), Cursor: cur}
 	seen := map[string]bool{}
 	opts := convert.Options{IsForum: t.IsForum(), SelfID: s.SelfID}
 	for _, mc := range page.Messages {
 		res, ok, err := convert.Message(mc, opts)
 		if err != nil {
-			return 0, err
+			return store.SaveStats{}, err
 		}
 		if !ok || slices.Contains(t.ExcludedTopics, res.Message.TopicID) {
 			continue
@@ -238,7 +310,7 @@ func (s *Syncer) save(ctx context.Context, t tgclient.Target, page tgclient.Page
 			}
 		}
 	}
-	return len(b.Messages), s.Store.SaveBatch(ctx, b)
+	return s.Store.SaveBatchStats(ctx, b)
 }
 
 func maxID(ms []tg.MessageClass) int {

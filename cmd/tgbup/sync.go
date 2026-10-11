@@ -50,6 +50,12 @@ func (s syncSummary) print(w io.Writer) {
 		fmt.Fprintf(w, "warning: %s\n", n)
 	}
 	fmt.Fprintf(w, "messages: %s new in %s", groupDigits(s.sync.NewMessages), plural(s.sync.Chats, "chat"))
+	if s.sync.Edited > 0 {
+		fmt.Fprintf(w, " · %s edited", groupDigits(s.sync.Edited))
+	}
+	if s.sync.Updated > 0 {
+		fmt.Fprintf(w, " · %s with new reactions or votes", groupDigits(s.sync.Updated))
+	}
 	if n := len(s.sync.Deferred); n > 0 {
 		fmt.Fprintf(w, " · %d deferred to the next run", n)
 	}

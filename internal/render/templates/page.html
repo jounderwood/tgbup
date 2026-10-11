@@ -59,6 +59,13 @@
 {{- if .HTML}}
 <div class="text">{{.HTML}}</div>
 {{- end}}
+{{- with .Versions}}
+<details class="versions"><summary>{{len .}} earlier version{{if gt (len .) 1}}s{{end}}</summary>
+{{- range .}}
+<div class="version" title="{{.Seen}}"><span class="when">{{.When}}</span>{{if .HTML}}<div class="text">{{.HTML}}</div>{{end}}{{if .Attachment}}<div class="missing">with another attachment, replaced by the edit</div>{{end}}</div>
+{{- end}}
+</details>
+{{- end}}
 {{- with .Meta}}
 {{- with .Link}}
 {{if .Href}}<a class="card link" href="{{.Href}}" rel="noopener">{{else}}<div class="card link">{{end}}

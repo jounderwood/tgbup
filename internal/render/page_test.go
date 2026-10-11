@@ -262,3 +262,38 @@ func TestMediaEntryNamesVoiceBySender(t *testing.T) {
 		t.Fatalf("no sender: %+v", got)
 	}
 }
+
+// An edited message shows its earlier versions, escaped like any text, in
+// the HTML and the Markdown pages.
+func TestPageShowsEarlierVersions(t *testing.T) {
+	msgs := []store.RenderMessage{{Message: store.Message{ID: 3, Date: at("2026-03-01", "09:00"), Text: "see you at 7",
+		EditDate: at("2026-03-01", "09:05")}, SenderName: "Ann",
+		Media: &store.RenderMedia{Key: "photo:2", Kind: "photo", Status: "done", LocalPath: "media/2026/photo/b.jpg"}}}
+	versions := map[int][]store.MessageVersion{3: {
+		{N: 1, Text: "see you at 6 <b>", ReplacedAt: at("2026-03-01", "10:00"), MediaKeys: []string{"photo:1"}},
+		{N: 2, Text: "see you at 6:30\nor later", EditDate: at("2026-03-01", "09:03"), ReplacedAt: at("2026-03-01", "10:00"), MediaKeys: []string{"photo:2"}},
+	}}
+	p := buildPage(pageInput{Key: store.PageKey{ChatID: 10, N: 1}, Total: 1, Dir: "Mom", Messages: msgs, Versions: versions,
+		Locate: func(int64, int) (store.PageKey, bool) { return store.PageKey{}, false }, Loc: time.UTC, Crumbs: []string{"Mom"}})
+	var b bytes.Buffer
+	if err := writePageHTML(&b, p); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	for _, want := range []string{"<summary>2 earlier versions</summary>", "as sent 09:00", "see you at 6 &lt;b&gt;",
+		"edited 2026-03-01 09:03", "with another attachment, replaced by the edit", "see you at 7"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	if strings.Count(html, "with another attachment") != 1 {
+		t.Error("the version with the current photo is marked as having another one")
+	}
+	b.Reset()
+	if err := writePageMD(&b, p); err != nil {
+		t.Fatal(err)
+	}
+	if md := b.String(); !strings.Contains(md, "> _edited 2026-03-01 09:03:_ see you at 6:30\n> or later") {
+		t.Errorf("markdown:\n%s", md)
+	}
+}

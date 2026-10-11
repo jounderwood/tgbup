@@ -44,6 +44,7 @@ type runParts struct {
 
 type runRecord struct {
 	NewMessages  int      `json:"new_messages"`
+	Edited       int      `json:"edited,omitempty"`
 	NewMedia     int      `json:"new_media"`
 	SyncErrors   []string `json:"sync_errors,omitempty"`
 	BackupErrors []string `json:"backup_errors,omitempty"`
@@ -65,7 +66,7 @@ func runOnce(ctx context.Context, p runParts) int {
 	p.quiet(ctx, notify.StartText(p.host, p.trigger, p.takeout))
 	sum, err := p.sync(ctx)
 	sum.print(p.out)
-	rec := runRecord{NewMessages: sum.sync.NewMessages, NewMedia: sum.media.Done, SyncErrors: sum.problems(err)}
+	rec := runRecord{NewMessages: sum.sync.NewMessages, Edited: sum.sync.Edited, NewMedia: sum.media.Done, SyncErrors: sum.problems(err)}
 
 	rep, configured := p.backup(ctx)
 	switch {
@@ -138,7 +139,7 @@ func runOnce(ctx context.Context, p runParts) int {
 				places = append(places, placeName(r.Repo, p.home)+" "+shortID(r.Snapshot))
 			}
 		}
-		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.NewMedia, places, same))
+		p.quiet(ctx, notify.DoneText(p.host, rec.NewMessages, rec.Edited, rec.NewMedia, places, same))
 	}
 	if err := p.maybeSummary(ctx); err != nil {
 		p.log.Error("notify summary", "err", err)

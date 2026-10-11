@@ -100,3 +100,10 @@ header.bar form.search { display: flex; align-items: center; gap: 6px; margin: 0
 .update p { margin: 2px 0; }
 .update .snaps { margin: 4px 0; padding-left: 18px; font-size: 13px; }
 .update code.cmd { display: inline-block; margin-top: 2px; color: var(--muted); user-select: all; word-break: break-all; }
+
+/* Earlier versions of an edited message. */
+details.versions { font-size: 13px; color: var(--muted); margin-top: 4px; }
+details.versions summary { cursor: pointer; }
+details.versions .version { border-left: 2px solid var(--line); padding: 2px 8px; margin: 4px 0; }
+details.versions .version .when { font-size: 12px; }
+details.versions .version .text { color: var(--fg); opacity: .75; }

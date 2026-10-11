@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,18 @@ type PageMessage struct {
 	Meta      *PageMeta
 	Service   string
 	Reactions string
+	// Versions are the message's versions before its edits, oldest first.
+	Versions []PageVersion
+}
+
+// PageVersion is a message as it was before an edit.
+type PageVersion struct {
+	When     string // "as sent 14:02" or "edited 14:05"
+	Seen     string // until when tgbup saw it, for the tooltip
+	HTML     template.HTML
+	Markdown string
+	// Attachment: it had another attachment, which the edit replaced.
+	Attachment bool
 }
 
 type Reply struct {
@@ -97,7 +110,9 @@ type pageInput struct {
 	// this render (an export may leave messages out).
 	Locate func(chat int64, id int) (store.PageKey, bool)
 	// Names resolves ids met in meta (who completed a checklist item).
-	Names  map[int64]string
+	Names map[int64]string
+	// Versions are the messages' versions before edits.
+	Versions map[int][]store.MessageVersion
 	Loc    *time.Location
 	Crumbs []string
 }
@@ -137,6 +152,18 @@ func buildPage(in pageInput) Page {
 			Service:  serviceText(m.ServiceActionJSON, in.Refs[m.ReplyToID].MetaJSON),
 		}
 		pm.Reactions = reactions(m.ReactionsJSON)
+		for _, v := range in.Versions[m.ID] {
+			when := "as sent " + t.Format("15:04")
+			if v.EditDate != 0 {
+				when = "edited " + time.Unix(v.EditDate, 0).In(in.Loc).Format("2006-01-02 15:04")
+			}
+			pv := PageVersion{When: when, Seen: "replaced by the next version by " + time.Unix(v.ReplacedAt, 0).In(in.Loc).Format("2006-01-02 15:04"),
+				HTML: HTMLText(v.Text, v.EntitiesJSON), Markdown: MarkdownText(v.Text, v.EntitiesJSON)}
+			if len(v.MediaKeys) > 0 && (m.Media == nil || !slices.Contains(v.MediaKeys, m.Media.Key)) {
+				pv.Attachment = true
+			}
+			pm.Versions = append(pm.Versions, pv)
+		}
 		if m.ReplyToID != 0 {
 			pm.Reply = reply(in, m.ReplyToID)
 		}

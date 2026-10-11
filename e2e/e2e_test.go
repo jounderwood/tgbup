@@ -227,7 +227,7 @@ func checkMediaNames(t *testing.T, archive string) {
 func checkMeta(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for id, want := range map[int]string{
-		fx.GeoMsg: `"lat":48.8584`, fx.VenueMsg: `"title":"Cafe de Flore"`,
+		fx.GeoMsg: `"lat":48.875`, fx.VenueMsg: `"title":"Cafe de Flore"`,
 		fx.ContactMsg: `"phone":"+99966612345"`, fx.PollMsg: `"question":"Dacha on Saturday?"`,
 	} {
 		got := scalar[sql.NullString](t, db, `SELECT meta_json FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id)
@@ -274,7 +274,7 @@ func checkRendered(t *testing.T, archive string) {
 		b, _ := os.ReadFile(p)
 		all.Write(b)
 	}
-	for _, want := range []string{"📍 Cafe de Flore, 172 Boulevard Saint-Germain", "google.com/maps/search/?api=1&amp;query=48.85",
+	for _, want := range []string{"📍 Cafe de Flore, 172 Boulevard Saint-Germain", "google.com/maps/search/?api=1&amp;query=48.875",
 		"👤 Test Contact", "📊 Dacha on Saturday?"} {
 		if !strings.Contains(all.String(), want) {
 			t.Errorf("forum pages lack %q", want)
@@ -433,4 +433,61 @@ func TestTakeoutSync(t *testing.T) {
 	}
 	checkPrivateAndGroup(t, db)
 	checkMedia(t, db, archive)
+}
+
+// An edit and a reaction made in Telegram after a message was archived
+// reach the archive with the next sync; the version before is kept and
+// shown on the page.
+func TestEditsAndReactionsReachTheArchive(t *testing.T) {
+	cfgPath, archive := newArchive(t)
+	var id int
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		var err error
+		id, err = testenv.SendText(ctx, raw, fx.Peer(), "встречаемся в 6", nil, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runSync(t, cfgPath)
+	db := openArchive(t, archive)
+	if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); text != "встречаемся в 6" {
+		t.Fatalf("archived text = %q", text)
+	}
+	if err := testenv.WithTelegram(func(ctx context.Context, raw *tg.Client) error {
+		if _, err := raw.MessagesEditMessage(ctx, &tg.MessagesEditMessageRequest{Peer: fx.Peer(), ID: id, Message: "встречаемся в 7"}); err != nil {
+			return fmt.Errorf("edit: %w", err)
+		}
+		_, err := raw.MessagesSendReaction(ctx, &tg.MessagesSendReactionRequest{Peer: fx.Peer(), MsgID: id,
+			Reaction: []tg.ReactionClass{&tg.ReactionEmoji{Emoticon: "👍"}}})
+		if err != nil {
+			return fmt.Errorf("react: %w", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := runSync(t, cfgPath)
+	if !strings.Contains(out, "1 edited") {
+		t.Errorf("the sync does not report the edit:\n%s", out)
+	}
+	if text := scalar[string](t, db, `SELECT text FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); text != "встречаемся в 7" {
+		t.Errorf("text after the edit = %q", text)
+	}
+	if old := scalar[string](t, db, `SELECT text FROM message_versions WHERE chat_id = ? AND id = ?`, fx.ChatID, id); old != "встречаемся в 6" {
+		t.Errorf("version before the edit = %q", old)
+	}
+	if r := scalar[sql.NullString](t, db, `SELECT reactions_json FROM messages WHERE chat_id = ? AND id = ?`, fx.ChatID, id); !strings.Contains(r.String, "👍") {
+		t.Errorf("reaction not archived: %q", r.String)
+	}
+	pages, _ := filepath.Glob(filepath.Join(archive, "html", "*", "*", "p*.html"))
+	found := false
+	for _, p := range pages {
+		b, _ := os.ReadFile(p)
+		if strings.Contains(string(b), "встречаемся в 7") {
+			found = strings.Contains(string(b), "1 earlier version") && strings.Contains(string(b), "встречаемся в 6")
+		}
+	}
+	if !found {
+		t.Error("the page does not show the edited message with its earlier version")
+	}
 }

@@ -28,6 +28,9 @@ _{{md .Service}}_ · {{md .Sender}} · {{.Time}} ^m{{.ID}}
 {{- end}}
 {{- with .Markdown}}{{.}}
 {{end}}
+{{- range .Versions}}
+> _{{.When}}:_ {{quote .Markdown}}{{if .Attachment}} _(with another attachment)_{{end}}
+{{end}}
 {{- with .Meta}}
 {{- with .Link}}
 > {{if .Href}}[**{{md .Title}}**](<{{mdurl .Href}}>){{else}}**{{md .Title}}**{{end}}{{with .Site}} · {{md .}}{{end}}

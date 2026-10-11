@@ -55,8 +55,12 @@ func StartText(host, trigger string, takeout bool) string {
 
 // DoneText says a run finished: what it brought and the snapshots it made
 // ("~/Tgbup/backup 3333bbbb"); unchanged places already held the archive as it is.
-func DoneText(host string, newMessages, newMedia int, snapshots, unchanged []string) string {
-	text := fmt.Sprintf("✓ tgbup on %s: %d new messages, %d new files", host, newMessages, newMedia)
+func DoneText(host string, newMessages, edited, newMedia int, snapshots, unchanged []string) string {
+	text := fmt.Sprintf("✓ tgbup on %s: %d new messages", host, newMessages)
+	if edited > 0 {
+		text += fmt.Sprintf(", %d edited", edited)
+	}
+	text += fmt.Sprintf(", %d new files", newMedia)
 	switch {
 	case len(snapshots) == 0 && len(unchanged) == 0:
 		return text + "; no backup set up"

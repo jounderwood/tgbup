@@ -41,7 +41,8 @@ type PageQuery struct {
 func (s *Store) Pages(ctx context.Context, q PageQuery) ([]ThreadPage, error) {
 	query := `
 SELECT msg.chat_id, COALESCE(msg.topic_id, 0), msg.id, msg.date, COALESCE(msg.edit_date, 0), msg.pinned,
-       COALESCE(msg.reactions_json, '') || COALESCE(msg.meta_json, ''), COALESCE(m.status, ''), COALESCE(m.local_path, '')
+       COALESCE(msg.reactions_json, '') || COALESCE(msg.meta_json, '') || COALESCE(msg.changed_at, ''),
+       COALESCE(m.status, ''), COALESCE(m.local_path, '')
 FROM messages msg
 LEFT JOIN message_media mm ON mm.chat_id = msg.chat_id AND mm.message_id = msg.id
 LEFT JOIN media m ON m.key = mm.media_key

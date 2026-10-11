@@ -228,10 +228,14 @@ func renderPage(ctx context.Context, db *store.Store, l *layout, opts Options, p
 	if err != nil {
 		return nil, err
 	}
+	versions, err := db.MessageVersions(ctx, p.ChatID, p.IDs)
+	if err != nil {
+		return nil, err
+	}
 	dir := l.dir(p.ChatID, p.TopicID)
 	page := buildPage(pageInput{
 		Key: p.PageKey, Total: p.Total, Dir: dir, Messages: msgs, Refs: refs, DirOf: l.dir, Locate: locate,
-		Names: names, Loc: opts.Loc, Crumbs: l.crumbs(p.ChatID, p.TopicID),
+		Names: names, Loc: opts.Loc, Crumbs: l.crumbs(p.ChatID, p.TopicID), Versions: versions,
 	})
 	if err := writeFile(filepath.Join(opts.OutDir, "html", filepath.FromSlash(dir), pageName(p.N)+".html"), func(w io.Writer) error {
 		return writePageHTML(w, page)

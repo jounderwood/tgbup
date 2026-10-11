@@ -84,3 +84,35 @@ func TestNoteUpdate(t *testing.T) {
 		t.Fatalf("snapshot updates = %+v, %v", m, err)
 	}
 }
+
+// An update counts what was found changed since the one before: edits (they
+// kept a version) and messages with other reactions or votes.
+func TestNoteUpdateCountsEditsAndReactions(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if err := s.UpsertChat(ctx, Chat{ID: 10, Type: ChatPrivate, Title: "Mom"}); err != nil {
+		t.Fatal(err)
+	}
+	save := func(ms ...Message) {
+		t.Helper()
+		for i := range ms {
+			ms[i].ChatID, ms[i].Date, ms[i].Raw = 10, 1700000000, []byte{1}
+		}
+		if err := s.SaveBatch(ctx, Batch{ChatID: 10, Messages: ms}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(Message{ID: 1, Text: "a"}, Message{ID: 2, Text: "b"})
+	t0 := time.Now().Add(-time.Minute)
+	if _, _, _, err := s.NoteUpdate(ctx, 0, t0); err != nil {
+		t.Fatal(err)
+	}
+	save(Message{ID: 1, Text: "a, fixed", EditDate: 1700000100}, Message{ID: 2, Text: "b", ReactionsJSON: `[{"emoji":"👍","count":1}]`})
+	u, created, _, err := s.NoteUpdate(ctx, 0, time.Now())
+	if err != nil || !created || u.Diff.Edited != 1 || u.Diff.Updated != 1 || u.Diff.Messages != 0 {
+		t.Fatalf("update = %+v created=%v err=%v", u.Diff, created, err)
+	}
+	if got := u.Diff.Summary(); got != "1 edited · 1 with new reactions or votes" {
+		t.Errorf("summary = %q", got)
+	}
+}
