@@ -46,10 +46,10 @@ type Report struct {
 	// (the version before is kept), or with other reactions, votes, a link
 	// preview. Deleted ones are gone from Telegram, marked and kept.
 	Edited, Updated, Deleted int
-	Deferred          []int64
-	NewlyInaccessible []int64
-	Failed            map[int64]error
-	AuthErr           error
+	Deferred                 []int64
+	NewlyInaccessible        []int64
+	Failed                   map[int64]error
+	AuthErr                  error
 }
 
 func (r Report) OK() bool { return len(r.Failed) == 0 && r.AuthErr == nil }
